@@ -1,0 +1,1 @@
+- Phase 00: Store inventory as JSON, not CSV. JSON maps directly to Python's list-of-dicts, needs less code, and preserves number types (cleaner for profit math later). Will migrate to SQLite in Phase 02 for real querying.

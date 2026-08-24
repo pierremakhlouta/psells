@@ -12,6 +12,8 @@ __pycache__/
 # PSells real data (keep costs/margins out of the repo)
 
 data/*.csv
+data/*.json
 
 !data/products.sample.csv
+!data/products.sample.json
 
