@@ -569,7 +569,27 @@ def record_return():
 
 
 def record_payment():
-    pass
+    payments = load_data(PAYMENTS_FILE)
+
+    date = ask_date("Date: ")
+    amount = ask_float(
+        "Amount ($): ",
+        min_value=0
+    )
+    notes = ask_optional_text("Notes: ")
+
+    payment = {
+        "id": next_id(payments),
+        "date": date,
+        "amount": amount,
+        "notes": notes
+    }
+
+    payments.append(payment)
+
+    save_data(payments, PAYMENTS_FILE)
+
+    print("Payment recorded.")
 
 
 while True:
