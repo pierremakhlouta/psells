@@ -91,6 +91,23 @@ def ask_choice(prompt, options):
         print("Invalid choice. Please try again.")
 
 
+def ask_date(prompt):
+    while True:
+        text = input(
+            f"{prompt} (YYYY-MM-DD, blank for today): "
+        ).strip()
+
+        if text == "":
+            return date.today().isoformat()
+
+        try:
+            parsed = datetime.strptime(text, "%Y-%m-%d")
+            return parsed.strftime("%Y-%m-%d")
+
+        except ValueError:
+            print("Please enter a valid date in YYYY-MM-DD format.")
+
+
 def ask_edit_text(prompt, current):
     value = input(f"{prompt} [{current}]: ").strip()
 
@@ -131,22 +148,6 @@ def ask_edit_number(
                 print("Please enter a valid whole number.")
             else:
                 print("Please enter a valid number.")
-                
-def ask_date(prompt):
-    while True:
-        text = input(
-            f"{prompt} (YYYY-MM-DD, blank for today): "
-        ).strip()
-
-        if text == "":
-            return date.today().isoformat()
-
-        try:
-            parsed = datetime.strptime(text, "%Y-%m-%d")
-            return parsed.strftime("%Y-%m-%d")
-
-        except ValueError:
-            print("Please enter a valid date in YYYY-MM-DD format.")
 
 
 def partner_share_for(item):
@@ -167,11 +168,67 @@ def partner_share_for(item):
 
 
 def view_dashboard():
-    pass
+    inventory = load_data(INVENTORY_FILE)
+    sales = load_data(SALES_FILE)
+    returns = load_data(RETURNS_FILE)
+    payments = load_data(PAYMENTS_FILE)
+
+    total_received = sum(
+        product["quantity_received"]
+        for product in inventory
+    )
+
+    total_sold = sum(
+        product["quantity_sold"]
+        for product in inventory
+    )
+
+    total_available = total_received - total_sold
+
+    total_returned = sum(
+        item["quantity"]
+        for item in returns
+    )
+
+    total_revenue = sum(
+        sale["quantity"] * sale["sale_price"]
+        for sale in sales
+    )
+
+    total_partner_share = sum(
+        sale["quantity"] * sale["partner_share"]
+        for sale in sales
+    )
+
+    total_profit = total_revenue - total_partner_share
+
+    total_paid = sum(
+        payment["amount"]
+        for payment in payments
+    )
+
+    balance_owing = total_partner_share - total_paid
+
+    print("Dashboard")
+    print()
+    print(f"Total received: {total_received}")
+    print(f"Total sold: {total_sold}")
+    print(f"Total available: {total_available}")
+    print(f"Total returned: {total_returned}")
+    print()
+    print(f"Total revenue: ${total_revenue:.2f}")
+    print(f"Total profit: ${total_profit:.2f}")
+    print(f"Total partner share earned: ${total_partner_share:.2f}")
+    print(f"Total paid: ${total_paid:.2f}")
+    print(f"Balance owing: ${balance_owing:.2f}")
 
 
 def print_product(product):
-    available = product["quantity_received"] - product["quantity_sold"]
+    available = (
+        product["quantity_received"]
+        - product["quantity_sold"]
+    )
+
     partner_cut = partner_share_for(product)
 
     print(f"ID: {product['id']}")
@@ -217,35 +274,48 @@ def select_product(inventory, action_word):
         return None
 
     if len(matches) == 1:
-        return matches[0]
+        product = matches[0]
 
-    print("Multiple products found:")
+    else:
+        print("Multiple products found:")
 
-    for item in matches:
-        print(f"ID: {item['id']} | Name: {item['name']}")
-
-    valid_ids = [item["id"] for item in matches]
-
-    while True:
-        selected_id = ask_int(
-            f"Enter the ID of the product to {action_word}: "
-        )
-
-        if selected_id in valid_ids:
-            return next(
-                item for item in inventory
-                if item["id"] == selected_id
+        for item in matches:
+            print(
+                f"ID: {item['id']} | "
+                f"Name: {item['name']}"
             )
 
-        print("Invalid ID. Please choose one of the IDs shown above.")
+        valid_ids = [
+            item["id"]
+            for item in matches
+        ]
+
+        while True:
+            product_id = ask_int(
+                f"Enter the ID of the product to {action_word}: "
+            )
+
+            if product_id in valid_ids:
+                break
+
+            print(
+                "Invalid ID. Please choose one of "
+                "the IDs shown above."
+            )
+
+        product = next(
+            item for item in inventory
+            if item["id"] == product_id
+        )
+
+    return product
 
 
 def search():
+    inventory = load_data(INVENTORY_FILE)
+
     name = ask_text("Search for a product: ")
-    matches = find_items_by_name(
-        load_data(INVENTORY_FILE),
-        name
-    )
+    matches = find_items_by_name(inventory, name)
 
     if not matches:
         print("No products found.")
@@ -258,23 +328,28 @@ def search():
 def add():
     category = ask_text("Category: ")
     name = ask_text("Name: ")
+
     quantity_received = ask_int(
         "Quantity received: ",
         min_value=1
     )
+
     retail_price = ask_float(
         "Retail price: ",
         min_value=0
     )
+
     listed_price = ask_float(
         "Listed price: ",
         min_value=0
     )
+
     condition = ask_text("Condition: ")
     notes = ask_optional_text("Notes: ")
 
     partner_share_mode = ask_choice(
-        "Partner-share mode (default/custom_percent/custom_amount): ",
+        "Partner-share mode "
+        "(default/custom_percent/custom_amount): ",
         ["default", "custom_percent", "custom_amount"]
     )
 
@@ -471,9 +546,12 @@ def record_sale():
     if product is None:
         return
 
-    available = product["quantity_received"] - product["quantity_sold"]
+    available = (
+        product["quantity_received"]
+        - product["quantity_sold"]
+    )
 
-    if available == 0:
+    if available <= 0:
         print("No stock available to sell.")
         return
 
@@ -488,7 +566,7 @@ def record_sale():
         min_value=0
     )
 
-    date = ask_date("Date:")
+    sale_date = ask_date("Date: ")
 
     partner_cut = partner_share_for(product)
 
@@ -497,17 +575,18 @@ def record_sale():
     print(f"Product: {product['name']}")
     print(f"Quantity sold: {quantity}")
     print(f"Sale price per unit: ${sale_price:.2f}")
-    print(f"Date: {date}")
+    print(f"Date: {sale_date}")
     print(f"Partner cut per unit: ${partner_cut:.2f}")
 
     product["quantity_sold"] += quantity
+
     save_data(inventory, INVENTORY_FILE)
 
     sales = load_data(SALES_FILE)
 
     sale = {
         "id": next_id(sales),
-        "date": date,
+        "date": sale_date,
         "item_id": product["id"],
         "quantity": quantity,
         "sale_price": sale_price,
@@ -515,6 +594,7 @@ def record_sale():
     }
 
     sales.append(sale)
+
     save_data(sales, SALES_FILE)
 
     print("Sale recorded.")
@@ -532,9 +612,12 @@ def record_return():
     if product is None:
         return
 
-    available = product["quantity_received"] - product["quantity_sold"]
+    available = (
+        product["quantity_received"]
+        - product["quantity_sold"]
+    )
 
-    if available == 0:
+    if available <= 0:
         print("No stock available to return.")
         return
 
@@ -544,7 +627,7 @@ def record_return():
         max_value=available
     )
 
-    date = ask_date("Date:")
+    return_date = ask_date("Date: ")
     notes = ask_optional_text("Notes: ")
 
     product["quantity_received"] -= quantity
@@ -555,7 +638,7 @@ def record_return():
 
     return_record = {
         "id": next_id(returns),
-        "date": date,
+        "date": return_date,
         "item_id": product["id"],
         "quantity": quantity,
         "notes": notes
@@ -571,16 +654,18 @@ def record_return():
 def record_payment():
     payments = load_data(PAYMENTS_FILE)
 
-    date = ask_date("Date: ")
+    payment_date = ask_date("Date: ")
+
     amount = ask_float(
         "Amount ($): ",
         min_value=0
     )
+
     notes = ask_optional_text("Notes: ")
 
     payment = {
         "id": next_id(payments),
-        "date": date,
+        "date": payment_date,
         "amount": amount,
         "notes": notes
     }
