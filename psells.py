@@ -90,6 +90,48 @@ def ask_choice(prompt, options):
         print("Invalid choice. Please try again.")
 
 
+def ask_edit_text(prompt, current):
+    value = input(f"{prompt} [{current}]: ").strip()
+
+    if value == "":
+        return current
+
+    return value
+
+
+def ask_edit_number(
+    prompt,
+    current,
+    value_type,
+    min_value=None,
+    max_value=None
+):
+    while True:
+        value = input(f"{prompt} [{current}]: ").strip()
+
+        if value == "":
+            return current
+
+        try:
+            value = value_type(value)
+
+            if min_value is not None and value < min_value:
+                print(f"Value must be at least {min_value}.")
+                continue
+
+            if max_value is not None and value > max_value:
+                print(f"Value must be at most {max_value}.")
+                continue
+
+            return value
+
+        except ValueError:
+            if value_type is int:
+                print("Please enter a valid whole number.")
+            else:
+                print("Please enter a valid number.")
+
+
 def partner_share_for(item):
     mode = item["partner_share_mode"]
     retail_price = item["retail_price"]
@@ -107,6 +149,10 @@ def partner_share_for(item):
         raise ValueError(f"Invalid partner share mode: {mode}")
 
 
+def view_dashboard():
+    pass
+
+
 def print_product(product):
     available = product["quantity_received"] - product["quantity_sold"]
     partner_cut = partner_share_for(product)
@@ -119,10 +165,6 @@ def print_product(product):
     print(f"Partner Cut: ${partner_cut:.2f}")
     print(f"Condition: {product['condition']}")
     print()
-
-
-def view_dashboard():
-    pass
 
 
 def view_inventory():
@@ -138,7 +180,6 @@ def view_inventory():
 
 def find_items_by_name(name):
     inventory = load_data(INVENTORY_FILE)
-
     matches = []
 
     for item in inventory:
@@ -163,9 +204,18 @@ def search():
 def add():
     category = ask_text("Category: ")
     name = ask_text("Name: ")
-    quantity_received = ask_int("Quantity received: ", min_value=1)
-    retail_price = ask_float("Retail price: ", min_value=0)
-    listed_price = ask_float("Listed price: ", min_value=0)
+    quantity_received = ask_int(
+        "Quantity received: ",
+        min_value=1
+    )
+    retail_price = ask_float(
+        "Retail price: ",
+        min_value=0
+    )
+    listed_price = ask_float(
+        "Listed price: ",
+        min_value=0
+    )
     condition = ask_text("Condition: ")
     notes = ask_optional_text("Notes: ")
 
@@ -196,6 +246,7 @@ def add():
             min_value=0,
             max_value=100
         )
+
         product["partner_share_value"] = partner_share_value
 
     elif partner_share_mode == "custom_amount":
@@ -203,6 +254,7 @@ def add():
             "Partner share per unit ($): ",
             min_value=0
         )
+
         product["partner_share_value"] = partner_share_value
 
     inventory.append(product)
@@ -213,7 +265,143 @@ def add():
 
 
 def edit():
-    pass
+    inventory = load_data(INVENTORY_FILE)
+
+    if not inventory:
+        print("Inventory is empty.")
+        return
+
+    name = ask_text("Search for a product to edit: ")
+
+    matches = []
+
+    for item in inventory:
+        if name.lower() in item["name"].lower():
+            matches.append(item)
+
+    if not matches:
+        print("No products found.")
+        return
+
+    if len(matches) > 1:
+        print("Multiple products found:")
+
+        for item in matches:
+            print(f"ID: {item['id']} | Name: {item['name']}")
+
+        valid_ids = [item["id"] for item in matches]
+
+        while True:
+            selected_id = ask_int(
+                "Enter the ID of the product to edit: "
+            )
+
+            if selected_id in valid_ids:
+                break
+
+            print("Invalid ID. Please choose one of the IDs shown above.")
+
+        product = next(
+            item for item in inventory
+            if item["id"] == selected_id
+        )
+
+    else:
+        product = matches[0]
+
+    print("Product selected:")
+    print_product(product)
+
+    product["category"] = ask_edit_text(
+        "Category",
+        product["category"]
+    )
+
+    product["name"] = ask_edit_text(
+        "Name",
+        product["name"]
+    )
+
+    product["quantity_received"] = ask_edit_number(
+        "Quantity received",
+        product["quantity_received"],
+        int,
+        min_value=1
+    )
+
+    product["retail_price"] = ask_edit_number(
+        "Retail price",
+        product["retail_price"],
+        float,
+        min_value=0
+    )
+
+    product["listed_price"] = ask_edit_number(
+        "Listed price",
+        product["listed_price"],
+        float,
+        min_value=0
+    )
+
+    product["condition"] = ask_edit_text(
+        "Condition",
+        product["condition"]
+    )
+
+    product["notes"] = ask_edit_text(
+        "Notes",
+        product["notes"]
+    )
+
+    print(
+        f"Current partner-share mode: "
+        f"{product['partner_share_mode']}"
+    )
+
+    if product["partner_share_mode"] != "default":
+        print(
+            f"Current partner-share value: "
+            f"{product['partner_share_value']}"
+        )
+
+    change_partner_share = ask_choice(
+        "Change partner share? (yes/no): ",
+        ["yes", "no"]
+    )
+
+    if change_partner_share == "yes":
+        partner_share_mode = ask_choice(
+            "Partner-share mode "
+            "(default/custom_percent/custom_amount): ",
+            ["default", "custom_percent", "custom_amount"]
+        )
+
+        if partner_share_mode == "default":
+            product["partner_share_mode"] = "default"
+            product.pop("partner_share_value", None)
+
+        elif partner_share_mode == "custom_percent":
+            partner_share_value = ask_float(
+                "Partner share percentage (%): ",
+                min_value=0,
+                max_value=100
+            )
+
+            product["partner_share_mode"] = "custom_percent"
+            product["partner_share_value"] = partner_share_value
+
+        elif partner_share_mode == "custom_amount":
+            partner_share_value = ask_float(
+                "Partner share per unit ($): ",
+                min_value=0
+            )
+
+            product["partner_share_mode"] = "custom_amount"
+            product["partner_share_value"] = partner_share_value
+
+    save_data(inventory, INVENTORY_FILE)
+
+    print("Product updated successfully.")
 
 
 def delete():
