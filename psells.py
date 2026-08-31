@@ -443,7 +443,64 @@ def delete():
 
 
 def record_sale():
-    pass
+    inventory = load_data(INVENTORY_FILE)
+
+    if not inventory:
+        print("Inventory is empty.")
+        return
+
+    product = select_product(inventory, "sell")
+
+    if product is None:
+        return
+
+    available = product["quantity_received"] - product["quantity_sold"]
+
+    if available == 0:
+        print("No stock available to sell.")
+        return
+
+    quantity = ask_int(
+        "Quantity sold: ",
+        min_value=1,
+        max_value=available
+    )
+
+    sale_price = ask_float(
+        "Sale price per unit ($): ",
+        min_value=0
+    )
+
+    date = ask_text("Date (YYYY-MM-DD): ")
+
+    partner_cut = partner_share_for(product)
+
+    print()
+    print("Sale information:")
+    print(f"Product: {product['name']}")
+    print(f"Quantity sold: {quantity}")
+    print(f"Sale price per unit: ${sale_price:.2f}")
+    print(f"Date: {date}")
+    print(f"Partner cut per unit: ${partner_cut:.2f}")
+
+    product["quantity_sold"] += quantity
+    save_data(inventory, INVENTORY_FILE)
+
+    sales = load_data(SALES_FILE)
+
+    sale = {
+        "id": next_id(sales),
+        "date": date,
+        "item_id": product["id"],
+        "quantity": quantity,
+        "sale_price": sale_price,
+        "partner_share": partner_cut
+    }
+
+    sales.append(sale)
+    save_data(sales, SALES_FILE)
+
+    print("Sale recorded.")
 
 
 def record_return():
