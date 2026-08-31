@@ -1,76 +1,281 @@
 import os
 import json
 
+
 INVENTORY_FILE = "data/inventory.json"
 SALES_FILE = "data/sales.json"
 RETURNS_FILE = "data/returns.json"
 PAYMENTS_FILE = "data/payments.json"
 
+
 def load_data(filepath):
     if not os.path.exists(filepath):
         return []
+
     with open(filepath) as f:
         return json.load(f)
-        
+
 
 def save_data(data, filepath):
     with open(filepath, "w") as f:
         json.dump(data, f, indent=2)
 
+
 def next_id(records):
     if not records:
         return 1
+
     return max(record["id"] for record in records) + 1
 
 
+def ask_text(prompt):
+    while True:
+        value = input(prompt).strip()
+
+        if value:
+            return value
+
+        print("Input cannot be blank. Please try again.")
+
+
+def ask_optional_text(prompt):
+    return input(prompt).strip()
+
+
+def ask_int(prompt, min_value=None, max_value=None):
+    while True:
+        try:
+            value = int(input(prompt))
+
+            if min_value is not None and value < min_value:
+                print(f"Value must be at least {min_value}.")
+                continue
+
+            if max_value is not None and value > max_value:
+                print(f"Value must be at most {max_value}.")
+                continue
+
+            return value
+
+        except ValueError:
+            print("Please enter a valid whole number.")
+
+
+def ask_float(prompt, min_value=None, max_value=None):
+    while True:
+        try:
+            value = float(input(prompt))
+
+            if min_value is not None and value < min_value:
+                print(f"Value must be at least {min_value}.")
+                continue
+
+            if max_value is not None and value > max_value:
+                print(f"Value must be at most {max_value}.")
+                continue
+
+            return value
+
+        except ValueError:
+            print("Please enter a valid number.")
+
+
+def ask_choice(prompt, options):
+    while True:
+        value = input(prompt).strip().lower()
+
+        if value in options:
+            return value
+
+        print("Invalid choice. Please try again.")
+
+
+def partner_share_for(item):
+    mode = item["partner_share_mode"]
+    retail_price = item["retail_price"]
+
+    if mode == "default":
+        return 0.35 * retail_price
+
+    elif mode == "custom_percent":
+        return (item["partner_share_value"] / 100) * retail_price
+
+    elif mode == "custom_amount":
+        return item["partner_share_value"]
+
+    else:
+        raise ValueError(f"Invalid partner share mode: {mode}")
+
+
+def print_product(product):
+    available = product["quantity_received"] - product["quantity_sold"]
+    partner_cut = partner_share_for(product)
+
+    print(f"ID: {product['id']}")
+    print(f"Name: {product['name']}")
+    print(f"Category: {product['category']}")
+    print(f"Available: {available}")
+    print(f"Listed Price: ${product['listed_price']:.2f}")
+    print(f"Partner Cut: ${partner_cut:.2f}")
+    print(f"Condition: {product['condition']}")
+    print()
+
+
 def view_dashboard():
-    pass  
+    pass
+
 
 def view_inventory():
-    pass  
+    inventory = load_data(INVENTORY_FILE)
+
+    if not inventory:
+        print("Inventory is empty.")
+        return
+
+    for product in inventory:
+        print_product(product)
+
+
+def find_items_by_name(name):
+    inventory = load_data(INVENTORY_FILE)
+
+    matches = []
+
+    for item in inventory:
+        if name.lower() in item["name"].lower():
+            matches.append(item)
+
+    return matches
+
 
 def search():
-    pass  
+    name = ask_text("Search for a product: ")
+    matches = find_items_by_name(name)
+
+    if not matches:
+        print("No products found.")
+        return
+
+    for product in matches:
+        print_product(product)
+
 
 def add():
-    pass  
+    category = ask_text("Category: ")
+    name = ask_text("Name: ")
+    quantity_received = ask_int("Quantity received: ", min_value=1)
+    retail_price = ask_float("Retail price: ", min_value=0)
+    listed_price = ask_float("Listed price: ", min_value=0)
+    condition = ask_text("Condition: ")
+    notes = ask_optional_text("Notes: ")
+
+    partner_share_mode = ask_choice(
+        "Partner-share mode (default/custom_percent/custom_amount): ",
+        ["default", "custom_percent", "custom_amount"]
+    )
+
+    inventory = load_data(INVENTORY_FILE)
+    product_id = next_id(inventory)
+
+    product = {
+        "id": product_id,
+        "category": category,
+        "name": name,
+        "quantity_received": quantity_received,
+        "retail_price": retail_price,
+        "listed_price": listed_price,
+        "condition": condition,
+        "notes": notes,
+        "quantity_sold": 0,
+        "partner_share_mode": partner_share_mode
+    }
+
+    if partner_share_mode == "custom_percent":
+        partner_share_value = ask_float(
+            "Partner share percentage (%): ",
+            min_value=0,
+            max_value=100
+        )
+        product["partner_share_value"] = partner_share_value
+
+    elif partner_share_mode == "custom_amount":
+        partner_share_value = ask_float(
+            "Partner share per unit ($): ",
+            min_value=0
+        )
+        product["partner_share_value"] = partner_share_value
+
+    inventory.append(product)
+
+    save_data(inventory, INVENTORY_FILE)
+
+    print("Product added successfully.")
+
 
 def edit():
-    pass  
+    pass
+
 
 def delete():
-    pass  
+    pass
+
 
 def record_sale():
-    pass  
+    pass
+
 
 def record_return():
     pass
 
+
 def record_payment():
     pass
 
+
 while True:
-    choice = input("Choose an option!\n0: Quit\n1: View Dashboard\n2: View Inventory\n3: Search\n4: Add\n5: Edit\n6: Delete\n7: Record Sale\n8: Record Return\n9: Record Payment\n")
+    choice = input(
+        "Choose an option!\n"
+        "0: Quit\n"
+        "1: View Dashboard\n"
+        "2: View Inventory\n"
+        "3: Search\n"
+        "4: Add\n"
+        "5: Edit\n"
+        "6: Delete\n"
+        "7: Record Sale\n"
+        "8: Record Return\n"
+        "9: Record Payment\n"
+    )
+
     if choice == "0":
         break
+
     elif choice == "1":
         view_dashboard()
+
     elif choice == "2":
         view_inventory()
+
     elif choice == "3":
         search()
+
     elif choice == "4":
         add()
+
     elif choice == "5":
         edit()
+
     elif choice == "6":
         delete()
+
     elif choice == "7":
         record_sale()
+
     elif choice == "8":
         record_return()
+
     elif choice == "9":
         record_payment()
+
     else:
         print("Invalid input try again!\n")
