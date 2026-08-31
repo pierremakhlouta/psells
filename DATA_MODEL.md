@@ -43,15 +43,18 @@ One record per product.
 | `quantity_sold`       | how many have sold                                          |
 | `retail_price`        | the item's price at major retailers                         |
 | `listed_price`        | the price PSells lists it at                                |
-| `partner_share_mode`  | how the partner's cut is set: `default` or `custom`         |
-| `partner_share_custom`| the fixed partner cut per unit, used only when mode = `custom` |
+| `partner_share_mode`  | how the partner's cut is set: `default`, `custom_percent`, or `custom_amount` |
+| `partner_share_value` | the custom setting's number (a percentage or a fixed per-unit amount); not used for `default` |
 | `condition`           | item condition                                              |
 | `notes`               | free-text notes                                             |
 
 **Computed, not stored:**
 - **Quantity available** = quantity_received minus quantity_sold.
-- **Partner share per unit** = a default portion of the retail price when mode is
-  `default`, or the fixed custom amount when mode is `custom`.
+- **Partner share per unit** (a dollar amount) is computed from the mode:
+  a default portion of the retail price for `default`, the custom percentage of
+  the retail price for `custom_percent`, or the fixed amount for `custom_amount`.
+  This dollar figure is shown when viewing or searching inventory; it is computed
+  on demand, never stored, so it always reflects the current retail price.
 
 Editing an item's partner-share setting changes only future sales.
 
