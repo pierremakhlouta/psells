@@ -405,7 +405,63 @@ def edit():
 
 
 def delete():
-    pass
+    inventory = load_data(INVENTORY_FILE)
+
+    name = ask_text("Search for a product to delete: ")
+    matches = []
+
+    for product in inventory:
+        if name.lower() in product["name"].lower():
+            matches.append(product)
+
+    if not matches:
+        print("No products found.")
+        return
+
+    if len(matches) == 1:
+        product_id = matches[0]["id"]
+
+    else:
+        print("Multiple products found:")
+
+        for product in matches:
+            print(f"ID: {product['id']} | Name: {product['name']}")
+
+        valid_ids = [product["id"] for product in matches]
+
+        while True:
+            product_id = ask_int("Enter the ID of the product to delete: ")
+
+            if product_id in valid_ids:
+                break
+
+            print("Invalid ID. Please choose one of the IDs shown above.")
+
+    product = next(
+        product for product in inventory
+        if product["id"] == product_id
+    )
+
+    print("Product selected:")
+    print_product(product)
+
+    confirmation = ask_choice(
+        "Delete this product? (yes/no): ",
+        ["yes", "no"]
+    )
+
+    if confirmation == "no":
+        print("Cancelled.")
+        return
+
+    inventory = [
+        item for item in inventory
+        if item["id"] != product["id"]
+    ]
+
+    save_data(inventory, INVENTORY_FILE)
+
+    print("Product deleted.")
 
 
 def record_sale():
