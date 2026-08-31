@@ -1,5 +1,6 @@
 import os
 import json
+from datetime import date, datetime
 
 
 INVENTORY_FILE = "data/inventory.json"
@@ -130,6 +131,22 @@ def ask_edit_number(
                 print("Please enter a valid whole number.")
             else:
                 print("Please enter a valid number.")
+                
+def ask_date(prompt):
+    while True:
+        text = input(
+            f"{prompt} (YYYY-MM-DD, blank for today): "
+        ).strip()
+
+        if text == "":
+            return date.today().isoformat()
+
+        try:
+            parsed = datetime.strptime(text, "%Y-%m-%d")
+            return parsed.strftime("%Y-%m-%d")
+
+        except ValueError:
+            print("Please enter a valid date in YYYY-MM-DD format.")
 
 
 def partner_share_for(item):
@@ -471,7 +488,7 @@ def record_sale():
         min_value=0
     )
 
-    date = ask_text("Date (YYYY-MM-DD): ")
+    date = ask_date("Date:")
 
     partner_cut = partner_share_for(product)
 
@@ -504,7 +521,51 @@ def record_sale():
 
 
 def record_return():
-    pass
+    inventory = load_data(INVENTORY_FILE)
+
+    if not inventory:
+        print("Inventory is empty.")
+        return
+
+    product = select_product(inventory, "return")
+
+    if product is None:
+        return
+
+    available = product["quantity_received"] - product["quantity_sold"]
+
+    if available == 0:
+        print("No stock available to return.")
+        return
+
+    quantity = ask_int(
+        "Quantity returned: ",
+        min_value=1,
+        max_value=available
+    )
+
+    date = ask_date("Date:")
+    notes = ask_optional_text("Notes: ")
+
+    product["quantity_received"] -= quantity
+
+    save_data(inventory, INVENTORY_FILE)
+
+    returns = load_data(RETURNS_FILE)
+
+    return_record = {
+        "id": next_id(returns),
+        "date": date,
+        "item_id": product["id"],
+        "quantity": quantity,
+        "notes": notes
+    }
+
+    returns.append(return_record)
+
+    save_data(returns, RETURNS_FILE)
+
+    print("Return recorded.")
 
 
 def record_payment():
