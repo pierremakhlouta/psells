@@ -178,8 +178,7 @@ def view_inventory():
         print_product(product)
 
 
-def find_items_by_name(name):
-    inventory = load_data(INVENTORY_FILE)
+def find_items_by_name(inventory, name):
     matches = []
 
     for item in inventory:
@@ -189,9 +188,47 @@ def find_items_by_name(name):
     return matches
 
 
+def select_product(inventory, action_word):
+    name = ask_text(
+        f"Search for a product to {action_word}: "
+    )
+
+    matches = find_items_by_name(inventory, name)
+
+    if not matches:
+        print("No products found.")
+        return None
+
+    if len(matches) == 1:
+        return matches[0]
+
+    print("Multiple products found:")
+
+    for item in matches:
+        print(f"ID: {item['id']} | Name: {item['name']}")
+
+    valid_ids = [item["id"] for item in matches]
+
+    while True:
+        selected_id = ask_int(
+            f"Enter the ID of the product to {action_word}: "
+        )
+
+        if selected_id in valid_ids:
+            return next(
+                item for item in inventory
+                if item["id"] == selected_id
+            )
+
+        print("Invalid ID. Please choose one of the IDs shown above.")
+
+
 def search():
     name = ask_text("Search for a product: ")
-    matches = find_items_by_name(name)
+    matches = find_items_by_name(
+        load_data(INVENTORY_FILE),
+        name
+    )
 
     if not matches:
         print("No products found.")
@@ -271,43 +308,10 @@ def edit():
         print("Inventory is empty.")
         return
 
-    name = ask_text("Search for a product to edit: ")
+    product = select_product(inventory, "edit")
 
-    matches = []
-
-    for item in inventory:
-        if name.lower() in item["name"].lower():
-            matches.append(item)
-
-    if not matches:
-        print("No products found.")
+    if product is None:
         return
-
-    if len(matches) > 1:
-        print("Multiple products found:")
-
-        for item in matches:
-            print(f"ID: {item['id']} | Name: {item['name']}")
-
-        valid_ids = [item["id"] for item in matches]
-
-        while True:
-            selected_id = ask_int(
-                "Enter the ID of the product to edit: "
-            )
-
-            if selected_id in valid_ids:
-                break
-
-            print("Invalid ID. Please choose one of the IDs shown above.")
-
-        product = next(
-            item for item in inventory
-            if item["id"] == selected_id
-        )
-
-    else:
-        product = matches[0]
 
     print("Product selected:")
     print_product(product)
@@ -407,40 +411,14 @@ def edit():
 def delete():
     inventory = load_data(INVENTORY_FILE)
 
-    name = ask_text("Search for a product to delete: ")
-    matches = []
-
-    for product in inventory:
-        if name.lower() in product["name"].lower():
-            matches.append(product)
-
-    if not matches:
-        print("No products found.")
+    if not inventory:
+        print("Inventory is empty.")
         return
 
-    if len(matches) == 1:
-        product_id = matches[0]["id"]
+    product = select_product(inventory, "delete")
 
-    else:
-        print("Multiple products found:")
-
-        for product in matches:
-            print(f"ID: {product['id']} | Name: {product['name']}")
-
-        valid_ids = [product["id"] for product in matches]
-
-        while True:
-            product_id = ask_int("Enter the ID of the product to delete: ")
-
-            if product_id in valid_ids:
-                break
-
-            print("Invalid ID. Please choose one of the IDs shown above.")
-
-    product = next(
-        product for product in inventory
-        if product["id"] == product_id
-    )
+    if product is None:
+        return
 
     print("Product selected:")
     print_product(product)
