@@ -55,6 +55,9 @@ copy the fake sample records into place first:
     cp sample_data/*.json data/
     python3 psells.py
 
+That copies the sample configuration across as well, which the application needs
+in order to start.
+
 The sample set is small and invented, but it covers the cases worth seeing: all
 three partner-share modes, a discontinued item, an item that has sold out, a
 return, and two partner payments.
@@ -69,12 +72,16 @@ Four JSON files under `data/`, each holding a list of records:
 | `sales.json`     | one record per sale                 |
 | `returns.json`   | stock sent back to the partner      |
 | `payments.json`  | payouts made to the partner         |
+| `config.json`    | settings, including the default partner-share percentage |
 
-Each file is created when it is first needed, so a first run against an empty
-`data/` folder works without any setup.
+The four record files are created when first needed, so a run against an empty
+`data/` folder works without setup. `config.json` is the exception: it has to
+exist, and the application says so plainly if it does not.
 
 Everything under `data/` is gitignored. This tracks a real business, and its
-prices, margins and balances do not belong in a public repository.
+prices, margins, balances and commercial terms do not belong in a public
+repository. The percentage in `sample_data/config.json` is a placeholder, not the
+real figure.
 
 ## Where this is going
 

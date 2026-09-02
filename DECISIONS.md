@@ -41,3 +41,10 @@ calls only, not every detail, and no specific business figures.
   fixed per-unit partner amount and the application refuses the other modes,
   because a percentage of a price the item no longer has is not a number worth
   computing.
+
+- **Commercial terms live outside the repository.** The default partner
+  percentage is a real business term, so it is read from a configuration file
+  under the ignored data folder rather than written into the source. The code
+  ships with a placeholder sample instead. This keeps the figure private in a
+  public repository, and it means renegotiating the rate is a one-line edit in
+  one file rather than a code change.

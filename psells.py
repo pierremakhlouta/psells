@@ -7,6 +7,7 @@ INVENTORY_FILE = "data/inventory.json"
 SALES_FILE = "data/sales.json"
 RETURNS_FILE = "data/returns.json"
 PAYMENTS_FILE = "data/payments.json"
+CONFIG_FILE = "data/config.json"
 
 
 def load_data(filepath):
@@ -27,6 +28,17 @@ def next_id(records):
         return 1
 
     return max(record["id"] for record in records) + 1
+
+
+def load_config():
+    if not os.path.exists(CONFIG_FILE):
+        raise FileNotFoundError(
+            f"{CONFIG_FILE} not found. "
+            f"Copy sample_data/config.json into data/ and set your own values."
+        )
+
+    with open(CONFIG_FILE) as f:
+        return json.load(f)
 
 
 def ask_text(prompt):
@@ -165,12 +177,32 @@ def ask_edit_choice(prompt, current, options):
         print("Invalid choice. Please try again.")
 
 
+def default_partner_share_percent():
+    config = load_config()
+
+    percent = config.get("default_partner_share_percent")
+
+    if not isinstance(percent, (int, float)) or isinstance(percent, bool):
+        raise ValueError(
+            f"default_partner_share_percent in {CONFIG_FILE} "
+            f"must be a number, found {percent!r}"
+        )
+
+    if not 0 <= percent <= 100:
+        raise ValueError(
+            f"default_partner_share_percent in {CONFIG_FILE} "
+            f"must be between 0 and 100, found {percent}"
+        )
+
+    return percent
+
+
 def partner_share_for(item):
     mode = item["partner_share_mode"]
     retail_price = item["retail_price"]
 
     if mode == "default":
-        return 0.35 * retail_price
+        return (default_partner_share_percent() / 100) * retail_price
 
     elif mode == "custom_percent":
         return (item["partner_share_value"] / 100) * retail_price

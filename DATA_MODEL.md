@@ -52,8 +52,10 @@ One record per product.
 **Computed, not stored:**
 - **Quantity available** = quantity_received minus quantity_sold.
 - **Partner share per unit** (a dollar amount) is computed from the mode:
-  a default portion of the retail price for `default`, the custom percentage of
-  the retail price for `custom_percent`, or the fixed amount for `custom_amount`.
+  a configured default portion of the retail price for `default`, the custom
+  percentage of the retail price for `custom_percent`, or the fixed amount for
+  `custom_amount`. The default percentage is read from `data/config.json`, which
+  is not part of the repository.
   This dollar figure is shown when viewing or searching inventory; it is computed
   on demand, never stored, so it always reflects the current retail price.
 
