@@ -48,3 +48,12 @@ calls only, not every detail, and no specific business figures.
   ships with a placeholder sample instead. This keeps the figure private in a
   public repository, and it means renegotiating the rate is a one-line edit in
   one file rather than a code change.
+
+- **The spreadsheet was cleaned before it was imported.** The original workbook
+  carried the partner's terms in three different places, including free text
+  inside a condition column and inside notes. Rather than write parsing logic
+  against inconsistent prose, the source was given explicit columns first, so the
+  one-time import became a straight mapping with nothing inferred. The importer
+  builds every record in memory, validates the whole result, and writes both
+  files or neither, because a half-finished import gives no way to tell which
+  half is real.
