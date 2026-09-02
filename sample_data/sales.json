@@ -1,0 +1,26 @@
+[
+  {
+    "id": 1,
+    "date": "2026-05-14",
+    "item_id": 1,
+    "quantity": 1,
+    "sale_price": 150.0,
+    "partner_share": 70.0
+  },
+  {
+    "id": 2,
+    "date": "2026-06-02",
+    "item_id": 2,
+    "quantity": 2,
+    "sale_price": 210.0,
+    "partner_share": 120.0
+  },
+  {
+    "id": 3,
+    "date": "2026-07-19",
+    "item_id": 3,
+    "quantity": 1,
+    "sale_price": 28.0,
+    "partner_share": 12.0
+  }
+]

@@ -14,8 +14,4 @@ __pycache__/
 data/*.csv
 data/*.json
 
-!data/products.sample.csv
-!data/products.sample.json
-
-
 .vscode/

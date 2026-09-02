@@ -1,0 +1,14 @@
+[
+  {
+    "id": 1,
+    "date": "2026-06-05",
+    "amount": 150.0,
+    "notes": "Cash"
+  },
+  {
+    "id": 2,
+    "date": "2026-07-25",
+    "amount": 40.0,
+    "notes": "e-transfer"
+  }
+]

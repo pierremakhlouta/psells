@@ -29,8 +29,10 @@ calls only, not every detail, and no specific business figures.
   on an earlier sale.
 
 - **Real data stays out of the repo.** Actual inventory and financials are never
-  committed, preventing accidental exposure of business data. Sample data ships
-  so the app runs for anyone; real data is gitignored.
+  committed, preventing accidental exposure of business data. Everything under
+  the data folder is ignored with no exceptions, so no rule has to be trusted to
+  tell real records apart from fake ones. Invented sample data lives in its own
+  folder and is copied into place by anyone who wants to run the app.
 
 - **Discontinued items are marked, not inferred.** Some stock is no longer sold
   at retail and has no retail price to work from. Rather than letting a zero
