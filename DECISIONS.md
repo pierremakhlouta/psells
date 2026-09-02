@@ -31,3 +31,11 @@ calls only, not every detail, and no specific business figures.
 - **Real data stays out of the repo.** Actual inventory and financials are never
   committed, preventing accidental exposure of business data. Sample data ships
   so the app runs for anyone; real data is gitignored.
+
+- **Discontinued items are marked, not inferred.** Some stock is no longer sold
+  at retail and has no retail price to work from. Rather than letting a zero
+  price quietly stand for that, items carry an explicit flag, so the meaning
+  lives in the data instead of in the owner's head. A discontinued item takes a
+  fixed per-unit partner amount and the application refuses the other modes,
+  because a percentage of a price the item no longer has is not a number worth
+  computing.

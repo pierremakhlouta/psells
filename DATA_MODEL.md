@@ -43,6 +43,7 @@ One record per product.
 | `quantity_sold`       | how many have sold                                          |
 | `retail_price`        | the item's price at major retailers                         |
 | `listed_price`        | the price PSells lists it at                                |
+| `discontinued`        | whether the item is no longer sold at retail; always present, true or false |
 | `partner_share_mode`  | how the partner's cut is set: `default`, `custom_percent`, or `custom_amount` |
 | `partner_share_value` | the custom setting's number (a percentage or a fixed per-unit amount); not used for `default` |
 | `condition`           | item condition                                              |
@@ -57,6 +58,14 @@ One record per product.
   on demand, never stored, so it always reflects the current retail price.
 
 Editing an item's partner-share setting changes only future sales.
+
+**Discontinued items.** An item marked `discontinued` is no longer sold at major
+retailers, so it has no meaningful retail price and stores zero. Because a
+percentage of a price that no longer exists would be a meaningless number, a
+discontinued item must use `custom_amount`, a fixed per-unit figure agreed with
+the partner. The application enforces this: it will not put a discontinued item
+on any other mode, and clearing the flag requires entering a retail price before
+the other modes become available again.
 
 ## Sales (`sales.json`)
 

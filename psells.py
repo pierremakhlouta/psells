@@ -150,6 +150,21 @@ def ask_edit_number(
                 print("Please enter a valid number.")
 
 
+def ask_edit_choice(prompt, current, options):
+    while True:
+        value = input(
+            f"{prompt} [{current}]: "
+        ).strip().lower()
+
+        if value == "":
+            return current
+
+        if value in options:
+            return value
+
+        print("Invalid choice. Please try again.")
+
+
 def partner_share_for(item):
     mode = item["partner_share_mode"]
     retail_price = item["retail_price"]
@@ -165,8 +180,6 @@ def partner_share_for(item):
 
     else:
         raise ValueError(f"Invalid partner share mode: {mode}")
-
-
 def view_dashboard():
     inventory = load_data(INVENTORY_FILE)
     sales = load_data(SALES_FILE)
@@ -237,10 +250,9 @@ def print_product(product):
     print(f"Available: {available}")
     print(f"Listed Price: ${product['listed_price']:.2f}")
     print(f"Partner Cut: ${partner_cut:.2f}")
+    print(f"Discontinued: {'Yes' if product.get('discontinued', False) else 'No'}")
     print(f"Condition: {product['condition']}")
     print()
-
-
 def view_inventory():
     inventory = load_data(INVENTORY_FILE)
 
@@ -309,8 +321,6 @@ def select_product(inventory, action_word):
         )
 
     return product
-
-
 def search():
     inventory = load_data(INVENTORY_FILE)
 
@@ -334,10 +344,18 @@ def add():
         min_value=1
     )
 
-    retail_price = ask_float(
-        "Retail price: ",
-        min_value=0
-    )
+    discontinued = ask_choice(
+        "Discontinued? (yes/no): ",
+        ["yes", "no"]
+    ) == "yes"
+
+    if discontinued:
+        retail_price = 0.0
+    else:
+        retail_price = ask_float(
+            "Retail price: ",
+            min_value=0
+        )
 
     listed_price = ask_float(
         "Listed price: ",
@@ -347,11 +365,33 @@ def add():
     condition = ask_text("Condition: ")
     notes = ask_optional_text("Notes: ")
 
-    partner_share_mode = ask_choice(
-        "Partner-share mode "
-        "(default/custom_percent/custom_amount): ",
-        ["default", "custom_percent", "custom_amount"]
-    )
+    if discontinued:
+        partner_share_mode = "custom_amount"
+        partner_share_value = ask_float(
+            "Partner share per unit ($): ",
+            min_value=0
+        )
+    else:
+        partner_share_mode = ask_choice(
+            "Partner-share mode "
+            "(default/custom_percent/custom_amount): ",
+            ["default", "custom_percent", "custom_amount"]
+        )
+
+        partner_share_value = None
+
+        if partner_share_mode == "custom_percent":
+            partner_share_value = ask_float(
+                "Partner share percentage (%): ",
+                min_value=0,
+                max_value=100
+            )
+
+        elif partner_share_mode == "custom_amount":
+            partner_share_value = ask_float(
+                "Partner share per unit ($): ",
+                min_value=0
+            )
 
     inventory = load_data(INVENTORY_FILE)
     product_id = next_id(inventory)
@@ -366,24 +406,11 @@ def add():
         "condition": condition,
         "notes": notes,
         "quantity_sold": 0,
+        "discontinued": discontinued,
         "partner_share_mode": partner_share_mode
     }
 
-    if partner_share_mode == "custom_percent":
-        partner_share_value = ask_float(
-            "Partner share percentage (%): ",
-            min_value=0,
-            max_value=100
-        )
-
-        product["partner_share_value"] = partner_share_value
-
-    elif partner_share_mode == "custom_amount":
-        partner_share_value = ask_float(
-            "Partner share per unit ($): ",
-            min_value=0
-        )
-
+    if partner_share_value is not None:
         product["partner_share_value"] = partner_share_value
 
     inventory.append(product)
@@ -422,15 +449,36 @@ def edit():
         "Quantity received",
         product["quantity_received"],
         int,
-        min_value=1
+        min_value=max(1, product["quantity_sold"])
     )
 
-    product["retail_price"] = ask_edit_number(
-        "Retail price",
-        product["retail_price"],
-        float,
-        min_value=0
+    was_discontinued = product.get("discontinued", False)
+
+    current_discontinued = "yes" if was_discontinued else "no"
+
+    discontinued_choice = ask_edit_choice(
+        "Discontinued? (yes/no)",
+        current_discontinued,
+        ["yes", "no"]
     )
+
+    discontinued = discontinued_choice == "yes"
+
+    if discontinued:
+        product["retail_price"] = 0.0
+    else:
+        if was_discontinued:
+            product["retail_price"] = ask_float(
+                "Retail price: ",
+                min_value=0
+            )
+        else:
+            product["retail_price"] = ask_edit_number(
+                "Retail price",
+                product["retail_price"],
+                float,
+                min_value=0
+            )
 
     product["listed_price"] = ask_edit_number(
         "Listed price",
@@ -449,44 +497,8 @@ def edit():
         product["notes"]
     )
 
-    print(
-        f"Current partner-share mode: "
-        f"{product['partner_share_mode']}"
-    )
-
-    if product["partner_share_mode"] != "default":
-        print(
-            f"Current partner-share value: "
-            f"{product['partner_share_value']}"
-        )
-
-    change_partner_share = ask_choice(
-        "Change partner share? (yes/no): ",
-        ["yes", "no"]
-    )
-
-    if change_partner_share == "yes":
-        partner_share_mode = ask_choice(
-            "Partner-share mode "
-            "(default/custom_percent/custom_amount): ",
-            ["default", "custom_percent", "custom_amount"]
-        )
-
-        if partner_share_mode == "default":
-            product["partner_share_mode"] = "default"
-            product.pop("partner_share_value", None)
-
-        elif partner_share_mode == "custom_percent":
-            partner_share_value = ask_float(
-                "Partner share percentage (%): ",
-                min_value=0,
-                max_value=100
-            )
-
-            product["partner_share_mode"] = "custom_percent"
-            product["partner_share_value"] = partner_share_value
-
-        elif partner_share_mode == "custom_amount":
+    if not was_discontinued and discontinued:
+        if product["partner_share_mode"] != "custom_amount":
             partner_share_value = ask_float(
                 "Partner share per unit ($): ",
                 min_value=0
@@ -495,11 +507,109 @@ def edit():
             product["partner_share_mode"] = "custom_amount"
             product["partner_share_value"] = partner_share_value
 
+    elif was_discontinued and not discontinued:
+        change_partner_share = ask_choice(
+            "Change partner share? (yes/no): ",
+            ["yes", "no"]
+        )
+
+        if change_partner_share == "yes":
+            partner_share_mode = ask_choice(
+                "Partner-share mode "
+                "(default/custom_percent/custom_amount): ",
+                ["default", "custom_percent", "custom_amount"]
+            )
+
+            if partner_share_mode == "default":
+                product["partner_share_mode"] = "default"
+                product.pop("partner_share_value", None)
+
+            elif partner_share_mode == "custom_percent":
+                partner_share_value = ask_float(
+                    "Partner share percentage (%): ",
+                    min_value=0,
+                    max_value=100
+                )
+
+                product["partner_share_mode"] = "custom_percent"
+                product["partner_share_value"] = partner_share_value
+
+            else:
+                partner_share_value = ask_float(
+                    "Partner share per unit ($): ",
+                    min_value=0
+                )
+
+                product["partner_share_mode"] = "custom_amount"
+                product["partner_share_value"] = partner_share_value
+
+    elif discontinued:
+        change_partner_share = ask_choice(
+            "Change partner share? (yes/no): ",
+            ["yes", "no"]
+        )
+
+        if change_partner_share == "yes":
+            partner_share_value = ask_float(
+                "Partner share per unit ($): ",
+                min_value=0
+            )
+
+            product["partner_share_mode"] = "custom_amount"
+            product["partner_share_value"] = partner_share_value
+
+    else:
+        print(
+            f"Current partner-share mode: "
+            f"{product['partner_share_mode']}"
+        )
+
+        if product["partner_share_mode"] != "default":
+            print(
+                f"Current partner-share value: "
+                f"{product['partner_share_value']}"
+            )
+
+        change_partner_share = ask_choice(
+            "Change partner share? (yes/no): ",
+            ["yes", "no"]
+        )
+
+        if change_partner_share == "yes":
+            partner_share_mode = ask_choice(
+                "Partner-share mode "
+                "(default/custom_percent/custom_amount): ",
+                ["default", "custom_percent", "custom_amount"]
+            )
+
+            if partner_share_mode == "default":
+                product["partner_share_mode"] = "default"
+                product.pop("partner_share_value", None)
+
+            elif partner_share_mode == "custom_percent":
+                partner_share_value = ask_float(
+                    "Partner share percentage (%): ",
+                    min_value=0,
+                    max_value=100
+                )
+
+                product["partner_share_mode"] = "custom_percent"
+                product["partner_share_value"] = partner_share_value
+
+            else:
+                partner_share_value = ask_float(
+                    "Partner share per unit ($): ",
+                    min_value=0
+                )
+
+                product["partner_share_mode"] = "custom_amount"
+                product["partner_share_value"] = partner_share_value
+
+    product["discontinued"] = discontinued
+
     save_data(inventory, INVENTORY_FILE)
 
     print("Product updated successfully.")
-
-
 def delete():
     inventory = load_data(INVENTORY_FILE)
 
@@ -566,7 +676,7 @@ def record_sale():
         min_value=0
     )
 
-    sale_date = ask_date("Date: ")
+    sale_date = ask_date("Date")
 
     partner_cut = partner_share_for(product)
 
@@ -598,8 +708,6 @@ def record_sale():
     save_data(sales, SALES_FILE)
 
     print("Sale recorded.")
-
-
 def record_return():
     inventory = load_data(INVENTORY_FILE)
 
@@ -627,7 +735,7 @@ def record_return():
         max_value=available
     )
 
-    return_date = ask_date("Date: ")
+    return_date = ask_date("Date")
     notes = ask_optional_text("Notes: ")
 
     product["quantity_received"] -= quantity
@@ -654,7 +762,7 @@ def record_return():
 def record_payment():
     payments = load_data(PAYMENTS_FILE)
 
-    payment_date = ask_date("Date: ")
+    payment_date = ask_date("Date")
 
     amount = ask_float(
         "Amount ($): ",
