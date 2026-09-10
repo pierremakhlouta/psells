@@ -56,3 +56,64 @@ def test_find_items_by_name_returns_every_match(inventory):
 
 def test_find_items_by_name_returns_empty_list_when_nothing_matches(inventory):
     assert psells.find_items_by_name(inventory, "Puma") == []
+
+def test_partner_share_default_mode(monkeypatch):
+    monkeypatch.setattr(psells, "default_partner_share_percent", lambda: 40.0)
+
+    item = {
+        "partner_share_mode": "default",
+        "retail_price": 500.0
+    }
+
+    assert psells.partner_share_for(item) == pytest.approx(200.0)
+
+
+def test_partner_share_default_mode_on_an_awkward_price(monkeypatch):
+    monkeypatch.setattr(psells, "default_partner_share_percent", lambda: 40.0)
+
+    item = {
+        "partner_share_mode": "default",
+        "retail_price": 19.99
+    }
+
+    assert psells.partner_share_for(item) == pytest.approx(7.996)
+
+
+def test_partner_share_custom_percent_mode():
+    item = {
+        "partner_share_mode": "custom_percent",
+        "retail_price": 700.0,
+        "partner_share_value": 40.0
+    }
+
+    assert psells.partner_share_for(item) == pytest.approx(280.0)
+
+
+def test_partner_share_custom_amount_mode_ignores_retail_price():
+    item = {
+        "partner_share_mode": "custom_amount",
+        "retail_price": 700.0,
+        "partner_share_value": 30.0
+    }
+
+    assert psells.partner_share_for(item) == pytest.approx(30.0)
+
+
+def test_partner_share_for_a_discontinued_item():
+    item = {
+        "partner_share_mode": "custom_amount",
+        "retail_price": 0.0,
+        "partner_share_value": 25.0
+    }
+
+    assert psells.partner_share_for(item) == pytest.approx(25.0)
+
+
+def test_partner_share_unknown_mode_raises():
+    item = {
+        "partner_share_mode": "percentage",
+        "retail_price": 100.0
+    }
+
+    with pytest.raises(ValueError, match="Invalid partner share mode"):
+        psells.partner_share_for(item)
