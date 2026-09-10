@@ -117,3 +117,54 @@ def test_partner_share_unknown_mode_raises():
 
     with pytest.raises(ValueError, match="Invalid partner share mode"):
         psells.partner_share_for(item)
+
+@pytest.fixture
+def totals():
+    inventory = [
+        {"quantity_received": 5, "quantity_sold": 2},
+        {"quantity_received": 10, "quantity_sold": 4}
+    ]
+
+    sales = [
+        {"quantity": 2, "sale_price": 150.0, "partner_share": 70.0},
+        {"quantity": 3, "sale_price": 80.0, "partner_share": 25.0},
+        {"quantity": 1, "sale_price": 19.99, "partner_share": 7.996}
+    ]
+
+    returns = [
+        {"quantity": 1}
+    ]
+
+    payments = [
+        {"amount": 100.0},
+        {"amount": 50.0}
+    ]
+
+    return psells.dashboard_totals(inventory, sales, returns, payments)
+
+
+def test_dashboard_quantities(totals):
+    assert totals["total_received"] == 15
+    assert totals["total_sold"] == 6
+    assert totals["total_available"] == 9
+    assert totals["total_returned"] == 1
+
+
+def test_dashboard_revenue(totals):
+    assert totals["total_revenue"] == pytest.approx(559.99)
+
+
+def test_dashboard_partner_share_earned(totals):
+    assert totals["total_partner_share"] == pytest.approx(222.996)
+
+
+def test_dashboard_profit(totals):
+    assert totals["total_profit"] == pytest.approx(336.994)
+
+
+def test_dashboard_total_paid(totals):
+    assert totals["total_paid"] == pytest.approx(150.0)
+
+
+def test_dashboard_balance_owing(totals):
+    assert totals["balance_owing"] == pytest.approx(72.996)
