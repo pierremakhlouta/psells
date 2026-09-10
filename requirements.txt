@@ -1,3 +1,5 @@
 # psells.py uses only the Python standard library and needs nothing here.
 # openpyxl is required only by import_excel.py, the one-time Excel migration.
 openpyxl==3.1.5
+# pytest is a development dependency, used to run the test suite locally and in CI.
+pytest==9.1.1
