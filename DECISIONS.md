@@ -57,3 +57,52 @@ calls only, not every detail, and no specific business figures.
   builds every record in memory, validates the whole result, and writes both
   files or neither, because a half-finished import gives no way to tell which
   half is real.
+
+- **The application became importable.** The menu loop used to run at the top
+  level of the file, so merely importing it started the interactive menu. That is
+  why the one-time import script could not reuse a single helper and had to
+  duplicate its validation instead. The loop now sits behind an entry-point
+  guard, so the file can be read as a library or run as a program. The same
+  startup path checks the configuration file once and exits with a sentence if it
+  is missing or unusable, rather than raising a stack trace later, the first time
+  a product happens to be displayed. Failing immediately with an explanation
+  beats failing halfway through a task.
+
+- **Calculations were separated from printing.** The dashboard used to read four
+  files, work out nine figures, and print them, all in one function, so there was
+  no way to check the arithmetic except by reading terminal output. The figures
+  now come from a function that takes the four datasets and returns them as a
+  set of named values; the dashboard only fetches and displays. This was done to
+  make the totals testable, but the same separation is what a future web
+  interface needs, since that interface must call the same logic rather than work
+  the totals out a second time for itself. The change was confirmed to alter
+  nothing by comparing the dashboard output against real data before and after.
+
+- **Tests fake the commercial terms rather than reading them.** Because the
+  default partner percentage lives in an ignored configuration file, a test that
+  exercised the default mode for real would depend on a private figure and would
+  fail anywhere that file does not exist, which includes every automated run on a
+  build server. Tests replace the function that reads the configuration with one
+  returning an invented number. That keeps the real term out of a public
+  repository and keeps the tests independent of the machine running them.
+
+- **Money is compared with a tolerance, never exactly.** Floating-point
+  arithmetic makes some of these figures land a fraction away from the value they
+  should be. The same formula returns an exact result for one price and a value
+  trailing a string of nines for another, and there is nothing about a case that
+  says in advance which it will be. Every test assertion against a currency
+  figure therefore allows a small tolerance. Quantities, being whole numbers, are
+  still compared exactly.
+
+- **Tests and the dependency audit are separate automated workflows.** Run as a
+  single unit, a failing test would end the run before the audit executed, so a
+  broken test would also hide whether the dependencies were safe. Kept apart,
+  each reports its own result. The audit additionally runs on a weekly schedule,
+  because vulnerabilities get discovered in dependencies that have not changed,
+  and a check that only runs when code is pushed would never find them.
+
+- **The test runner is pinned, the security scanner is not.** Pinning the test
+  runner means every run uses the version the tests were written against, so a
+  failure is a real failure rather than a change in the tool. The scanner is the
+  opposite case: an older version simply knows about fewer vulnerabilities, so it
+  is deliberately left to update itself.
