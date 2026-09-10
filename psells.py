@@ -1,5 +1,6 @@
 import os
 import json
+import sys
 from datetime import date, datetime
 
 
@@ -816,8 +817,13 @@ def record_payment():
 
     print("Payment recorded.")
 
-
 def main():
+    try:
+        default_partner_share_percent()
+    except (FileNotFoundError, ValueError) as error:
+        print(f"Configuration error: {error}")
+        sys.exit(1)
+
     while True:
         choice = input(
             "Choose an option!\n"
