@@ -213,12 +213,9 @@ def partner_share_for(item):
 
     else:
         raise ValueError(f"Invalid partner share mode: {mode}")
-def view_dashboard():
-    inventory = load_data(INVENTORY_FILE)
-    sales = load_data(SALES_FILE)
-    returns = load_data(RETURNS_FILE)
-    payments = load_data(PAYMENTS_FILE)
 
+    
+def dashboard_totals(inventory, sales, returns, payments):
     total_received = sum(
         product["quantity_received"]
         for product in inventory
@@ -228,8 +225,6 @@ def view_dashboard():
         product["quantity_sold"]
         for product in inventory
     )
-
-    total_available = total_received - total_sold
 
     total_returned = sum(
         item["quantity"]
@@ -246,27 +241,44 @@ def view_dashboard():
         for sale in sales
     )
 
-    total_profit = total_revenue - total_partner_share
-
     total_paid = sum(
         payment["amount"]
         for payment in payments
     )
 
-    balance_owing = total_partner_share - total_paid
+    return {
+        "total_received": total_received,
+        "total_sold": total_sold,
+        "total_available": total_received - total_sold,
+        "total_returned": total_returned,
+        "total_revenue": total_revenue,
+        "total_partner_share": total_partner_share,
+        "total_profit": total_revenue - total_partner_share,
+        "total_paid": total_paid,
+        "balance_owing": total_partner_share - total_paid
+    }
+
+
+def view_dashboard():
+    totals = dashboard_totals(
+        load_data(INVENTORY_FILE),
+        load_data(SALES_FILE),
+        load_data(RETURNS_FILE),
+        load_data(PAYMENTS_FILE)
+    )
 
     print("Dashboard")
     print()
-    print(f"Total received: {total_received}")
-    print(f"Total sold: {total_sold}")
-    print(f"Total available: {total_available}")
-    print(f"Total returned: {total_returned}")
+    print(f"Total received: {totals['total_received']}")
+    print(f"Total sold: {totals['total_sold']}")
+    print(f"Total available: {totals['total_available']}")
+    print(f"Total returned: {totals['total_returned']}")
     print()
-    print(f"Total revenue: ${total_revenue:.2f}")
-    print(f"Total profit: ${total_profit:.2f}")
-    print(f"Total partner share earned: ${total_partner_share:.2f}")
-    print(f"Total paid: ${total_paid:.2f}")
-    print(f"Balance owing: ${balance_owing:.2f}")
+    print(f"Total revenue: ${totals['total_revenue']:.2f}")
+    print(f"Total profit: ${totals['total_profit']:.2f}")
+    print(f"Total partner share earned: ${totals['total_partner_share']:.2f}")
+    print(f"Total paid: ${totals['total_paid']:.2f}")
+    print(f"Balance owing: ${totals['balance_owing']:.2f}")
 
 
 def print_product(product):
