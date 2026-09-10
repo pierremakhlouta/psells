@@ -1,5 +1,8 @@
 # PSells
 
+[![Tests](https://github.com/pierremakhlouta/psells/actions/workflows/tests.yml/badge.svg)](https://github.com/pierremakhlouta/psells/actions/workflows/tests.yml)
+[![Security](https://github.com/pierremakhlouta/psells/actions/workflows/security.yml/badge.svg)](https://github.com/pierremakhlouta/psells/actions/workflows/security.yml)
+
 A command-line inventory and profit tracker for my reselling business.
 
 PSells replaces the spreadsheet that used to run the business. It tracks the
@@ -24,7 +27,7 @@ Python 3. The application itself uses only the standard library, so there is
 nothing to install in order to run it.
 
 `openpyxl` is needed only by `import_excel.py`, the one-time script that migrated
-the original spreadsheet:
+the original spreadsheet, and `pytest` only to run the test suite:
 
     pip install -r requirements.txt
 
@@ -48,45 +51,41 @@ relative to the working directory.
 
 ## Trying it with sample data
 
-The real data files are not in this repository. To see the application working,
-copy the fake sample records into place first:
+The real data files are not in this repository. Everything under `data/` is
+gitignored, because this tracks a real business and its prices, margins and
+commercial terms do not belong in a public repository.
+
+To see the application working, copy the fake sample records into place first:
 
     mkdir -p data
     cp sample_data/*.json data/
     python3 psells.py
 
 That copies the sample configuration across as well, which the application needs
-in order to start.
+in order to start. It will say so plainly if the configuration is missing rather
+than failing partway through. The percentage in `sample_data/config.json` is a
+placeholder, not the real figure.
 
 The sample set is small and invented, but it covers the cases worth seeing: all
 three partner-share modes, a discontinued item, an item that has sold out, a
 return, and two partner payments.
 
-## Data
+## Running the tests
 
-Four JSON files under `data/`, each holding a list of records:
+    pip install -r requirements.txt
+    pytest
 
-| File | Holds |
-|------------------|-------------------------------------|
-| `inventory.json` | one record per product              |
-| `sales.json`     | one record per sale                 |
-| `returns.json`   | stock sent back to the partner      |
-| `payments.json`  | payouts made to the partner         |
-| `config.json`    | settings, including the default partner-share percentage |
+The suite covers the logic with no input or output: partner-share calculation in
+all three modes, id assignment, product search, and the dashboard totals. It runs
+on every push through GitHub Actions, along with a dependency vulnerability audit.
 
-The four record files are created when first needed, so a run against an empty
-`data/` folder works without setup. `config.json` is the exception: it has to
-exist, and the application says so plainly if it does not.
-
-Everything under `data/` is gitignored. This tracks a real business, and its
-prices, margins, balances and commercial terms do not belong in a public
-repository. The percentage in `sample_data/config.json` is a placeholder, not the
-real figure.
+The tests need no data files. They build their own fixtures, so they run against
+a fresh clone with an empty `data/` folder.
 
 ## Where this is going
 
 PSells is built one layer at a time as a long-running project rather than a
-finished product. The terminal application is the working core. Planned on top
-of it are automated tests and continuous integration, a move from JSON files to
-a real database, a web API, containers, and cloud deployment, carrying the same
-data model and business rules through each step.
+finished product. The terminal application is the working core, covered by an
+automated test suite that runs on every push. Planned on top of it are a move
+from JSON files to a real database, a web API, containers, and cloud deployment,
+carrying the same data model and business rules through each step.
