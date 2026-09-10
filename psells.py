@@ -817,50 +817,55 @@ def record_payment():
     print("Payment recorded.")
 
 
-while True:
-    choice = input(
-        "Choose an option!\n"
-        "0: Quit\n"
-        "1: View Dashboard\n"
-        "2: View Inventory\n"
-        "3: Search\n"
-        "4: Add\n"
-        "5: Edit\n"
-        "6: Delete\n"
-        "7: Record Sale\n"
-        "8: Record Return\n"
-        "9: Record Payment\n"
-    )
+def main():
+    while True:
+        choice = input(
+            "Choose an option!\n"
+            "0: Quit\n"
+            "1: View Dashboard\n"
+            "2: View Inventory\n"
+            "3: Search\n"
+            "4: Add\n"
+            "5: Edit\n"
+            "6: Delete\n"
+            "7: Record Sale\n"
+            "8: Record Return\n"
+            "9: Record Payment\n"
+        )
 
-    if choice == "0":
-        break
+        if choice == "0":
+            break
 
-    elif choice == "1":
-        view_dashboard()
+        elif choice == "1":
+            view_dashboard()
 
-    elif choice == "2":
-        view_inventory()
+        elif choice == "2":
+            view_inventory()
 
-    elif choice == "3":
-        search()
+        elif choice == "3":
+            search()
 
-    elif choice == "4":
-        add()
+        elif choice == "4":
+            add()
 
-    elif choice == "5":
-        edit()
+        elif choice == "5":
+            edit()
 
-    elif choice == "6":
-        delete()
+        elif choice == "6":
+            delete()
 
-    elif choice == "7":
-        record_sale()
+        elif choice == "7":
+            record_sale()
 
-    elif choice == "8":
-        record_return()
+        elif choice == "8":
+            record_return()
 
-    elif choice == "9":
-        record_payment()
+        elif choice == "9":
+            record_payment()
 
-    else:
-        print("Invalid input try again!\n")
+        else:
+            print("Invalid input try again!\n")
+
+
+if __name__ == "__main__":
+    main()
