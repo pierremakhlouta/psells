@@ -214,7 +214,11 @@ def partner_share_for(item):
     else:
         raise ValueError(f"Invalid partner share mode: {mode}")
 
-    
+
+def available_for(product):
+    return product["quantity_received"] - product["quantity_sold"]
+
+
 def dashboard_totals(inventory, sales, returns, payments):
     total_received = sum(
         product["quantity_received"]
@@ -282,10 +286,7 @@ def view_dashboard():
 
 
 def print_product(product):
-    available = (
-        product["quantity_received"]
-        - product["quantity_sold"]
-    )
+    available = available_for(product)
 
     partner_cut = partner_share_for(product)
 
@@ -701,10 +702,7 @@ def record_sale():
     if product is None:
         return
 
-    available = (
-        product["quantity_received"]
-        - product["quantity_sold"]
-    )
+    available = available_for(product)
 
     if available <= 0:
         print("No stock available to sell.")
@@ -765,10 +763,7 @@ def record_return():
     if product is None:
         return
 
-    available = (
-        product["quantity_received"]
-        - product["quantity_sold"]
-    )
+    available = available_for(product)
 
     if available <= 0:
         print("No stock available to return.")

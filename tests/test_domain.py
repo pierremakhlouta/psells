@@ -57,6 +57,24 @@ def test_find_items_by_name_returns_every_match(inventory):
 def test_find_items_by_name_returns_empty_list_when_nothing_matches(inventory):
     assert psells.find_items_by_name(inventory, "Puma") == []
 
+def test_available_for_partly_sold():
+    product = {"quantity_received": 10, "quantity_sold": 4}
+
+    assert psells.available_for(product) == 6
+
+
+def test_available_for_nothing_sold():
+    product = {"quantity_received": 5, "quantity_sold": 0}
+
+    assert psells.available_for(product) == 5
+
+
+def test_available_for_sold_out():
+    product = {"quantity_received": 3, "quantity_sold": 3}
+
+    assert psells.available_for(product) == 0
+
+
 def test_partner_share_default_mode(monkeypatch):
     monkeypatch.setattr(psells, "default_partner_share_percent", lambda: 40.0)
 
