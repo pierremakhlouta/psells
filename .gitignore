@@ -10,9 +10,12 @@ __pycache__/
 *.pyc
 
 # PSells real data (keep costs/margins out of the repo)
+# The whole folder, no exceptions. Prices, margins and the partner rate live
+# here, and a rule that lists file extensions has to be remembered every time a
+# new one appears, which it was not when the database arrived. Sample data lives
+# in sample_data/ and is copied into place.
 
-data/*.csv
-data/*.json
+data/
 
 .vscode/
 
