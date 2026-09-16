@@ -1,34 +1,83 @@
 import os
 import json
+import sqlite3
 import sys
 from datetime import date, datetime
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 
-INVENTORY_FILE = "data/inventory.json"
-SALES_FILE = "data/sales.json"
-RETURNS_FILE = "data/returns.json"
-PAYMENTS_FILE = "data/payments.json"
 CONFIG_FILE = "data/config.json"
+DB_FILE = "data/psells.db"
 
 
-def load_data(filepath):
-    if not os.path.exists(filepath):
-        return []
+def connect():
+    """Open the database and hand back a connection that is ready to use.
 
-    with open(filepath) as f:
-        return json.load(f)
+    Both settings below are per connection, not per database, so every
+    connection the application opens has to apply them again.
+
+    PRAGMA foreign_keys goes first, before anything can open a transaction,
+    because SQLite ignores the pragma inside one and reports no error. Without
+    it the foreign keys in the schema enforce nothing.
+
+    row_factory makes a row readable by column name, so product["name"] keeps
+    working. Without it a row is a plain tuple and the same code would have to
+    say product[2].
+    """
+    connection = sqlite3.connect(DB_FILE)
+    connection.execute("PRAGMA foreign_keys = ON")
+    connection.row_factory = sqlite3.Row
+
+    return connection
 
 
-def save_data(data, filepath):
-    with open(filepath, "w") as f:
-        json.dump(data, f, indent=2)
+def all_products(connection):
+    """Every product, with its derived quantities, in id order.
+
+    Always read through products_view rather than the products table, because
+    quantity_sold, quantity_returned and quantity_available only exist there.
+
+    ORDER BY is not decoration. Without it SQLite makes no promise about the
+    order rows come back in. It happens to match id order today, which is
+    exactly the kind of accident that changes silently later.
+    """
+    return connection.execute(
+        "SELECT * FROM products_view ORDER BY id"
+    ).fetchall()
 
 
-def next_id(records):
-    if not records:
-        return 1
+def format_cents(cents):
+    """Format a whole number of cents as dollars, for display only.
 
-    return max(record["id"] for record in records) + 1
+    Deliberately integer arithmetic. Dividing by 100 would turn money back into
+    a float at the last moment, which is the one thing the storage decision was
+    meant to stop. Handles a negative figure, which balance owing can be.
+    """
+    sign = "-" if cents < 0 else ""
+    cents = abs(cents)
+
+    return f"{sign}{cents // 100}.{cents % 100:02d}"
+
+
+def parse_money(text):
+    """Turn a typed dollar figure into a whole number of cents.
+
+    Raises ValueError if the text is not a number, or if it carries more than
+    two decimal places. A tenth of a cent is not an amount of money, and quietly
+    rounding it away would store a different figure from the one that was typed.
+    """
+    try:
+        amount = Decimal(text.strip())
+    except InvalidOperation:
+        raise ValueError("not a number")
+
+    if not amount.is_finite():
+        raise ValueError("not a finite number")
+
+    if amount != amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP):
+        raise ValueError("more than two decimal places")
+
+    return int(amount * 100)
 
 
 def load_config():
@@ -92,6 +141,25 @@ def ask_float(prompt, min_value=None, max_value=None):
 
         except ValueError:
             print("Please enter a valid number.")
+
+
+def ask_money(prompt, min_cents=None, max_cents=None):
+    while True:
+        try:
+            cents = parse_money(input(prompt))
+        except ValueError:
+            print("Please enter an amount in dollars, for example 12.50.")
+            continue
+
+        if min_cents is not None and cents < min_cents:
+            print(f"Value must be at least ${format_cents(min_cents)}.")
+            continue
+
+        if max_cents is not None and cents > max_cents:
+            print(f"Value must be at most ${format_cents(max_cents)}.")
+            continue
+
+        return cents
 
 
 def ask_choice(prompt, options):
@@ -163,6 +231,30 @@ def ask_edit_number(
                 print("Please enter a valid number.")
 
 
+def ask_edit_money(prompt, current_cents, min_cents=None, max_cents=None):
+    while True:
+        text = input(f"{prompt} [{format_cents(current_cents)}]: ").strip()
+
+        if text == "":
+            return current_cents
+
+        try:
+            cents = parse_money(text)
+        except ValueError:
+            print("Please enter an amount in dollars, for example 12.50.")
+            continue
+
+        if min_cents is not None and cents < min_cents:
+            print(f"Value must be at least ${format_cents(min_cents)}.")
+            continue
+
+        if max_cents is not None and cents > max_cents:
+            print(f"Value must be at most ${format_cents(max_cents)}.")
+            continue
+
+        return cents
+
+
 def ask_edit_choice(prompt, current, options):
     while True:
         value = input(
@@ -176,6 +268,54 @@ def ask_edit_choice(prompt, current, options):
             return value
 
         print("Invalid choice. Please try again.")
+
+
+def ask_partner_share(retail_discontinued):
+    """Ask how the partner's cut is set for one product.
+
+    Returns three values, (mode, percent, amount_cents), with exactly one of the
+    last two filled in and the other None. That is the shape the products table
+    requires, and the matrix constraint refuses anything else.
+
+    A product discontinued at retail has no retail price to take a percentage
+    of, so the fixed per-unit amount is the only mode offered rather than being
+    offered and then rejected.
+
+    This replaces four near-identical copies of the same block that used to sit
+    inside add and edit.
+    """
+    if retail_discontinued:
+        amount_cents = ask_money(
+            "Partner share per unit ($): ",
+            min_cents=0
+        )
+
+        return "custom_amount", None, amount_cents
+
+    mode = ask_choice(
+        "Partner-share mode "
+        "(default/custom_percent/custom_amount): ",
+        ["default", "custom_percent", "custom_amount"]
+    )
+
+    if mode == "custom_percent":
+        percent = ask_float(
+            "Partner share percentage (%): ",
+            min_value=0,
+            max_value=100
+        )
+
+        return mode, percent, None
+
+    if mode == "custom_amount":
+        amount_cents = ask_money(
+            "Partner share per unit ($): ",
+            min_cents=0
+        )
+
+        return mode, None, amount_cents
+
+    return mode, None, None
 
 
 def default_partner_share_percent():
@@ -199,61 +339,72 @@ def default_partner_share_percent():
 
 
 def partner_share_for(item):
+    """The partner's cut for one unit of this item, in cents.
+
+    This is the only place in PSells where a fraction of a cent can appear, so
+    it is the only place that rounds. A percentage of a price does not have to
+    land on a whole cent, and the result has to, because it is about to be
+    frozen onto a sale and settled with a real person.
+
+    The arithmetic goes through Decimal rather than float so that the rounding
+    decision is made on an exact number. Rounding half away from zero rather
+    than Python's half-to-even, because that is the convention people expect
+    when money is being split.
+    """
     mode = item["partner_share_mode"]
-    retail_price = item["retail_price"]
 
     if mode == "default":
-        return (default_partner_share_percent() / 100) * retail_price
+        percent = default_partner_share_percent()
 
     elif mode == "custom_percent":
-        return (item["partner_share_value"] / 100) * retail_price
+        percent = item["partner_share_percent"]
 
     elif mode == "custom_amount":
-        return item["partner_share_value"]
+        return item["partner_share_amount_cents"]
 
     else:
         raise ValueError(f"Invalid partner share mode: {mode}")
 
+    exact = Decimal(item["retail_price_cents"]) * Decimal(str(percent)) / 100
 
-def available_for(product):
-    return product["quantity_received"] - product["quantity_sold"]
+    return int(exact.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
 
-def dashboard_totals(inventory, sales, returns, payments):
-    total_received = sum(
-        product["quantity_received"]
-        for product in inventory
+def dashboard_totals(connection):
+    """The nine dashboard figures, computed by the database.
+
+    Quantities are counts. Every money figure is in cents.
+
+    COALESCE is not decoration. SUM over zero rows returns NULL rather than 0,
+    so with an empty returns table the subtraction below would be done against
+    None and raise.
+    """
+    def total(sql):
+        return connection.execute(sql).fetchone()[0]
+
+    total_received = total(
+        "SELECT COALESCE(SUM(quantity_received), 0) FROM products"
     )
-
-    total_sold = sum(
-        product["quantity_sold"]
-        for product in inventory
+    total_sold = total(
+        "SELECT COALESCE(SUM(quantity), 0) FROM sales"
     )
-
-    total_returned = sum(
-        item["quantity"]
-        for item in returns
+    total_returned = total(
+        "SELECT COALESCE(SUM(quantity), 0) FROM returns"
     )
-
-    total_revenue = sum(
-        sale["quantity"] * sale["sale_price"]
-        for sale in sales
+    total_revenue = total(
+        "SELECT COALESCE(SUM(quantity * sale_price_cents), 0) FROM sales"
     )
-
-    total_partner_share = sum(
-        sale["quantity"] * sale["partner_share"]
-        for sale in sales
+    total_partner_share = total(
+        "SELECT COALESCE(SUM(quantity * partner_share_cents), 0) FROM sales"
     )
-
-    total_paid = sum(
-        payment["amount"]
-        for payment in payments
+    total_paid = total(
+        "SELECT COALESCE(SUM(amount_cents), 0) FROM payments"
     )
 
     return {
         "total_received": total_received,
         "total_sold": total_sold,
-        "total_available": total_received - total_sold,
+        "total_available": total_received - total_sold - total_returned,
         "total_returned": total_returned,
         "total_revenue": total_revenue,
         "total_partner_share": total_partner_share,
@@ -263,13 +414,8 @@ def dashboard_totals(inventory, sales, returns, payments):
     }
 
 
-def view_dashboard():
-    totals = dashboard_totals(
-        load_data(INVENTORY_FILE),
-        load_data(SALES_FILE),
-        load_data(RETURNS_FILE),
-        load_data(PAYMENTS_FILE)
-    )
+def view_dashboard(connection):
+    totals = dashboard_totals(connection)
 
     print("Dashboard")
     print()
@@ -278,35 +424,36 @@ def view_dashboard():
     print(f"Total available: {totals['total_available']}")
     print(f"Total returned: {totals['total_returned']}")
     print()
-    print(f"Total revenue: ${totals['total_revenue']:.2f}")
-    print(f"Total profit: ${totals['total_profit']:.2f}")
-    print(f"Total partner share earned: ${totals['total_partner_share']:.2f}")
-    print(f"Total paid: ${totals['total_paid']:.2f}")
-    print(f"Balance owing: ${totals['balance_owing']:.2f}")
+    print(f"Total revenue: ${format_cents(totals['total_revenue'])}")
+    print(f"Total profit: ${format_cents(totals['total_profit'])}")
+    print(
+        f"Total partner share earned: "
+        f"${format_cents(totals['total_partner_share'])}"
+    )
+    print(f"Total paid: ${format_cents(totals['total_paid'])}")
+    print(f"Balance owing: ${format_cents(totals['balance_owing'])}")
 
 
 def print_product(product):
-    available = available_for(product)
-
     partner_cut = partner_share_for(product)
 
     print(f"ID: {product['id']}")
     print(f"Name: {product['name']}")
     print(f"Category: {product['category']}")
-    print(f"Available: {available}")
-    print(f"Listed Price: ${product['listed_price']:.2f}")
-    print(f"Partner Cut: ${partner_cut:.2f}")
-    print(f"Discontinued: {'Yes' if product.get('discontinued', False) else 'No'}")
+    print(f"Available: {product['quantity_available']}")
+    print(f"Listed Price: ${format_cents(product['listed_price_cents'])}")
+    print(f"Partner Cut: ${format_cents(partner_cut)}")
+    print(f"Discontinued: {'Yes' if product['retail_discontinued'] else 'No'}")
     print(f"Condition: {product['condition']}")
     print()
-def view_inventory():
-    inventory = load_data(INVENTORY_FILE)
+def view_inventory(connection):
+    products = all_products(connection)
 
-    if not inventory:
+    if not products:
         print("Inventory is empty.")
         return
 
-    for product in inventory:
+    for product in products:
         print_product(product)
 
 
@@ -367,11 +514,11 @@ def select_product(inventory, action_word):
         )
 
     return product
-def search():
-    inventory = load_data(INVENTORY_FILE)
+def search(connection):
+    products = all_products(connection)
 
     name = ask_text("Search for a product: ")
-    matches = find_items_by_name(inventory, name)
+    matches = find_items_by_name(products, name)
 
     if not matches:
         print("No products found.")
@@ -381,7 +528,7 @@ def search():
         print_product(product)
 
 
-def add():
+def add(connection):
     category = ask_text("Category: ")
     name = ask_text("Name: ")
 
@@ -390,90 +537,58 @@ def add():
         min_value=1
     )
 
-    discontinued = ask_choice(
+    retail_discontinued = ask_choice(
         "Discontinued? (yes/no): ",
         ["yes", "no"]
     ) == "yes"
 
-    if discontinued:
-        retail_price = 0.0
+    if retail_discontinued:
+        retail_price_cents = 0
     else:
-        retail_price = ask_float(
+        # At least one cent. Zero is reserved for products discontinued at
+        # retail, and the database enforces that, so a zero entered here would
+        # be refused on insert rather than stored.
+        retail_price_cents = ask_money(
             "Retail price: ",
-            min_value=0
+            min_cents=1
         )
 
-    listed_price = ask_float(
+    listed_price_cents = ask_money(
         "Listed price: ",
-        min_value=0
+        min_cents=0
     )
 
     condition = ask_text("Condition: ")
     notes = ask_optional_text("Notes: ")
 
-    if discontinued:
-        partner_share_mode = "custom_amount"
-        partner_share_value = ask_float(
-            "Partner share per unit ($): ",
-            min_value=0
+    mode, percent, amount_cents = ask_partner_share(retail_discontinued)
+
+    # The id is left out so SQLite assigns it, the same way it did during the
+    # migration.
+    with connection:
+        connection.execute(
+            "INSERT INTO products "
+            "(category, name, quantity_received, retail_price_cents, "
+            "listed_price_cents, retail_discontinued, partner_share_mode, "
+            "partner_share_percent, partner_share_amount_cents, "
+            "condition, notes) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (category, name, quantity_received, retail_price_cents,
+             listed_price_cents, 1 if retail_discontinued else 0,
+             mode, percent, amount_cents, condition, notes)
         )
-    else:
-        partner_share_mode = ask_choice(
-            "Partner-share mode "
-            "(default/custom_percent/custom_amount): ",
-            ["default", "custom_percent", "custom_amount"]
-        )
-
-        partner_share_value = None
-
-        if partner_share_mode == "custom_percent":
-            partner_share_value = ask_float(
-                "Partner share percentage (%): ",
-                min_value=0,
-                max_value=100
-            )
-
-        elif partner_share_mode == "custom_amount":
-            partner_share_value = ask_float(
-                "Partner share per unit ($): ",
-                min_value=0
-            )
-
-    inventory = load_data(INVENTORY_FILE)
-    product_id = next_id(inventory)
-
-    product = {
-        "id": product_id,
-        "category": category,
-        "name": name,
-        "quantity_received": quantity_received,
-        "retail_price": retail_price,
-        "listed_price": listed_price,
-        "condition": condition,
-        "notes": notes,
-        "quantity_sold": 0,
-        "discontinued": discontinued,
-        "partner_share_mode": partner_share_mode
-    }
-
-    if partner_share_value is not None:
-        product["partner_share_value"] = partner_share_value
-
-    inventory.append(product)
-
-    save_data(inventory, INVENTORY_FILE)
 
     print("Product added successfully.")
 
 
-def edit():
-    inventory = load_data(INVENTORY_FILE)
+def edit(connection):
+    products = all_products(connection)
 
-    if not inventory:
+    if not products:
         print("Inventory is empty.")
         return
 
-    product = select_product(inventory, "edit")
+    product = select_product(products, "edit")
 
     if product is None:
         return
@@ -481,195 +596,149 @@ def edit():
     print("Product selected:")
     print_product(product)
 
-    product["category"] = ask_edit_text(
-        "Category",
-        product["category"]
-    )
+    category = ask_edit_text("Category", product["category"])
+    name = ask_edit_text("Name", product["name"])
 
-    product["name"] = ask_edit_text(
-        "Name",
-        product["name"]
-    )
+    # Units already sold plus units already returned have both left the original
+    # intake, so the intake cannot be corrected to less than their sum.
+    gone = product["quantity_sold"] + product["quantity_returned"]
 
-    product["quantity_received"] = ask_edit_number(
+    quantity_received = ask_edit_number(
         "Quantity received",
         product["quantity_received"],
         int,
-        min_value=max(1, product["quantity_sold"])
+        min_value=max(1, gone)
     )
 
-    was_discontinued = product.get("discontinued", False)
+    was_discontinued = bool(product["retail_discontinued"])
 
-    current_discontinued = "yes" if was_discontinued else "no"
-
-    discontinued_choice = ask_edit_choice(
+    retail_discontinued = ask_edit_choice(
         "Discontinued? (yes/no)",
-        current_discontinued,
+        "yes" if was_discontinued else "no",
         ["yes", "no"]
-    )
+    ) == "yes"
 
-    discontinued = discontinued_choice == "yes"
+    if retail_discontinued:
+        retail_price_cents = 0
 
-    if discontinued:
-        product["retail_price"] = 0.0
+    elif was_discontinued:
+        # Coming back to retail, so there is no previous price to offer as a
+        # default. Zero is not allowed, since zero means discontinued.
+        retail_price_cents = ask_money(
+            "Retail price: ",
+            min_cents=1
+        )
+
     else:
-        if was_discontinued:
-            product["retail_price"] = ask_float(
-                "Retail price: ",
-                min_value=0
-            )
-        else:
-            product["retail_price"] = ask_edit_number(
-                "Retail price",
-                product["retail_price"],
-                float,
-                min_value=0
-            )
+        retail_price_cents = ask_edit_money(
+            "Retail price",
+            product["retail_price_cents"],
+            min_cents=1
+        )
 
-    product["listed_price"] = ask_edit_number(
+    listed_price_cents = ask_edit_money(
         "Listed price",
-        product["listed_price"],
-        float,
-        min_value=0
+        product["listed_price_cents"],
+        min_cents=0
     )
 
-    product["condition"] = ask_edit_text(
-        "Condition",
-        product["condition"]
-    )
+    condition = ask_edit_text("Condition", product["condition"])
+    notes = ask_edit_text("Notes", product["notes"])
 
-    product["notes"] = ask_edit_text(
-        "Notes",
-        product["notes"]
-    )
+    # Partner share. Keep whatever the product already has unless something
+    # forces a change or the user asks for one.
+    mode = product["partner_share_mode"]
+    percent = product["partner_share_percent"]
+    amount_cents = product["partner_share_amount_cents"]
 
-    if not was_discontinued and discontinued:
-        if product["partner_share_mode"] != "custom_amount":
-            partner_share_value = ask_float(
-                "Partner share per unit ($): ",
-                min_value=0
-            )
-
-            product["partner_share_mode"] = "custom_amount"
-            product["partner_share_value"] = partner_share_value
-
-    elif was_discontinued and not discontinued:
-        change_partner_share = ask_choice(
-            "Change partner share? (yes/no): ",
-            ["yes", "no"]
-        )
-
-        if change_partner_share == "yes":
-            partner_share_mode = ask_choice(
-                "Partner-share mode "
-                "(default/custom_percent/custom_amount): ",
-                ["default", "custom_percent", "custom_amount"]
-            )
-
-            if partner_share_mode == "default":
-                product["partner_share_mode"] = "default"
-                product.pop("partner_share_value", None)
-
-            elif partner_share_mode == "custom_percent":
-                partner_share_value = ask_float(
-                    "Partner share percentage (%): ",
-                    min_value=0,
-                    max_value=100
-                )
-
-                product["partner_share_mode"] = "custom_percent"
-                product["partner_share_value"] = partner_share_value
-
-            else:
-                partner_share_value = ask_float(
-                    "Partner share per unit ($): ",
-                    min_value=0
-                )
-
-                product["partner_share_mode"] = "custom_amount"
-                product["partner_share_value"] = partner_share_value
-
-    elif discontinued:
-        change_partner_share = ask_choice(
-            "Change partner share? (yes/no): ",
-            ["yes", "no"]
-        )
-
-        if change_partner_share == "yes":
-            partner_share_value = ask_float(
-                "Partner share per unit ($): ",
-                min_value=0
-            )
-
-            product["partner_share_mode"] = "custom_amount"
-            product["partner_share_value"] = partner_share_value
+    if retail_discontinued and not was_discontinued:
+        # Newly discontinued at retail. A percentage of a price that no longer
+        # exists is meaningless, so the fixed amount is forced rather than
+        # offered. A product already on a fixed amount keeps it.
+        if mode != "custom_amount":
+            mode, percent, amount_cents = ask_partner_share(True)
 
     else:
-        print(
-            f"Current partner-share mode: "
-            f"{product['partner_share_mode']}"
-        )
+        if not retail_discontinued and not was_discontinued:
+            print(f"Current partner-share mode: {mode}")
 
-        if product["partner_share_mode"] != "default":
-            print(
-                f"Current partner-share value: "
-                f"{product['partner_share_value']}"
-            )
+            if mode == "custom_percent":
+                print(f"Current partner-share percentage: {percent}")
+            elif mode == "custom_amount":
+                print(
+                    f"Current partner-share amount: "
+                    f"${format_cents(amount_cents)}"
+                )
 
-        change_partner_share = ask_choice(
+        change = ask_choice(
             "Change partner share? (yes/no): ",
             ["yes", "no"]
         )
 
-        if change_partner_share == "yes":
-            partner_share_mode = ask_choice(
-                "Partner-share mode "
-                "(default/custom_percent/custom_amount): ",
-                ["default", "custom_percent", "custom_amount"]
-            )
+        if change == "yes":
+            mode, percent, amount_cents = ask_partner_share(retail_discontinued)
 
-            if partner_share_mode == "default":
-                product["partner_share_mode"] = "default"
-                product.pop("partner_share_value", None)
-
-            elif partner_share_mode == "custom_percent":
-                partner_share_value = ask_float(
-                    "Partner share percentage (%): ",
-                    min_value=0,
-                    max_value=100
-                )
-
-                product["partner_share_mode"] = "custom_percent"
-                product["partner_share_value"] = partner_share_value
-
-            else:
-                partner_share_value = ask_float(
-                    "Partner share per unit ($): ",
-                    min_value=0
-                )
-
-                product["partner_share_mode"] = "custom_amount"
-                product["partner_share_value"] = partner_share_value
-
-    product["discontinued"] = discontinued
-
-    save_data(inventory, INVENTORY_FILE)
+    with connection:
+        connection.execute(
+            "UPDATE products SET "
+            "category = ?, name = ?, quantity_received = ?, "
+            "retail_price_cents = ?, listed_price_cents = ?, "
+            "retail_discontinued = ?, partner_share_mode = ?, "
+            "partner_share_percent = ?, partner_share_amount_cents = ?, "
+            "condition = ?, notes = ? "
+            "WHERE id = ?",
+            (category, name, quantity_received, retail_price_cents,
+             listed_price_cents, 1 if retail_discontinued else 0,
+             mode, percent, amount_cents, condition, notes,
+             product["id"])
+        )
 
     print("Product updated successfully.")
-def delete():
-    inventory = load_data(INVENTORY_FILE)
 
-    if not inventory:
+
+def delete(connection):
+    products = all_products(connection)
+
+    if not products:
         print("Inventory is empty.")
         return
 
-    product = select_product(inventory, "delete")
+    product = select_product(products, "delete")
 
     if product is None:
         return
 
     print("Product selected:")
     print_product(product)
+
+    # Ask what is pointing at this product before offering to delete it. The
+    # foreign keys would refuse it anyway, but "FOREIGN KEY constraint failed"
+    # is not an answer to a person standing at a menu.
+    sale_count = connection.execute(
+        "SELECT COUNT(*) FROM sales WHERE item_id = ?",
+        (product["id"],)
+    ).fetchone()[0]
+
+    return_count = connection.execute(
+        "SELECT COUNT(*) FROM returns WHERE item_id = ?",
+        (product["id"],)
+    ).fetchone()[0]
+
+    blocking = []
+
+    if sale_count:
+        blocking.append(f"{sale_count} sale" + ("" if sale_count == 1 else "s"))
+
+    if return_count:
+        blocking.append(
+            f"{return_count} return" + ("" if return_count == 1 else "s")
+        )
+
+    if blocking:
+        print(f"This product has {' and '.join(blocking)} recorded against it.")
+        print("Deleting it would lose that history, so it is refused.")
+        print("If you no longer stock it, leaving it in place costs nothing.")
+        return
 
     confirmation = ask_choice(
         "Delete this product? (yes/no): ",
@@ -680,29 +749,36 @@ def delete():
         print("Cancelled.")
         return
 
-    inventory = [
-        item for item in inventory
-        if item["id"] != product["id"]
-    ]
-
-    save_data(inventory, INVENTORY_FILE)
+    try:
+        with connection:
+            connection.execute(
+                "DELETE FROM products WHERE id = ?",
+                (product["id"],)
+            )
+    except sqlite3.IntegrityError:
+        # The check above should have caught this. If it did not, something
+        # points at this product that the check does not know about, and a
+        # sentence beats a stack trace.
+        print("The database refused the deletion. Something still refers to")
+        print("this product, so nothing was removed.")
+        return
 
     print("Product deleted.")
 
 
-def record_sale():
-    inventory = load_data(INVENTORY_FILE)
+def record_sale(connection):
+    products = all_products(connection)
 
-    if not inventory:
+    if not products:
         print("Inventory is empty.")
         return
 
-    product = select_product(inventory, "sell")
+    product = select_product(products, "sell")
 
     if product is None:
         return
 
-    available = available_for(product)
+    available = product["quantity_available"]
 
     if available <= 0:
         print("No stock available to sell.")
@@ -714,9 +790,9 @@ def record_sale():
         max_value=available
     )
 
-    sale_price = ask_float(
+    sale_price_cents = ask_money(
         "Sale price per unit ($): ",
-        min_value=0
+        min_cents=0
     )
 
     sale_date = ask_date("Date")
@@ -727,43 +803,37 @@ def record_sale():
     print("Sale information:")
     print(f"Product: {product['name']}")
     print(f"Quantity sold: {quantity}")
-    print(f"Sale price per unit: ${sale_price:.2f}")
+    print(f"Sale price per unit: ${format_cents(sale_price_cents)}")
     print(f"Date: {sale_date}")
-    print(f"Partner cut per unit: ${partner_cut:.2f}")
+    print(f"Partner cut per unit: ${format_cents(partner_cut)}")
 
-    product["quantity_sold"] += quantity
-
-    save_data(inventory, INVENTORY_FILE)
-
-    sales = load_data(SALES_FILE)
-
-    sale = {
-        "id": next_id(sales),
-        "date": sale_date,
-        "item_id": product["id"],
-        "quantity": quantity,
-        "sale_price": sale_price,
-        "partner_share": partner_cut
-    }
-
-    sales.append(sale)
-
-    save_data(sales, SALES_FILE)
+    # One insert. The product is not touched at all: units sold is derived from
+    # this table now, so there is no second value that could fall out of step.
+    # The id is left out so SQLite assigns it.
+    with connection:
+        connection.execute(
+            "INSERT INTO sales "
+            "(date, item_id, quantity, sale_price_cents, partner_share_cents) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (sale_date, product["id"], quantity, sale_price_cents, partner_cut)
+        )
 
     print("Sale recorded.")
-def record_return():
-    inventory = load_data(INVENTORY_FILE)
 
-    if not inventory:
+
+def record_return(connection):
+    products = all_products(connection)
+
+    if not products:
         print("Inventory is empty.")
         return
 
-    product = select_product(inventory, "return")
+    product = select_product(products, "return")
 
     if product is None:
         return
 
-    available = available_for(product)
+    available = product["quantity_available"]
 
     if available <= 0:
         print("No stock available to return.")
@@ -778,51 +848,37 @@ def record_return():
     return_date = ask_date("Date")
     notes = ask_optional_text("Notes: ")
 
-    product["quantity_received"] -= quantity
-
-    save_data(inventory, INVENTORY_FILE)
-
-    returns = load_data(RETURNS_FILE)
-
-    return_record = {
-        "id": next_id(returns),
-        "date": return_date,
-        "item_id": product["id"],
-        "quantity": quantity,
-        "notes": notes
-    }
-
-    returns.append(return_record)
-
-    save_data(returns, RETURNS_FILE)
+    # The intake quantity is no longer reduced. It means units originally
+    # received, and this return is recorded as its own fact.
+    with connection:
+        connection.execute(
+            "INSERT INTO returns (date, item_id, quantity, notes) "
+            "VALUES (?, ?, ?, ?)",
+            (return_date, product["id"], quantity, notes)
+        )
 
     print("Return recorded.")
 
 
-def record_payment():
-    payments = load_data(PAYMENTS_FILE)
-
+def record_payment(connection):
     payment_date = ask_date("Date")
 
-    amount = ask_float(
+    amount_cents = ask_money(
         "Amount ($): ",
-        min_value=0
+        min_cents=0
     )
 
     notes = ask_optional_text("Notes: ")
 
-    payment = {
-        "id": next_id(payments),
-        "date": payment_date,
-        "amount": amount,
-        "notes": notes
-    }
-
-    payments.append(payment)
-
-    save_data(payments, PAYMENTS_FILE)
+    with connection:
+        connection.execute(
+            "INSERT INTO payments (date, amount_cents, notes) "
+            "VALUES (?, ?, ?)",
+            (payment_date, amount_cents, notes)
+        )
 
     print("Payment recorded.")
+
 
 def main():
     try:
@@ -830,6 +886,15 @@ def main():
     except (FileNotFoundError, ValueError) as error:
         print(f"Configuration error: {error}")
         sys.exit(1)
+
+    if not os.path.exists(DB_FILE):
+        print(
+            f"Database error: {DB_FILE} not found. "
+            f"Run migrate_to_sqlite.py first."
+        )
+        sys.exit(1)
+
+    connection = connect()
 
     while True:
         choice = input(
@@ -850,34 +915,36 @@ def main():
             break
 
         elif choice == "1":
-            view_dashboard()
+            view_dashboard(connection)
 
         elif choice == "2":
-            view_inventory()
+            view_inventory(connection)
 
         elif choice == "3":
-            search()
+            search(connection)
 
         elif choice == "4":
-            add()
+            add(connection)
 
         elif choice == "5":
-            edit()
+            edit(connection)
 
         elif choice == "6":
-            delete()
+            delete(connection)
 
         elif choice == "7":
-            record_sale()
+            record_sale(connection)
 
         elif choice == "8":
-            record_return()
+            record_return(connection)
 
         elif choice == "9":
-            record_payment()
+            record_payment(connection)
 
         else:
             print("Invalid input try again!\n")
+
+    connection.close()
 
 
 if __name__ == "__main__":
