@@ -83,5 +83,5 @@ OLD_DBS="$(find "$BACKUP_DIR" -name 'psells-*.db' -mtime +"$KEEP_DAYS" -print -d
 OLD_CONFIGS="$(find "$BACKUP_DIR" -name 'config-*.json' -mtime +"$KEEP_DAYS" -print -delete | wc -l | tr -d ' ')"
 
 if [ "$OLD_DBS" -gt 0 ] || [ "$OLD_CONFIGS" -gt 0 ]; then
-    log "removed $OLD_DBS database and $OLD_CONFIGS config copies older than $KEEP_DAYS days"
+    log "cleanup: removed files older than $KEEP_DAYS days, $OLD_DBS database, $OLD_CONFIGS config"
 fi
