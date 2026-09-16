@@ -1,6 +1,19 @@
 """One-time migration of the PSells JSON data files into SQLite.
 
-Run once, from the project root:
+ALREADY RUN. This will not work against the current code and is kept as the
+record of how the data was moved, not as a tool.
+
+It calls psells.load_data, which the SQLite rewrite deleted, and passes four
+lists to psells.dashboard_totals, which now takes a database connection. Both
+were correct when this ran on 15 September 2026. A one-time migration belongs
+to the version of the code it was written against, the same way a numbered
+migration in any framework does, so it is left as it was rather than updated to
+a shape it can never be used in again.
+
+The JSON files it read are no longer in data/ either. They were moved to
+~/PSells-Backups/pre-sqlite-json/ once nothing depended on them.
+
+It was run once, from the project root:
 
     python3 migrate_to_sqlite.py
 
