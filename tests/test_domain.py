@@ -192,6 +192,76 @@ def test_find_items_by_name_returns_every_match(inventory):
 def test_find_items_by_name_returns_empty_list_when_nothing_matches(inventory):
     assert psells.find_items_by_name(inventory, "Puma") == []
 
+@pytest.fixture
+def catalogue():
+    return [
+        {"id": 1, "name": "Nike Air Max 90", "category": "Shoes"},
+        {"id": 2, "name": "Ray-Ban Aviator", "category": "Glasses"},
+        {"id": 3, "name": "Reading Glasses", "category": "Accessories"},
+    ]
+
+
+def test_search_matches_a_category(catalogue):
+    matches = psells.find_items_by_name_or_category(catalogue, "glasses")
+
+    assert sorted(item["id"] for item in matches) == [2, 3]
+
+
+def test_search_matches_a_name(catalogue):
+    matches = psells.find_items_by_name_or_category(catalogue, "aviator")
+
+    assert [item["id"] for item in matches] == [2]
+
+
+def test_search_lists_a_product_once_when_both_match(catalogue):
+    """Item 2 matches "glass" by category and item 3 by name.
+
+    Neither should appear twice, and a term hitting both fields on the same
+    product must not duplicate it either.
+    """
+    matches = psells.find_items_by_name_or_category(catalogue, "glass")
+    ids = [item["id"] for item in matches]
+
+    assert sorted(ids) == [2, 3]
+    assert len(ids) == len(set(ids))
+
+
+def test_search_with_no_match_returns_an_empty_list(catalogue):
+    assert psells.find_items_by_name_or_category(catalogue, "kettle") == []
+
+
+def test_choosing_a_product_still_matches_on_name_only(catalogue):
+    """The deliberate asymmetry, locked down.
+
+    Browsing matches category. Choosing a product to sell, edit or delete does
+    not, because that would list an entire category and then act on whichever
+    id was typed. Widening this later should be a decision, not an accident.
+    """
+    assert psells.find_items_by_name(catalogue, "glasses") == [catalogue[2]]
+
+
+def test_category_counts_lists_each_category_once(db):
+    add_product(db, 1, quantity_received=1, category="Watches")
+    add_product(db, 2, quantity_received=1, category="Watches")
+    add_product(db, 3, quantity_received=1, category="Bags")
+
+    rows = psells.category_counts(db)
+
+    assert [(r["category"], r["products"]) for r in rows] == [
+        ("Bags", 1),
+        ("Watches", 2),
+    ]
+
+
+def test_category_counts_is_alphabetical(db):
+    for i, category in enumerate(["Watches", "Bags", "Shoes"], start=1):
+        add_product(db, i, quantity_received=1, category=category)
+
+    assert [r["category"] for r in psells.category_counts(db)] == [
+        "Bags", "Shoes", "Watches"
+    ]
+
+
 def test_partner_share_default_mode(monkeypatch):
     monkeypatch.setattr(psells, "default_partner_share_percent", lambda: 40.0)
 

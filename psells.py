@@ -467,6 +467,39 @@ def find_items_by_name(inventory, name):
     return matches
 
 
+def find_items_by_name_or_category(inventory, term):
+    """Products whose name or category contains the term, case-insensitively.
+
+    Deliberately separate from find_items_by_name rather than replacing it.
+    This one is for browsing, where a wide match is the point. Choosing a
+    product to sell, edit or delete still matches on name only, because a wide
+    match there would list an entire category before asking which one you meant,
+    and then act on the answer.
+    """
+    matches = []
+
+    for item in inventory:
+        if (term.lower() in item["name"].lower()
+                or term.lower() in item["category"].lower()):
+            matches.append(item)
+
+    return matches
+
+
+def category_counts(connection):
+    """Every category once, with how many products are in it, A to Z.
+
+    Alphabetical rather than largest first, because this list exists to be
+    scanned for a name you half remember.
+    """
+    return connection.execute(
+        "SELECT category, COUNT(*) AS products "
+        "FROM products "
+        "GROUP BY category "
+        "ORDER BY category"
+    ).fetchall()
+
+
 def select_product(inventory, action_word):
     name = ask_text(
         f"Search for a product to {action_word}: "
@@ -514,11 +547,30 @@ def select_product(inventory, action_word):
         )
 
     return product
+def list_categories(connection):
+    rows = category_counts(connection)
+
+    if not rows:
+        print("Inventory is empty.")
+        return
+
+    width = max(len(row["category"]) for row in rows)
+
+    print("Categories")
+    print()
+
+    for row in rows:
+        print(f"{row['category']:<{width}}  {row['products']}")
+
+    print()
+    print(f"{len(rows)} categories, {sum(r['products'] for r in rows)} products")
+
+
 def search(connection):
     products = all_products(connection)
 
-    name = ask_text("Search for a product: ")
-    matches = find_items_by_name(products, name)
+    term = ask_text("Search by product name or category: ")
+    matches = find_items_by_name_or_category(products, term)
 
     if not matches:
         print("No products found.")
@@ -902,13 +954,14 @@ def main():
             "0: Quit\n"
             "1: View Dashboard\n"
             "2: View Inventory\n"
-            "3: Search\n"
-            "4: Add\n"
-            "5: Edit\n"
-            "6: Delete\n"
-            "7: Record Sale\n"
-            "8: Record Return\n"
-            "9: Record Payment\n"
+            "3: List Categories\n"
+            "4: Search\n"
+            "5: Add\n"
+            "6: Edit\n"
+            "7: Delete\n"
+            "8: Record Sale\n"
+            "9: Record Return\n"
+            "10: Record Payment\n"
         )
 
         if choice == "0":
@@ -921,24 +974,27 @@ def main():
             view_inventory(connection)
 
         elif choice == "3":
-            search(connection)
+            list_categories(connection)
 
         elif choice == "4":
-            add(connection)
+            search(connection)
 
         elif choice == "5":
-            edit(connection)
+            add(connection)
 
         elif choice == "6":
-            delete(connection)
+            edit(connection)
 
         elif choice == "7":
-            record_sale(connection)
+            delete(connection)
 
         elif choice == "8":
-            record_return(connection)
+            record_sale(connection)
 
         elif choice == "9":
+            record_return(connection)
+
+        elif choice == "10":
             record_payment(connection)
 
         else:
