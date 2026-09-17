@@ -594,3 +594,108 @@ def test_returning_from_an_empty_inventory(db, capsys, answers, partner_rate):
     psells.record_return(db)
 
     assert "Inventory is empty." in capsys.readouterr().out
+
+
+# Delete a product ------------------------------------------------------------
+
+def product_count(connection):
+    return connection.execute("SELECT COUNT(*) FROM products").fetchone()[0]
+
+
+def test_a_product_with_no_history_is_deleted(db, capsys, answers,
+                                              partner_rate):
+    add_product(db, 1, quantity_received=5, name="Jordan 1 Chicago")
+
+    answers("jordan", "yes")
+    psells.delete(db)
+
+    assert product_count(db) == 0
+    assert "Product deleted." in capsys.readouterr().out
+
+
+def test_answering_no_cancels_the_deletion(db, capsys, answers, partner_rate):
+    add_product(db, 1, quantity_received=5, name="Jordan 1 Chicago")
+
+    answers("jordan", "no")
+    psells.delete(db)
+
+    assert product_count(db) == 1
+    assert "Cancelled." in capsys.readouterr().out
+
+
+def test_a_product_with_a_sale_is_refused_without_being_asked(db, capsys,
+                                                              answers,
+                                                              partner_rate):
+    """Issue I1, closed in Phase 02, checked here for the first time.
+
+    Two things matter. The product survives, and the refusal comes before the
+    confirmation question rather than after it. Queueing only the search term
+    is what proves the second: if this ever asked to confirm before checking
+    what points at the product, the queue would run dry and this would fail.
+    """
+    add_product(db, 1, quantity_received=5, name="Jordan 1 Chicago")
+    add_sale(db, 1, item_id=1, quantity=1)
+
+    answers("jordan")
+    psells.delete(db)
+
+    printed = capsys.readouterr().out
+
+    assert product_count(db) == 1
+    assert "This product has 1 sale recorded against it." in printed
+    assert "Deleting it would lose that history, so it is refused." in printed
+
+
+def test_the_refusal_counts_more_than_one_sale(db, capsys, answers,
+                                               partner_rate):
+    add_product(db, 1, quantity_received=5, name="Jordan 1 Chicago")
+    add_sale(db, 1, item_id=1, quantity=1)
+    add_sale(db, 2, item_id=1, quantity=1)
+
+    answers("jordan")
+    psells.delete(db)
+
+    assert "This product has 2 sales recorded against it." in capsys.readouterr().out
+
+
+def test_the_refusal_names_sales_and_returns_together(db, capsys, answers,
+                                                      partner_rate):
+    add_product(db, 1, quantity_received=5, name="Jordan 1 Chicago")
+    add_sale(db, 1, item_id=1, quantity=1)
+    add_return(db, 1, item_id=1, quantity=1)
+
+    answers("jordan")
+    psells.delete(db)
+
+    printed = capsys.readouterr().out
+
+    assert "This product has 1 sale and 1 return recorded against it." in printed
+
+
+def test_an_unrecognised_confirmation_is_refused(db, capsys, answers,
+                                                 partner_rate):
+    add_product(db, 1, quantity_received=5, name="Jordan 1 Chicago")
+
+    answers("jordan", "maybe", "yes")
+    psells.delete(db)
+
+    assert product_count(db) == 0
+    assert "Invalid choice. Please try again." in capsys.readouterr().out
+
+
+def test_deleting_from_an_empty_inventory(db, capsys, answers, partner_rate):
+    answers()
+    psells.delete(db)
+
+    assert "Inventory is empty." in capsys.readouterr().out
+
+
+def test_deleting_a_product_that_does_not_match(db, capsys, answers,
+                                                partner_rate):
+    add_product(db, 1, quantity_received=5, name="Jordan 1 Chicago")
+
+    answers("kettle")
+    psells.delete(db)
+
+    assert product_count(db) == 1
+    assert "No products found." in capsys.readouterr().out
