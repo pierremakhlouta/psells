@@ -181,3 +181,109 @@ def test_inventory_shows_a_retail_discontinued_product(db, capsys):
 
     assert "Discontinued: Yes" in printed
     assert "Partner Cut: $25.00" in printed
+
+
+# Categories ------------------------------------------------------------------
+
+def test_categories_says_so_when_inventory_is_empty(db, capsys):
+    psells.list_categories(db)
+
+    assert "Inventory is empty." in capsys.readouterr().out
+
+
+def test_categories_lists_each_one_once_with_a_count(db, capsys):
+    add_product(db, 1, quantity_received=1, category="Bags")
+    add_product(db, 2, quantity_received=1, category="Sunglasses")
+    add_product(db, 3, quantity_received=1, category="Sunglasses")
+
+    psells.list_categories(db)
+
+    printed = capsys.readouterr().out
+
+    assert printed.count("Bags") == 1
+    assert printed.count("Sunglasses") == 1
+    assert "2 categories, 3 products" in printed
+
+
+def test_categories_are_alphabetical(db, capsys):
+    for product_id, category in enumerate(["Watches", "Bags", "Shoes"], start=1):
+        add_product(db, product_id, quantity_received=1, category=category)
+
+    psells.list_categories(db)
+
+    printed = capsys.readouterr().out
+
+    assert printed.index("Bags") < printed.index("Shoes")
+    assert printed.index("Shoes") < printed.index("Watches")
+
+
+def test_categories_are_padded_to_the_longest_name(db, capsys):
+    """The one place the shape of the output is the feature rather than dressing.
+
+    The counts are meant to line up in a column, which needs the width of the
+    longest name. A width bug is invisible until a long category name arrives,
+    so the aligned lines are asserted exactly.
+    """
+    add_product(db, 1, quantity_received=1, category="Bags")
+    add_product(db, 2, quantity_received=1, category="Sunglasses")
+    add_product(db, 3, quantity_received=1, category="Sunglasses")
+
+    psells.list_categories(db)
+
+    lines = capsys.readouterr().out.splitlines()
+
+    assert "Bags        1" in lines
+    assert "Sunglasses  2" in lines
+
+
+# Search ----------------------------------------------------------------------
+
+def test_search_prints_a_product_matching_the_name(db, capsys, answers,
+                                                   partner_rate):
+    add_product(db, 1, quantity_received=3, name="Jordan 1 Chicago")
+    add_product(db, 2, quantity_received=3, name="Leather Tote")
+
+    answers("jordan")
+    psells.search(db)
+
+    printed = capsys.readouterr().out
+
+    assert "Name: Jordan 1 Chicago" in printed
+    assert "Leather Tote" not in printed
+
+
+def test_search_prints_a_product_matching_the_category(db, capsys, answers,
+                                                       partner_rate):
+    """The half of search added in Phase 02: the term need not be in the name."""
+    add_product(db, 1, quantity_received=3, name="Leather Tote", category="Bags")
+
+    answers("bags")
+    psells.search(db)
+
+    assert "Name: Leather Tote" in capsys.readouterr().out
+
+
+def test_search_says_so_when_nothing_matches(db, capsys, answers, partner_rate):
+    add_product(db, 1, quantity_received=3, name="Jordan 1 Chicago")
+
+    answers("kettle")
+    psells.search(db)
+
+    assert "No products found." in capsys.readouterr().out
+
+
+def test_search_asks_again_after_a_blank_term(db, capsys, answers, partner_rate):
+    """ask_text rejects a blank answer and asks again, consuming two replies.
+
+    Nothing tested these loops before, and they are the most likely place for a
+    change to go unnoticed, because a broken one still looks like a prompt.
+    """
+    add_product(db, 1, quantity_received=3, name="Jordan 1 Chicago")
+
+    answers("   ", "jordan")
+    psells.search(db)
+
+    printed = capsys.readouterr().out
+
+    assert "Input cannot be blank. Please try again." in printed
+    assert "Name: Jordan 1 Chicago" in printed

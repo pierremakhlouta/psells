@@ -53,3 +53,23 @@ def partner_rate(monkeypatch):
     monkeypatch.setattr(psells, "default_partner_share_percent", lambda: 40.0)
 
     return 40.0
+
+
+@pytest.fixture
+def answers(monkeypatch):
+    """Queue the replies a feature function will read from input().
+
+    Call it with one string per question, in the order the function asks. Each
+    call to input() takes the next one, and running out raises StopIteration,
+    so a function that asks more questions than the test expected fails loudly
+    instead of hanging.
+
+    Remember that a rejected answer costs two: every ask_ helper loops until
+    what it gets is valid, so feeding "abc" to ask_int consumes an answer and
+    asks again.
+    """
+    def queue(*values):
+        remaining = iter(values)
+        monkeypatch.setattr("builtins.input", lambda prompt="": next(remaining))
+
+    return queue
