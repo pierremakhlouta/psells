@@ -56,3 +56,10 @@ def stock(connection, product_id):
         "FROM products_view WHERE id = ?",
         (product_id,)
     ).fetchone()
+
+
+def add_payment(connection, payment_id, amount_cents, note=""):
+    connection.execute(
+        "INSERT INTO payments VALUES (?, ?, ?, ?)",
+        (payment_id, "2026-09-01", amount_cents, note)
+    )
