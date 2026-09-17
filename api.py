@@ -18,6 +18,7 @@ from the project folder, because psells.py opens data/psells.db and
 data/config.json by paths relative to the working directory.
 """
 
+import datetime
 import sqlite3
 from typing import Annotated
 
@@ -100,6 +101,44 @@ class Product(BaseModel):
     )
 
 
+class NewSale(BaseModel):
+    """One sale, as a caller sends it.
+
+    Every bound here is checked before the endpoint runs, so a malformed request
+    is answered with a 422 naming the field rather than reaching the database.
+    create_sale checks the same things again, because it is also called from the
+    CLI and must not depend on who its caller happens to be.
+
+    date is a real date, so 2026-02-30 is refused here rather than by a CHECK
+    constraint. Leave it out and today is used, the same as pressing Enter at
+    the CLI's date prompt.
+    """
+
+    item_id: int
+    quantity: int = Field(ge=1)
+    sale_price_cents: int = Field(ge=0, description="Price per unit, in cents.")
+    date: datetime.date | None = Field(
+        default=None, description="Defaults to today."
+    )
+
+
+class Sale(BaseModel):
+    id: int
+    date: datetime.date
+    item_id: int
+    quantity: int
+    sale_price_cents: int
+    partner_share_cents: int = Field(
+        description=(
+            "The partner's cut per unit, frozen onto this sale. Changing the "
+            "default rate later does not alter it."
+        )
+    )
+    quantity_available: int = Field(
+        description="The product's remaining stock after this sale."
+    )
+
+
 class Dashboard(BaseModel):
     total_received: int
     total_sold: int
@@ -151,4 +190,55 @@ def read_dashboard(connection: Connection):
         total_partner_share_cents=totals["total_partner_share"],
         total_paid_cents=totals["total_paid"],
         balance_owing_cents=totals["balance_owing"],
+    )
+
+
+@app.post(
+    "/sales",
+    response_model=Sale,
+    status_code=201,
+    tags=["sales"],
+    responses={
+        404: {"description": "No product with that id."},
+        409: {"description": "The sale conflicts with the stock on hand."},
+    },
+)
+def record_sale(new_sale: NewSale, connection: Connection):
+    """Record one sale and return it, including the partner cut it froze.
+
+    The work is create_sale, which is what the CLI calls once its prompts have
+    collected the same five values. This function translates a refusal into a
+    status code and reads the stored row back; it decides nothing.
+
+    404 and 409 are different on purpose. A missing product means correct the
+    id. A stock conflict means the request was well formed and the world
+    disagrees with it, so correct the quantity.
+    """
+    sale_date = (new_sale.date or datetime.date.today()).isoformat()
+
+    try:
+        psells.create_sale(
+            connection,
+            new_sale.item_id,
+            new_sale.quantity,
+            new_sale.sale_price_cents,
+            sale_date,
+        )
+    except psells.ProductNotFound as error:
+        raise HTTPException(status_code=404, detail=str(error))
+    except psells.SaleError as error:
+        raise HTTPException(status_code=409, detail=str(error))
+
+    # last_insert_rowid is per connection, and this request has its own, so it
+    # cannot pick up a row inserted by anybody else.
+    stored = connection.execute(
+        "SELECT * FROM sales WHERE id = last_insert_rowid()"
+    ).fetchone()
+
+    return Sale(
+        **dict(stored),
+        quantity_available=connection.execute(
+            "SELECT quantity_available FROM products_view WHERE id = ?",
+            (new_sale.item_id,)
+        ).fetchone()[0],
     )

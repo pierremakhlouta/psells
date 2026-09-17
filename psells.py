@@ -430,6 +430,15 @@ class SaleError(ValueError):
     """
 
 
+class ProductNotFound(SaleError):
+    """The product itself does not exist, rather than the sale being wrong.
+
+    A separate type because the two are different problems with different
+    answers: one means correct the id, the other means correct the sale. Callers
+    that do not care can still catch SaleError and get both.
+    """
+
+
 def create_sale(connection, product_id, quantity, sale_price_cents, sale_date):
     """Record one sale and return the partner cut that was frozen onto it.
 
@@ -447,7 +456,7 @@ def create_sale(connection, product_id, quantity, sale_price_cents, sale_date):
     ).fetchone()
 
     if product is None:
-        raise SaleError(f"No product with id {product_id}.")
+        raise ProductNotFound(f"No product with id {product_id}.")
 
     available = product["quantity_available"]
 

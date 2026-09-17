@@ -6,6 +6,8 @@ database is the same in-memory one the other tests use, swapped in by overriding
 the connection dependency, so no test touches a file.
 """
 
+from datetime import date
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -220,3 +222,185 @@ def test_the_schema_describes_both_endpoints(client):
     assert "/products" in schema["paths"]
     assert "/dashboard" in schema["paths"]
     assert "Product" in schema["components"]["schemas"]
+
+
+# Recording a sale ------------------------------------------------------------
+#
+# The first endpoint that writes. Two layers refuse a bad request and they are
+# not interchangeable: Pydantic rejects a malformed body with a 422 before the
+# endpoint runs at all, and create_sale refuses a well formed request that the
+# stock on hand disagrees with. The status codes below say which fired.
+
+def test_a_sale_is_recorded_and_returned(client, db):
+    add_product(db, 1, quantity_received=10, name="Jordan 1 Chicago")
+
+    response = client.post("/sales", json={
+        "item_id": 1,
+        "quantity": 2,
+        "sale_price_cents": 8999,
+        "date": "2026-09-14",
+    })
+
+    assert response.status_code == 201
+
+    sale = response.json()
+
+    assert sale["id"] == 1
+    assert sale["item_id"] == 1
+    assert sale["quantity"] == 2
+    assert sale["sale_price_cents"] == 8999
+    assert sale["date"] == "2026-09-14"
+    assert sale["partner_share_cents"] == 4000
+    assert sale["quantity_available"] == 8
+
+
+def test_the_sale_is_actually_in_the_database(client, db):
+    add_product(db, 1, quantity_received=10)
+
+    client.post("/sales", json={
+        "item_id": 1, "quantity": 2, "sale_price_cents": 8999,
+    })
+
+    stored = db.execute("SELECT * FROM sales").fetchone()
+
+    assert stored["item_id"] == 1
+    assert stored["quantity"] == 2
+    assert stored["partner_share_cents"] == 4000
+
+
+def test_the_date_defaults_to_today(client, db):
+    add_product(db, 1, quantity_received=10)
+
+    response = client.post("/sales", json={
+        "item_id": 1, "quantity": 1, "sale_price_cents": 100,
+    })
+
+    assert response.json()["date"] == date.today().isoformat()
+
+
+def test_a_sale_moves_the_dashboard(client, db):
+    """End to end across two endpoints: write through one, read through another."""
+    add_product(db, 1, quantity_received=10)
+
+    client.post("/sales", json={
+        "item_id": 1, "quantity": 2, "sale_price_cents": 10000,
+    })
+
+    figures = client.get("/dashboard").json()
+
+    assert figures["total_sold"] == 2
+    assert figures["total_revenue_cents"] == 20000
+    assert figures["total_partner_share_cents"] == 8000
+    assert figures["total_profit_cents"] == 12000
+    assert figures["balance_owing_cents"] == 8000
+
+
+def test_an_unknown_product_is_a_404(client, db):
+    response = client.post("/sales", json={
+        "item_id": 99, "quantity": 1, "sale_price_cents": 100,
+    })
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "No product with id 99."
+
+
+def test_selling_more_than_is_available_is_a_409(client, db):
+    """The request is well formed. The world disagrees with it."""
+    add_product(db, 1, quantity_received=3)
+
+    response = client.post("/sales", json={
+        "item_id": 1, "quantity": 4, "sale_price_cents": 100,
+    })
+
+    assert response.status_code == 409
+    assert "Only 3 available" in response.json()["detail"]
+    assert db.execute("SELECT COUNT(*) FROM sales").fetchone()[0] == 0
+
+
+def test_a_sold_out_product_is_a_409(client, db):
+    add_product(db, 1, quantity_received=2, name="Jordan 1 Chicago")
+    add_sale(db, 1, item_id=1, quantity=2)
+
+    response = client.post("/sales", json={
+        "item_id": 1, "quantity": 1, "sale_price_cents": 100,
+    })
+
+    assert response.status_code == 409
+    assert "no stock available" in response.json()["detail"]
+
+
+def test_a_quantity_of_zero_is_a_422(client, db):
+    """Refused by the request model, before the endpoint body runs."""
+    add_product(db, 1, quantity_received=10)
+
+    response = client.post("/sales", json={
+        "item_id": 1, "quantity": 0, "sale_price_cents": 100,
+    })
+
+    assert response.status_code == 422
+    assert db.execute("SELECT COUNT(*) FROM sales").fetchone()[0] == 0
+
+
+def test_a_negative_price_is_a_422(client, db):
+    add_product(db, 1, quantity_received=10)
+
+    response = client.post("/sales", json={
+        "item_id": 1, "quantity": 1, "sale_price_cents": -1,
+    })
+
+    assert response.status_code == 422
+
+
+def test_a_missing_field_is_a_422_naming_it(client, db):
+    add_product(db, 1, quantity_received=10)
+
+    response = client.post("/sales", json={"item_id": 1, "quantity": 1})
+
+    assert response.status_code == 422
+    assert any(
+        "sale_price_cents" in detail["loc"]
+        for detail in response.json()["detail"]
+    )
+
+
+def test_a_date_that_does_not_exist_is_a_422(client, db):
+    """There is no 30th of February. Refused as bad input, not as a server error.
+
+    Without a real date type here this would reach the schema's CHECK
+    constraint and surface as a 500, which would be a lie: the request was
+    wrong, not the server.
+    """
+    add_product(db, 1, quantity_received=10)
+
+    response = client.post("/sales", json={
+        "item_id": 1, "quantity": 1, "sale_price_cents": 100,
+        "date": "2026-02-30",
+    })
+
+    assert response.status_code == 422
+    assert db.execute("SELECT COUNT(*) FROM sales").fetchone()[0] == 0
+
+
+def test_the_partner_cut_is_frozen_by_the_endpoint_too(client, db, monkeypatch):
+    add_product(db, 1, quantity_received=10)
+
+    first = client.post("/sales", json={
+        "item_id": 1, "quantity": 1, "sale_price_cents": 8999,
+    }).json()
+
+    monkeypatch.setattr(psells, "default_partner_share_percent", lambda: 10.0)
+
+    second = client.post("/sales", json={
+        "item_id": 1, "quantity": 1, "sale_price_cents": 8999,
+    }).json()
+
+    assert first["partner_share_cents"] == 4000
+    assert second["partner_share_cents"] == 1000
+    assert client.get("/dashboard").json()["total_partner_share_cents"] == 5000
+
+
+def test_the_schema_documents_the_sales_endpoint(client):
+    schema = client.get("/openapi.json").json()
+
+    assert "post" in schema["paths"]["/sales"]
+    assert "NewSale" in schema["components"]["schemas"]
