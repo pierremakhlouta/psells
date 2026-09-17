@@ -1,0 +1,14 @@
+# Development dependencies: everything needed to run PSells, plus the tools used
+# to test and maintain it. This is the file to install when working on the
+# project. A deployment installs requirements.txt instead.
+-r requirements.txt
+
+pytest==9.1.1
+
+# FastAPI's TestClient is built on httpx, so testing the API needs it even
+# though nothing imports httpx directly.
+httpx==0.28.1
+
+# Required only by import_excel.py, the one-time migration out of Excel. Kept
+# so that script can still be read and run against an old workbook.
+openpyxl==3.1.5
