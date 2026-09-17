@@ -9,6 +9,8 @@ They assert on particular facts rather than on whole blocks of output, so
 rewording a heading does not fail a test that nothing broke.
 """
 
+from datetime import date
+
 import psells
 
 from helpers import add_payment, add_product, add_return, add_sale
@@ -287,3 +289,84 @@ def test_search_asks_again_after_a_blank_term(db, capsys, answers, partner_rate)
 
     assert "Input cannot be blank. Please try again." in printed
     assert "Name: Jordan 1 Chicago" in printed
+
+
+# Record a payment ------------------------------------------------------------
+#
+# The first feature that writes. These check the row that lands in the database
+# as well as what the user was told, because a function that prints "Payment
+# recorded." and stores nothing passes any test that only reads the screen.
+
+def only_payment(connection):
+    return connection.execute("SELECT * FROM payments").fetchone()
+
+
+def test_a_payment_is_stored_and_confirmed(db, capsys, answers):
+    answers("2026-09-14", "150.00", "e-transfer")
+    psells.record_payment(db)
+
+    payment = only_payment(db)
+
+    assert payment["date"] == "2026-09-14"
+    assert payment["amount_cents"] == 15000
+    assert payment["notes"] == "e-transfer"
+    assert "Payment recorded." in capsys.readouterr().out
+
+
+def test_a_blank_date_means_today(db, capsys, answers):
+    answers("", "50", "")
+    psells.record_payment(db)
+
+    assert only_payment(db)["date"] == date.today().isoformat()
+
+
+def test_an_amount_that_is_not_a_number_is_refused(db, capsys, answers):
+    answers("2026-09-14", "abc", "12.50", "")
+    psells.record_payment(db)
+
+    assert only_payment(db)["amount_cents"] == 1250
+    assert "Please enter an amount in dollars" in capsys.readouterr().out
+
+
+def test_a_third_decimal_place_is_refused(db, capsys, answers):
+    """A tenth of a cent is not an amount of money.
+
+    parse_money refuses it rather than rounding, because rounding would store a
+    different figure from the one that was typed and say nothing about it.
+    """
+    answers("2026-09-14", "12.505", "12.50", "")
+    psells.record_payment(db)
+
+    assert only_payment(db)["amount_cents"] == 1250
+
+
+def test_a_negative_amount_is_refused(db, capsys, answers):
+    answers("2026-09-14", "-5.00", "5.00", "")
+    psells.record_payment(db)
+
+    assert only_payment(db)["amount_cents"] == 500
+    assert "Value must be at least $0.00." in capsys.readouterr().out
+
+
+def test_a_payment_of_zero_is_accepted(db, capsys, answers):
+    """Deliberate, and confirmed as wanted rather than tolerated.
+
+    Recorded here so that if it ever changes, it changes on purpose.
+    """
+    answers("2026-09-14", "0", "")
+    psells.record_payment(db)
+
+    assert only_payment(db)["amount_cents"] == 0
+
+
+def test_a_date_that_does_not_exist_is_refused(db, capsys, answers):
+    """There is no 13th month. The prompt asks again rather than storing it.
+
+    The schema would also refuse this, but the point is that the user is asked
+    again rather than meeting a constraint error.
+    """
+    answers("2026-13-01", "2026-09-14", "10", "")
+    psells.record_payment(db)
+
+    assert only_payment(db)["date"] == "2026-09-14"
+    assert "Please enter a valid date in YYYY-MM-DD format." in capsys.readouterr().out
