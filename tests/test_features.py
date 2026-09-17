@@ -828,3 +828,143 @@ def test_a_partner_percentage_above_one_hundred_is_refused(db, capsys, answers):
 
     assert only_product(db)["partner_share_percent"] == 35
     assert "Value must be at most 100." in capsys.readouterr().out
+
+
+# Edit a product, part one: the keep-current convention ------------------------
+#
+# Every field in edit offers the current value in brackets and takes Enter to
+# keep it. In order: category, name, quantity, discontinued, retail price,
+# listed price, condition, notes, then the partner-share block.
+
+def product_row(connection, product_id=1):
+    row = connection.execute(
+        "SELECT * FROM products WHERE id = ?", (product_id,)
+    ).fetchone()
+
+    return dict(row)
+
+
+def test_pressing_enter_through_every_field_changes_nothing(db, answers,
+                                                            partner_rate):
+    """The convention the whole function rests on, checked in one go.
+
+    Eight blank answers, one per field. The tenth answer is not blank because
+    the partner-share question will not take one, which the next test covers.
+    """
+    add_product(db, 1, quantity_received=10, name="Jordan 1 Chicago",
+                category="Shoes", notes="boxed")
+
+    before = product_row(db)
+
+    answers("jordan", "", "", "", "", "", "", "", "", "no")
+    psells.edit(db)
+
+    assert product_row(db) == before
+
+
+def test_the_partner_share_question_will_not_take_a_blank_answer(db, capsys,
+                                                                 answers,
+                                                                 partner_rate):
+    """A known wrinkle, recorded rather than fixed.
+
+    Every other prompt in edit takes Enter to keep the current value. This one
+    uses ask_choice rather than ask_edit_choice, so a blank is refused and the
+    question is asked again. Cosmetic, listed in the README, and pinned here so
+    that whoever fixes it sees this test go red and knows to update it.
+    """
+    add_product(db, 1, quantity_received=10, name="Jordan 1 Chicago")
+
+    answers("jordan", "", "", "", "", "", "", "", "", "", "no")
+    psells.edit(db)
+
+    assert "Invalid choice. Please try again." in capsys.readouterr().out
+
+
+def test_editing_the_category_and_the_name(db, capsys, answers, partner_rate):
+    add_product(db, 1, quantity_received=10, name="Jordan 1 Chicago",
+                category="Shoes")
+
+    answers("jordan", "Sneakers", "Jordan 1 Bred", "", "", "", "", "", "", "no")
+    psells.edit(db)
+
+    product = product_row(db)
+
+    assert product["category"] == "Sneakers"
+    assert product["name"] == "Jordan 1 Bred"
+    assert "Product updated successfully." in capsys.readouterr().out
+
+
+def test_editing_the_prices(db, answers, partner_rate):
+    add_product(db, 1, quantity_received=10, name="Jordan 1 Chicago")
+
+    answers("jordan", "", "", "", "", "250.00", "199.99", "", "", "no")
+    psells.edit(db)
+
+    product = product_row(db)
+
+    assert product["retail_price_cents"] == 25000
+    assert product["listed_price_cents"] == 19999
+
+
+def test_notes_cannot_be_cleared(db, answers, partner_rate):
+    """Issue I8, pinned as it stands rather than fixed.
+
+    A blank answer means keep the current value everywhere in edit, which
+    leaves no way to blank a note that already has text. Recorded so the
+    behaviour is a decision rather than a surprise.
+    """
+    add_product(db, 1, quantity_received=10, name="Jordan 1 Chicago",
+                notes="boxed")
+
+    answers("jordan", "", "", "", "", "", "", "", "", "no")
+    psells.edit(db)
+
+    assert product_row(db)["notes"] == "boxed"
+
+
+def test_the_intake_cannot_drop_below_what_has_already_gone(db, capsys,
+                                                            answers,
+                                                            partner_rate):
+    """One of the two rules SQLite cannot enforce, so the prompt has to.
+
+    Three sold and one returned have both left the original intake, so the
+    intake cannot be corrected to fewer than four. A CHECK constraint cannot
+    express this, because it spans three tables.
+    """
+    add_product(db, 1, quantity_received=10, name="Jordan 1 Chicago")
+    add_sale(db, 1, item_id=1, quantity=3)
+    add_return(db, 1, item_id=1, quantity=1)
+
+    answers("jordan", "", "", "2", "5", "", "", "", "", "", "no")
+    psells.edit(db)
+
+    assert product_row(db)["quantity_received"] == 5
+    assert "Value must be at least 4." in capsys.readouterr().out
+
+
+def test_the_intake_floor_is_one_when_nothing_has_gone(db, capsys, answers,
+                                                       partner_rate):
+    add_product(db, 1, quantity_received=10, name="Jordan 1 Chicago")
+
+    answers("jordan", "", "", "0", "1", "", "", "", "", "", "no")
+    psells.edit(db)
+
+    assert product_row(db)["quantity_received"] == 1
+    assert "Value must be at least 1." in capsys.readouterr().out
+
+
+def test_editing_from_an_empty_inventory(db, capsys, answers, partner_rate):
+    answers()
+    psells.edit(db)
+
+    assert "Inventory is empty." in capsys.readouterr().out
+
+
+def test_editing_a_product_that_does_not_match(db, capsys, answers,
+                                               partner_rate):
+    add_product(db, 1, quantity_received=10, name="Jordan 1 Chicago")
+
+    answers("kettle")
+    psells.edit(db)
+
+    assert "No products found." in capsys.readouterr().out
