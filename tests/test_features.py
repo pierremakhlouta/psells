@@ -370,3 +370,136 @@ def test_a_date_that_does_not_exist_is_refused(db, capsys, answers):
 
     assert only_payment(db)["date"] == "2026-09-14"
     assert "Please enter a valid date in YYYY-MM-DD format." in capsys.readouterr().out
+
+
+# Record a sale ---------------------------------------------------------------
+#
+# The most important function in the application. It is the only place a
+# partner share is frozen onto a row, and the only place stock comes down.
+
+def only_sale(connection):
+    return connection.execute("SELECT * FROM sales").fetchone()
+
+
+def available(connection, product_id):
+    return connection.execute(
+        "SELECT quantity_available FROM products_view WHERE id = ?",
+        (product_id,)
+    ).fetchone()[0]
+
+
+def test_a_sale_is_stored_and_reduces_stock(db, capsys, answers, partner_rate):
+    add_product(db, 1, quantity_received=10, name="Jordan 1 Chicago")
+
+    answers("jordan", "2", "89.99", "2026-09-14")
+    psells.record_sale(db)
+
+    sale = only_sale(db)
+
+    assert sale["item_id"] == 1
+    assert sale["quantity"] == 2
+    assert sale["sale_price_cents"] == 8999
+    assert sale["date"] == "2026-09-14"
+    assert available(db, 1) == 8
+    assert "Sale recorded." in capsys.readouterr().out
+
+
+def test_the_partner_cut_is_frozen_onto_the_sale(db, answers, partner_rate,
+                                                 monkeypatch):
+    """The rule the whole data model exists to protect.
+
+    The partner's cut is worked out once, at the moment of sale, and stored on
+    the row. Changing the default rate afterwards must not reach back and alter
+    what was already agreed on a sale that has happened.
+
+    The second half of this test proves the rate really did change, so a stored
+    figure that stayed put cannot be explained by the change not taking effect.
+    """
+    add_product(db, 1, quantity_received=10, name="Jordan 1 Chicago")
+
+    answers("jordan", "1", "89.99", "2026-09-14")
+    psells.record_sale(db)
+
+    assert only_sale(db)["partner_share_cents"] == 4000
+
+    monkeypatch.setattr(psells, "default_partner_share_percent", lambda: 10.0)
+
+    product = psells.all_products(db)[0]
+
+    assert psells.partner_share_for(product) == 1000
+    assert only_sale(db)["partner_share_cents"] == 4000
+
+
+def test_selling_more_than_is_available_is_refused(db, capsys, answers,
+                                                   partner_rate):
+    add_product(db, 1, quantity_received=3, name="Jordan 1 Chicago")
+
+    answers("jordan", "5", "3", "10.00", "")
+    psells.record_sale(db)
+
+    assert only_sale(db)["quantity"] == 3
+    assert available(db, 1) == 0
+    assert "Value must be at most 3." in capsys.readouterr().out
+
+
+def test_selling_none_is_refused(db, capsys, answers, partner_rate):
+    add_product(db, 1, quantity_received=3, name="Jordan 1 Chicago")
+
+    answers("jordan", "0", "1", "10.00", "")
+    psells.record_sale(db)
+
+    assert only_sale(db)["quantity"] == 1
+    assert "Value must be at least 1." in capsys.readouterr().out
+
+
+def test_a_sold_out_product_cannot_be_sold_again(db, capsys, answers,
+                                                 partner_rate):
+    add_product(db, 1, quantity_received=2, name="Jordan 1 Chicago")
+    add_sale(db, 1, item_id=1, quantity=2)
+
+    answers("jordan")
+    psells.record_sale(db)
+
+    assert "No stock available to sell." in capsys.readouterr().out
+    assert db.execute("SELECT COUNT(*) FROM sales").fetchone()[0] == 1
+
+
+def test_selling_from_an_empty_inventory(db, capsys, answers, partner_rate):
+    """No question is asked at all, which the empty answer queue proves.
+
+    If this ever started prompting first, the queue would run dry and the test
+    would fail with StopIteration rather than quietly passing.
+    """
+    answers()
+    psells.record_sale(db)
+
+    assert "Inventory is empty." in capsys.readouterr().out
+
+
+def test_selling_a_product_that_does_not_match(db, capsys, answers,
+                                               partner_rate):
+    add_product(db, 1, quantity_received=3, name="Jordan 1 Chicago")
+
+    answers("kettle")
+    psells.record_sale(db)
+
+    assert "No products found." in capsys.readouterr().out
+    assert db.execute("SELECT COUNT(*) FROM sales").fetchone()[0] == 0
+
+
+def test_choosing_between_two_matches_by_id(db, capsys, answers, partner_rate):
+    """A term matching two products lists both and asks which.
+
+    99 is not one of them, so it is refused and the question is asked again.
+    """
+    add_product(db, 1, quantity_received=3, name="Nike Air Max 90")
+    add_product(db, 2, quantity_received=3, name="Nike Air Force 1")
+
+    answers("nike", "99", "2", "1", "50.00", "")
+    psells.record_sale(db)
+
+    printed = capsys.readouterr().out
+
+    assert "Multiple products found:" in printed
+    assert "Invalid ID. Please choose one of the IDs shown above." in printed
+    assert only_sale(db)["item_id"] == 2
