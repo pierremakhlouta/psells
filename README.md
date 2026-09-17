@@ -29,18 +29,30 @@ Python 3, and the `sqlite3` command line tool, which ships with macOS and most
 Linux distributions. The application itself uses only the standard library, so
 there is nothing to install in order to run it.
 
-`openpyxl` is needed only by `import_excel.py`, the one-time script that read the
-original spreadsheet, and `pytest` only to run the test suite:
+The HTTP API needs FastAPI and uvicorn. Development also needs pytest, httpx2
+for the API tests, and openpyxl for `import_excel.py`, the one-time script that
+read the original spreadsheet:
 
-    pip install -r requirements.txt
+    pip install -r requirements.txt        # to run
+    pip install -r requirements-dev.txt    # to work on it
 
 ## Running it
 
     python3 psells.py
 
-Run it from the project root. The database and the configuration file are read
-from `data/` relative to the working directory, and the application exits with an
-explanation if either is missing.
+The database and the configuration file are read from the `data/` folder beside
+`psells.py`, not from the directory you happen to be standing in, so this works
+from anywhere. The application exits with an explanation if either is missing.
+
+Two environment variables override those paths:
+
+    PSELLS_DB       the SQLite database file
+    PSELLS_CONFIG   the JSON configuration file
+
+Which is how to point the application at a copy rather than at the real records:
+
+    sqlite3 data/psells.db ".backup 'copy.db'"
+    PSELLS_DB=copy.db python3 psells.py
 
     0: Quit
     1: View Dashboard
@@ -83,6 +95,33 @@ The sample set is small and invented, but it covers the cases worth seeing: all
 three partner-share modes, a product discontinued at retail, one that has sold
 out, a return, and two partner payments.
 
+## The HTTP API
+
+`api.py` serves the same data over HTTP. It is a second way in, not a second
+application: every figure it returns comes from the functions the command line
+uses, and it works nothing out for itself.
+
+    uvicorn api:app --reload
+
+Then open `http://127.0.0.1:8000/docs`, which is generated from the code and
+lists every endpoint with its fields and types.
+
+    GET  /products    every product, with stock and the partner cut per unit
+    GET  /dashboard   the nine dashboard figures
+    POST /sales       record one sale
+
+All money is sent and received as a whole number of cents, never as dollars and
+never as a formatted string. That matches how it is stored, keeps every value
+exact, and leaves formatting to whatever is showing it to a person.
+
+The server listens on `127.0.0.1` only, so nothing else on the network can reach
+it. That matters, because there is no authentication of any kind yet.
+
+To try it against a copy rather than the real records:
+
+    sqlite3 data/psells.db ".backup 'copy.db'"
+    PSELLS_DB=copy.db uvicorn api:app
+
 ## Backups
 
 `backup.sh` takes a verified copy of the database into `~/PSells-Backups/daily/`,
@@ -108,26 +147,40 @@ the machine is reliably awake matters more than the exact hour.
 
 ## Running the tests
 
-    pip install -r requirements.txt
+    pip install -r requirements-dev.txt
     pytest
 
-The suite covers the logic that has no input or output: partner-share
-calculation in all three modes including its rounding, product and category
-search, the dashboard totals, the derived stock quantities, and the rule that a
-product with history cannot be deleted.
+Three files, and the split is deliberate, so a red run says what kind of thing
+broke before you read a line of it.
 
-The tests need no data files. They build databases in memory from `schema.sql`
+`test_domain.py` covers the calculations that have no input or output:
+partner-share in all three modes including its rounding, search, the dashboard
+totals, the derived stock quantities, the rule that a product with history
+cannot be deleted, and `create_sale`.
+
+`test_features.py` covers the ten menu functions end to end. They prompt and
+print, so input is faked with pytest's `monkeypatch` and output is read back
+with `capsys`. Each test queues one answer per question, which makes the length
+of that queue a claim about how many questions the function asks: if it ever
+asks one more, the queue runs dry and the test fails rather than hanging.
+
+`test_api.py` drives the HTTP endpoints through FastAPI's test client, with the
+connection dependency pointed at the same in-memory database.
+
+No test needs a data file. They build databases in memory from `schema.sql`
 itself, so a constraint added to the schema is exercised by the existing tests
-automatically. They run on every push through GitHub Actions, along with a
-dependency vulnerability audit.
+automatically. Everything runs on every push through GitHub Actions, alongside a
+dependency vulnerability audit and a shellcheck pass over the shell scripts.
 
 ## Known limitations
 
 Worth stating plainly rather than leaving to be discovered.
 
-- **The features are not automatically tested.** Every function that prompts,
-  prints or writes is covered by manual testing only. A green badge here means
-  the calculations are right, not that the application works.
+- **The API has no authentication.** Anyone who can reach the port can read
+  every figure and record a sale. It listens on `127.0.0.1` only, which is the
+  whole of the protection at the moment, so do not put it on `0.0.0.0`.
+- **The API can read and sell, and nothing else.** Adding, editing, deleting,
+  returns and payments are still command line only.
 - **Two rules live in the application rather than the database.** Available stock
   never going negative, and an intake quantity never being edited below what has
   already sold and returned, both span more than one table. SQLite does not allow
