@@ -10,7 +10,7 @@ CONFIG_FILE = "data/config.json"
 DB_FILE = "data/psells.db"
 
 
-def connect():
+def connect(check_same_thread=True):
     """Open the database and hand back a connection that is ready to use.
 
     Both settings below are per connection, not per database, so every
@@ -23,8 +23,16 @@ def connect():
     row_factory makes a row readable by column name, so product["name"] keeps
     working. Without it a row is a plain tuple and the same code would have to
     say product[2].
+
+    check_same_thread defaults to on, which is right for the command line
+    application: it is single threaded, so the check never fires and costs
+    nothing to keep. The API turns it off deliberately, because a web server
+    runs a synchronous endpoint and its dependencies on a thread pool and can
+    hand two steps of one request to two different threads. That is safe only
+    because each request there opens its own connection and closes it again, so
+    no connection is ever used by two requests at once.
     """
-    connection = sqlite3.connect(DB_FILE)
+    connection = sqlite3.connect(DB_FILE, check_same_thread=check_same_thread)
     connection.execute("PRAGMA foreign_keys = ON")
     connection.row_factory = sqlite3.Row
 

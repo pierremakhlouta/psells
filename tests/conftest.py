@@ -23,7 +23,12 @@ def db():
     """
     schema_path = os.path.join(os.path.dirname(psells.__file__), "schema.sql")
 
-    connection = sqlite3.connect(":memory:")
+    # check_same_thread is off for the same reason the API turns it off: the
+    # API tests drive endpoints through a thread pool, and this one connection
+    # is then touched from a thread other than the one that made it. Every test
+    # here is single threaded and uses the connection one call at a time, so
+    # nothing is shared concurrently.
+    connection = sqlite3.connect(":memory:", check_same_thread=False)
     connection.execute("PRAGMA foreign_keys = ON")
 
     with open(schema_path) as schema:
