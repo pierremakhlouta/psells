@@ -101,3 +101,83 @@ def test_dashboard_shows_an_overpayment_as_a_negative_balance(db, capsys):
     psells.view_dashboard(db)
 
     assert "Balance owing: $-3.00" in capsys.readouterr().out
+
+
+def test_inventory_says_so_when_it_is_empty(db, capsys):
+    psells.view_inventory(db)
+
+    assert "Inventory is empty." in capsys.readouterr().out
+
+
+def test_inventory_prints_every_field_of_a_product(db, capsys, partner_rate):
+    """The listing is the screen Phase 03b replaces, so every line is pinned.
+
+    Partner Cut is 40 percent of the 100.00 retail price, from the rate the
+    partner_rate fixture pins rather than from the real configuration.
+    """
+    add_product(db, 1, quantity_received=4, name="Jordan 1 Chicago")
+
+    psells.view_inventory(db)
+
+    printed = capsys.readouterr().out
+
+    assert "ID: 1" in printed
+    assert "Name: Jordan 1 Chicago" in printed
+    assert "Category: Shoes" in printed
+    assert "Available: 4" in printed
+    assert "Listed Price: $90.00" in printed
+    assert "Partner Cut: $40.00" in printed
+    assert "Discontinued: No" in printed
+    assert "Condition: Brand New" in printed
+
+
+def test_inventory_lists_every_product_in_id_order(db, capsys, partner_rate):
+    """all_products orders by id deliberately, so the order is worth holding.
+
+    Without ORDER BY, SQLite makes no promise at all. It would happen to come
+    back in id order today and change the day a query plan changes.
+    """
+    add_product(db, 1, quantity_received=1, name="First")
+    add_product(db, 2, quantity_received=1, name="Second")
+    add_product(db, 3, quantity_received=1, name="Third")
+
+    psells.view_inventory(db)
+
+    printed = capsys.readouterr().out
+
+    assert printed.index("Name: First") < printed.index("Name: Second")
+    assert printed.index("Name: Second") < printed.index("Name: Third")
+
+
+def test_inventory_shows_stock_after_sales_and_returns(db, capsys, partner_rate):
+    """Received 10, sold 3, returned 1, so 6 are on the shelf."""
+    add_product(db, 1, quantity_received=10)
+    add_sale(db, 1, item_id=1, quantity=3)
+    add_return(db, 1, item_id=1, quantity=1)
+
+    psells.view_inventory(db)
+
+    assert "Available: 6" in capsys.readouterr().out
+
+
+def test_inventory_shows_a_retail_discontinued_product(db, capsys):
+    """No partner_rate fixture here, deliberately.
+
+    A fixed-amount product never consults the configuration, so this test also
+    proves that path does not read the file.
+    """
+    add_product(
+        db, 1, quantity_received=2,
+        name="Discontinued Watch",
+        retail_discontinued=1,
+        retail_price_cents=0,
+        partner_share_mode="custom_amount",
+        partner_share_amount_cents=2500,
+    )
+
+    psells.view_inventory(db)
+
+    printed = capsys.readouterr().out
+
+    assert "Discontinued: Yes" in printed
+    assert "Partner Cut: $25.00" in printed

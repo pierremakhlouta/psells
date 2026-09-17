@@ -32,3 +32,24 @@ def db():
     connection.row_factory = sqlite3.Row
 
     return connection
+
+
+@pytest.fixture
+def partner_rate(monkeypatch):
+    """Pin the default partner share at 40 percent for one test.
+
+    Two reasons, and the second matters more than the first.
+
+    A default-mode product sends partner_share_for to the config file, which is
+    read relative to the working directory. data/ is gitignored, so a checkout
+    has no config file and the test dies with FileNotFoundError raised four
+    frames below the line under test. It passes on a developer's machine and
+    fails on CI, which is the worst shape a test failure can take.
+
+    And the real rate is a business figure that does not belong in a public
+    repository. Pinning an invented 40 percent keeps it out, and makes every
+    expected partner cut in a test arithmetic a reader can check by eye.
+    """
+    monkeypatch.setattr(psells, "default_partner_share_percent", lambda: 40.0)
+
+    return 40.0
