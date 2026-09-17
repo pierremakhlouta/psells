@@ -192,3 +192,85 @@ calls only, not every detail, and no specific business figures.
   statements applied to a database built from the real schema, so anyone trying
   the project exercises the same constraints the real data does, and a sample
   record that would break a rule cannot be shipped by accident.
+
+- **The features were tested before any of them was taken apart.** Ten functions
+  prompted and printed and none had an automated test, which is why building an
+  HTTP layer started with writing those tests rather than with writing an
+  endpoint. Input is faked and output captured, so a test drives a menu function
+  the way a person does. Written first, they pin what the application already
+  does and prove an extraction changed nothing. Written afterwards they would
+  only describe code that had already moved, and the one thing worth knowing,
+  whether it still behaves the same, would be unknowable.
+
+- **The API is a second way in, not a second implementation.** Every figure the
+  endpoints return comes from the functions the command line already uses:
+  stock from the products view, the partner cut from the one function that
+  computes it, the dashboard from the one function that totals it. Two copies of
+  a business rule do not stay equal, and the failure is silent, because both
+  answers look reasonable. Tests assert that the API's figures equal a direct
+  call to those same functions, so the rule is checked on every run rather than
+  remembered.
+
+- **Recording a sale is one function, and asking the questions is not part of
+  it.** The menu version is a conversation: search, choose, quantity, price,
+  date, with context carried between the steps. HTTP has no conversation. A
+  request arrives complete and the server remembers nothing, so an endpoint
+  cannot drive a function built out of prompts. What both callers share is
+  everything that happens once the answers exist, and that is now its own
+  function: check the rules, compute the cut, insert one row. The prompts feed
+  it and so does a request body.
+
+- **The shared function re-checks what the prompts already guarantee.** A
+  prompt that refuses a quantity above the stock on hand makes the same check
+  further down look redundant. It is not. The prompts are one caller, and the
+  other is a request from outside that has guaranteed nothing at all. Several of
+  the refusals now tested cannot be produced from the menu, which is exactly why
+  they need to exist.
+
+- **A malformed request and an impossible one get different answers.** The
+  request model refuses a body that is wrong in itself, a missing field or a
+  negative price or a date that is not a date, before the endpoint runs, and
+  says which field. The shared function refuses a request that is well formed
+  and that the stock disagrees with. A missing product answers 404, meaning
+  correct the id; a stock conflict answers 409, meaning correct the sale. The
+  two are carried by separate exception types rather than by matching on message
+  text.
+
+- **Money crosses the wire as whole cents.** The same reasoning that put
+  integers in the database: exact, no rounding in transit, and no decision about
+  presentation made in a layer that has no business making one. Field names say
+  so, so a value cannot be mistaken for dollars. Formatting belongs to whatever
+  is showing a figure to a person, which is the interface that comes next.
+
+- **The API declares its own response shape.** Returning database rows directly
+  would have been shorter and would have made the columns of a view into the
+  published contract by accident, so renaming one would silently change what
+  every caller receives. Declared shapes also document themselves, which is
+  where the generated API documentation comes from, and they convert the 0 or 1
+  SQLite stores for a flag into a real boolean.
+
+- **The endpoints are synchronous on purpose.** The obvious style for this
+  framework is asynchronous, and it would be wrong here. Asynchronous code helps
+  only when a function waits on something that can yield while waiting, and the
+  database driver in use cannot: it blocks. An asynchronous endpoint calling it
+  would hold up every other request on the server. Plain functions are run on a
+  thread pool instead, which suits blocking work. The consequence is that one
+  request can touch two threads, and the driver refuses a connection used from a
+  thread other than the one that opened it, so each request opens its own
+  connection and closes it at the end.
+
+- **The data location comes from the code, not from the shell.** The database
+  and the configuration file used to be found by paths relative to whatever
+  directory a process was started in. That produced three separate failures: a
+  test suite that passed locally and failed in automation, a server that served
+  nothing unless launched from one particular folder, and a sandbox copy that
+  worked only as a side effect of changing directory. They now resolve beside
+  the source file, with environment variables to override them, so pointing the
+  application at a copy is a deliberate act and a deployment can point it at a
+  mounted volume.
+
+- **Runtime and development dependencies are separate files.** What the
+  application needs in order to run is now listed apart from what is needed to
+  work on it, so a deployment installs neither a test runner nor a spreadsheet
+  library. The automated checks install both, and the vulnerability audit reads
+  both files.
