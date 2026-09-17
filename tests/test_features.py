@@ -93,7 +93,9 @@ def test_dashboard_prints_the_money(db, capsys):
 def test_dashboard_shows_an_overpayment_as_a_negative_balance(db, capsys):
     """Paying the partner more than is owed leaves a negative balance.
 
-    This records what the application prints today, sign placement included.
+    The minus goes outside the dollar sign. This used to read $-3.00, which was
+    pinned here rather than fixed while Phase 03 was recording behaviour; the
+    fix is Phase 03b's, taken before a browser started showing it.
     """
     add_product(db, 1, quantity_received=1)
     add_sale(db, 1, item_id=1, quantity=1,
@@ -102,7 +104,7 @@ def test_dashboard_shows_an_overpayment_as_a_negative_balance(db, capsys):
 
     psells.view_dashboard(db)
 
-    assert "Balance owing: $-3.00" in capsys.readouterr().out
+    assert "Balance owing: -$3.00" in capsys.readouterr().out
 
 
 def test_inventory_says_so_when_it_is_empty(db, capsys):

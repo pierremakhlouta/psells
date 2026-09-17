@@ -488,6 +488,40 @@ def test_create_sale_freezes_the_cut_at_the_moment_of_sale(db, partner_rate,
     assert stored == [4000, 1000]
 
 
+# Formatting money -------------------------------------------------------------
+#
+# format_cents had no test of its own until Phase 03b. It was covered only
+# through the strings the menu functions print, which meant the one thing it
+# got wrong, sign placement, was pinned in a dashboard test rather than named
+# here. A page renders far more money than the CLI ever printed.
+
+def test_format_cents_renders_dollars_and_cents():
+    assert psells.format_cents(1234) == "$12.34"
+
+
+def test_format_cents_pads_the_cents():
+    """9 cents is $0.09, not $0.9."""
+    assert psells.format_cents(9) == "$0.09"
+
+
+def test_format_cents_renders_zero():
+    assert psells.format_cents(0) == "$0.00"
+
+
+def test_format_cents_puts_the_minus_outside_the_dollar_sign():
+    """-$3.00, not $-3.00. Balance owing goes negative on an overpayment."""
+    assert psells.format_cents(-300) == "-$3.00"
+
+
+def test_format_cents_handles_a_negative_part_of_a_dollar():
+    assert psells.format_cents(-9) == "-$0.09"
+
+
+def test_format_cents_does_not_go_through_a_float():
+    """A figure a float cannot hold exactly still renders exactly."""
+    assert psells.format_cents(102030405060708090) == "$1020304050607080.90"
+
+
 # Where the data lives --------------------------------------------------------
 
 def test_the_default_paths_sit_beside_psells_not_beside_the_shell(monkeypatch):

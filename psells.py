@@ -85,7 +85,13 @@ def all_products(connection):
 
 
 def format_cents(cents):
-    """Format a whole number of cents as dollars, for display only.
+    """Format a whole number of cents as money, for display only.
+
+    The dollar sign is part of what comes back, so a negative figure reads
+    -$3.00 and not $-3.00. It used to be left to the caller, and every caller
+    printed a "$" in front of whatever this returned, minus sign included. One
+    function owning the whole rendering is what stops that coming back the next
+    time somebody adds a call site.
 
     Deliberately integer arithmetic. Dividing by 100 would turn money back into
     a float at the last moment, which is the one thing the storage decision was
@@ -94,7 +100,7 @@ def format_cents(cents):
     sign = "-" if cents < 0 else ""
     cents = abs(cents)
 
-    return f"{sign}{cents // 100}.{cents % 100:02d}"
+    return f"{sign}${cents // 100}.{cents % 100:02d}"
 
 
 def parse_money(text):
@@ -190,11 +196,11 @@ def ask_money(prompt, min_cents=None, max_cents=None):
             continue
 
         if min_cents is not None and cents < min_cents:
-            print(f"Value must be at least ${format_cents(min_cents)}.")
+            print(f"Value must be at least {format_cents(min_cents)}.")
             continue
 
         if max_cents is not None and cents > max_cents:
-            print(f"Value must be at most ${format_cents(max_cents)}.")
+            print(f"Value must be at most {format_cents(max_cents)}.")
             continue
 
         return cents
@@ -283,11 +289,11 @@ def ask_edit_money(prompt, current_cents, min_cents=None, max_cents=None):
             continue
 
         if min_cents is not None and cents < min_cents:
-            print(f"Value must be at least ${format_cents(min_cents)}.")
+            print(f"Value must be at least {format_cents(min_cents)}.")
             continue
 
         if max_cents is not None and cents > max_cents:
-            print(f"Value must be at most ${format_cents(max_cents)}.")
+            print(f"Value must be at most {format_cents(max_cents)}.")
             continue
 
         return cents
@@ -538,14 +544,14 @@ def view_dashboard(connection):
     print(f"Total available: {totals['total_available']}")
     print(f"Total returned: {totals['total_returned']}")
     print()
-    print(f"Total revenue: ${format_cents(totals['total_revenue'])}")
-    print(f"Total profit: ${format_cents(totals['total_profit'])}")
+    print(f"Total revenue: {format_cents(totals['total_revenue'])}")
+    print(f"Total profit: {format_cents(totals['total_profit'])}")
     print(
         f"Total partner share earned: "
-        f"${format_cents(totals['total_partner_share'])}"
+        f"{format_cents(totals['total_partner_share'])}"
     )
-    print(f"Total paid: ${format_cents(totals['total_paid'])}")
-    print(f"Balance owing: ${format_cents(totals['balance_owing'])}")
+    print(f"Total paid: {format_cents(totals['total_paid'])}")
+    print(f"Balance owing: {format_cents(totals['balance_owing'])}")
 
 
 def print_product(product):
@@ -555,8 +561,8 @@ def print_product(product):
     print(f"Name: {product['name']}")
     print(f"Category: {product['category']}")
     print(f"Available: {product['quantity_available']}")
-    print(f"Listed Price: ${format_cents(product['listed_price_cents'])}")
-    print(f"Partner Cut: ${format_cents(partner_cut)}")
+    print(f"Listed Price: {format_cents(product['listed_price_cents'])}")
+    print(f"Partner Cut: {format_cents(partner_cut)}")
     print(f"Discontinued: {'Yes' if product['retail_discontinued'] else 'No'}")
     print(f"Condition: {product['condition']}")
     print()
@@ -833,7 +839,7 @@ def edit(connection):
             elif mode == "custom_amount":
                 print(
                     f"Current partner-share amount: "
-                    f"${format_cents(amount_cents)}"
+                    f"{format_cents(amount_cents)}"
                 )
 
         change = ask_choice(
@@ -969,9 +975,9 @@ def record_sale(connection):
     print("Sale information:")
     print(f"Product: {product['name']}")
     print(f"Quantity sold: {quantity}")
-    print(f"Sale price per unit: ${format_cents(sale_price_cents)}")
+    print(f"Sale price per unit: {format_cents(sale_price_cents)}")
     print(f"Date: {sale_date}")
-    print(f"Partner cut per unit: ${format_cents(partner_cut)}")
+    print(f"Partner cut per unit: {format_cents(partner_cut)}")
 
     # The prompts above collected the answers. Recording the sale is create_sale,
     # which the API calls with the same arguments from a request body. The
