@@ -1,82 +1,10 @@
-import os
 import sqlite3
 
 import pytest
 
 import psells
 
-
-@pytest.fixture
-def db():
-    """An empty database built from the real schema, held in memory.
-
-    It reads schema.sql itself rather than a copy, so a constraint added there
-    is exercised here automatically. Nothing touches the disk and no data files
-    are needed, which keeps the suite runnable on a fresh clone and on CI.
-    """
-    schema_path = os.path.join(os.path.dirname(psells.__file__), "schema.sql")
-
-    connection = sqlite3.connect(":memory:")
-    connection.execute("PRAGMA foreign_keys = ON")
-
-    with open(schema_path) as schema:
-        connection.executescript(schema.read())
-
-    connection.row_factory = sqlite3.Row
-
-    return connection
-
-
-def add_product(connection, product_id, quantity_received, **overrides):
-    """Insert one product, so a test only has to state what it cares about."""
-    values = {
-        "id": product_id,
-        "category": "Shoes",
-        "name": f"Product {product_id}",
-        "quantity_received": quantity_received,
-        "retail_price_cents": 10000,
-        "listed_price_cents": 9000,
-        "retail_discontinued": 0,
-        "partner_share_mode": "default",
-        "partner_share_percent": None,
-        "partner_share_amount_cents": None,
-        "condition": "Brand New",
-        "notes": "",
-    }
-    values.update(overrides)
-
-    columns = ", ".join(values)
-    placeholders = ", ".join("?" for _ in values)
-
-    connection.execute(
-        f"INSERT INTO products ({columns}) VALUES ({placeholders})",
-        tuple(values.values())
-    )
-
-
-def add_sale(connection, sale_id, item_id, quantity, sale_price_cents=9000,
-             partner_share_cents=3500):
-    connection.execute(
-        "INSERT INTO sales VALUES (?, ?, ?, ?, ?, ?)",
-        (sale_id, "2026-09-01", item_id, quantity,
-         sale_price_cents, partner_share_cents)
-    )
-
-
-def add_return(connection, return_id, item_id, quantity):
-    connection.execute(
-        "INSERT INTO returns VALUES (?, ?, ?, ?, ?)",
-        (return_id, "2026-09-01", item_id, quantity, "")
-    )
-
-
-def stock(connection, product_id):
-    """The three derived quantities for one product, from the view."""
-    return connection.execute(
-        "SELECT quantity_sold, quantity_returned, quantity_available "
-        "FROM products_view WHERE id = ?",
-        (product_id,)
-    ).fetchone()
+from helpers import add_product, add_return, add_sale, stock
 
 
 def test_view_counts_down_from_sales(db):
