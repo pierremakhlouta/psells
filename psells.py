@@ -414,6 +414,73 @@ def dashboard_totals(connection):
     }
 
 
+class SaleError(ValueError):
+    """A sale that cannot be recorded, with a message safe to show a caller.
+
+    Raised by create_sale rather than returned, so no caller can record a sale
+    by ignoring a return value it forgot to check.
+    """
+
+
+def create_sale(connection, product_id, quantity, sale_price_cents, sale_date):
+    """Record one sale and return the partner cut that was frozen onto it.
+
+    This is the whole of recording a sale with none of the asking. record_sale
+    is the same operation driven by a keyboard, and the API drives it from a
+    request body; both end up here, so the rules below are enforced once and
+    the partner cut is computed in one place.
+
+    The checks repeat what the prompts already guarantee, which is deliberate.
+    A caller that is not a prompt has guaranteed nothing.
+    """
+    product = connection.execute(
+        "SELECT * FROM products_view WHERE id = ?",
+        (product_id,)
+    ).fetchone()
+
+    if product is None:
+        raise SaleError(f"No product with id {product_id}.")
+
+    available = product["quantity_available"]
+
+    if available <= 0:
+        raise SaleError(f"{product['name']} has no stock available to sell.")
+
+    if quantity < 1:
+        raise SaleError("Quantity must be at least 1.")
+
+    if quantity > available:
+        raise SaleError(
+            f"Only {available} available, so {quantity} cannot be sold."
+        )
+
+    if sale_price_cents < 0:
+        raise SaleError("Sale price cannot be negative.")
+
+    # The schema refuses an impossible date too, but a constraint failure is
+    # not a sentence anybody can act on, and the API would surface it as a
+    # server error rather than as bad input.
+    try:
+        datetime.strptime(sale_date, "%Y-%m-%d")
+    except (ValueError, TypeError):
+        raise SaleError(f"{sale_date!r} is not a date in YYYY-MM-DD form.")
+
+    partner_cut = partner_share_for(product)
+
+    # One insert. The product is not touched at all: units sold is derived from
+    # this table, so there is no second value that could fall out of step.
+    # The id is left out so SQLite assigns it.
+    with connection:
+        connection.execute(
+            "INSERT INTO sales "
+            "(date, item_id, quantity, sale_price_cents, partner_share_cents) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (sale_date, product_id, quantity, sale_price_cents, partner_cut)
+        )
+
+    return partner_cut
+
+
 def view_dashboard(connection):
     totals = dashboard_totals(connection)
 
@@ -859,16 +926,19 @@ def record_sale(connection):
     print(f"Date: {sale_date}")
     print(f"Partner cut per unit: ${format_cents(partner_cut)}")
 
-    # One insert. The product is not touched at all: units sold is derived from
-    # this table now, so there is no second value that could fall out of step.
-    # The id is left out so SQLite assigns it.
-    with connection:
-        connection.execute(
-            "INSERT INTO sales "
-            "(date, item_id, quantity, sale_price_cents, partner_share_cents) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (sale_date, product["id"], quantity, sale_price_cents, partner_cut)
-        )
+    # The prompts above collected the answers. Recording the sale is create_sale,
+    # which the API calls with the same arguments from a request body. The
+    # partner cut is computed there as well as above, deliberately: the figure
+    # printed in the summary is worked out from the same product row by the same
+    # function, and leaving that line where it is keeps this output in the order
+    # it has always been in.
+    create_sale(
+        connection,
+        product["id"],
+        quantity,
+        sale_price_cents,
+        sale_date
+    )
 
     print("Sale recorded.")
 

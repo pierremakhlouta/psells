@@ -379,3 +379,109 @@ def test_dashboard_on_an_empty_database(db):
     assert empty["total_revenue"] == 0
     assert empty["total_available"] == 0
     assert empty["balance_owing"] == 0
+
+
+# create_sale -----------------------------------------------------------------
+#
+# The whole of recording a sale with none of the asking. record_sale drives it
+# from a keyboard and the API drives it from a request body, so the rules below
+# are the only thing standing between a bad request and a bad row. Several of
+# these cannot happen through the CLI at all, because a prompt refuses them
+# first, and those are exactly the ones worth having.
+
+def sale_count(connection):
+    return connection.execute("SELECT COUNT(*) FROM sales").fetchone()[0]
+
+
+def test_create_sale_stores_the_row_and_returns_the_cut(db, partner_rate):
+    add_product(db, 1, quantity_received=10)
+
+    partner_cut = psells.create_sale(db, 1, 2, 8999, "2026-09-14")
+
+    sale = db.execute("SELECT * FROM sales").fetchone()
+
+    assert partner_cut == 4000
+    assert sale["item_id"] == 1
+    assert sale["quantity"] == 2
+    assert sale["sale_price_cents"] == 8999
+    assert sale["partner_share_cents"] == 4000
+    assert sale["date"] == "2026-09-14"
+    assert stock(db, 1)["quantity_available"] == 8
+
+
+def test_create_sale_refuses_an_unknown_product(db, partner_rate):
+    with pytest.raises(psells.SaleError, match="No product with id 99"):
+        psells.create_sale(db, 99, 1, 100, "2026-09-14")
+
+    assert sale_count(db) == 0
+
+
+def test_create_sale_refuses_a_quantity_below_one(db, partner_rate):
+    add_product(db, 1, quantity_received=10)
+
+    with pytest.raises(psells.SaleError, match="at least 1"):
+        psells.create_sale(db, 1, 0, 100, "2026-09-14")
+
+    assert sale_count(db) == 0
+
+
+def test_create_sale_refuses_more_than_is_available(db, partner_rate):
+    add_product(db, 1, quantity_received=3)
+
+    with pytest.raises(psells.SaleError, match="Only 3 available"):
+        psells.create_sale(db, 1, 4, 100, "2026-09-14")
+
+    assert sale_count(db) == 0
+
+
+def test_create_sale_refuses_a_sold_out_product(db, partner_rate):
+    add_product(db, 1, quantity_received=2)
+    add_sale(db, 1, item_id=1, quantity=2)
+
+    with pytest.raises(psells.SaleError, match="no stock available"):
+        psells.create_sale(db, 1, 1, 100, "2026-09-14")
+
+    assert sale_count(db) == 1
+
+
+def test_create_sale_refuses_a_negative_price(db, partner_rate):
+    add_product(db, 1, quantity_received=10)
+
+    with pytest.raises(psells.SaleError, match="cannot be negative"):
+        psells.create_sale(db, 1, 1, -100, "2026-09-14")
+
+    assert sale_count(db) == 0
+
+
+def test_create_sale_refuses_a_date_that_does_not_exist(db, partner_rate):
+    """The schema refuses this too, but not with a sentence anyone can act on.
+
+    Caught here so the caller gets a message about its input rather than a
+    constraint failure, which an API would otherwise report as a server error.
+    """
+    add_product(db, 1, quantity_received=10)
+
+    with pytest.raises(psells.SaleError, match="not a date"):
+        psells.create_sale(db, 1, 1, 100, "2026-02-30")
+
+    assert sale_count(db) == 0
+
+
+def test_create_sale_freezes_the_cut_at_the_moment_of_sale(db, partner_rate,
+                                                           monkeypatch):
+    add_product(db, 1, quantity_received=10)
+
+    psells.create_sale(db, 1, 1, 8999, "2026-09-14")
+
+    monkeypatch.setattr(psells, "default_partner_share_percent", lambda: 10.0)
+
+    assert psells.create_sale(db, 1, 1, 8999, "2026-09-15") == 1000
+    # A row is a sqlite3.Row, not a tuple, so read the column out of each.
+    stored = [
+        row["partner_share_cents"]
+        for row in db.execute(
+            "SELECT partner_share_cents FROM sales ORDER BY id"
+        )
+    ]
+
+    assert stored == [4000, 1000]
