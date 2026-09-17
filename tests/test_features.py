@@ -699,3 +699,132 @@ def test_deleting_a_product_that_does_not_match(db, capsys, answers,
 
     assert product_count(db) == 1
     assert "No products found." in capsys.readouterr().out
+
+
+# Add a product ---------------------------------------------------------------
+#
+# The longest prompt sequence in the application. In order: category, name,
+# quantity, discontinued, retail price, listed price, condition, notes, then the
+# partner-share block, which is itself one or two more questions depending on
+# the mode. The length of each answer queue below is a claim about that order.
+
+def only_product(connection):
+    return connection.execute("SELECT * FROM products").fetchone()
+
+
+def test_a_product_is_added_on_the_default_share(db, capsys, answers):
+    answers("Shoes", "Jordan 1 Chicago", "10", "no",
+            "100.00", "90.00", "Brand New", "boxed", "default")
+    psells.add(db)
+
+    product = only_product(db)
+
+    assert product["category"] == "Shoes"
+    assert product["name"] == "Jordan 1 Chicago"
+    assert product["quantity_received"] == 10
+    assert product["retail_discontinued"] == 0
+    assert product["retail_price_cents"] == 10000
+    assert product["listed_price_cents"] == 9000
+    assert product["condition"] == "Brand New"
+    assert product["notes"] == "boxed"
+    assert product["partner_share_mode"] == "default"
+    assert product["partner_share_percent"] is None
+    assert product["partner_share_amount_cents"] is None
+    assert "Product added successfully." in capsys.readouterr().out
+
+
+def test_a_product_is_added_on_a_custom_percentage(db, answers):
+    answers("Shoes", "Jordan 1 Chicago", "10", "no",
+            "100.00", "90.00", "Brand New", "", "custom_percent", "35.5")
+    psells.add(db)
+
+    product = only_product(db)
+
+    assert product["partner_share_mode"] == "custom_percent"
+    assert product["partner_share_percent"] == 35.5
+    assert product["partner_share_amount_cents"] is None
+
+
+def test_a_product_is_added_on_a_fixed_amount(db, answers):
+    answers("Shoes", "Jordan 1 Chicago", "10", "no",
+            "100.00", "90.00", "Brand New", "", "custom_amount", "25.00")
+    psells.add(db)
+
+    product = only_product(db)
+
+    assert product["partner_share_mode"] == "custom_amount"
+    assert product["partner_share_percent"] is None
+    assert product["partner_share_amount_cents"] == 2500
+
+
+def test_a_discontinued_product_is_never_asked_for_a_mode(db, answers):
+    """Two questions are skipped, and the queue length is what proves it.
+
+    A product discontinued at retail has no retail price to take a percentage
+    of, so it is not asked for one, and the fixed amount is the only mode
+    available rather than being offered and then refused. There are eight
+    answers here where the ordinary path takes nine, and a mode question
+    appearing would eat the partner amount, fail the choice, and run the queue
+    dry.
+    """
+    answers("Watches", "Retired Diver", "2", "yes",
+            "40.00", "Used", "", "12.50")
+    psells.add(db)
+
+    product = only_product(db)
+
+    assert product["retail_discontinued"] == 1
+    assert product["retail_price_cents"] == 0
+    assert product["listed_price_cents"] == 4000
+    assert product["partner_share_mode"] == "custom_amount"
+    assert product["partner_share_amount_cents"] == 1250
+
+
+def test_a_retail_price_of_zero_is_refused(db, capsys, answers):
+    """Zero is reserved for products discontinued at retail.
+
+    The schema refuses the combination outright, so the prompt has to catch it
+    first. Otherwise a fully typed product ends in a constraint error.
+    """
+    answers("Shoes", "Jordan 1 Chicago", "10", "no",
+            "0", "100.00", "90.00", "Brand New", "", "default")
+    psells.add(db)
+
+    assert only_product(db)["retail_price_cents"] == 10000
+    assert "Value must be at least $0.01." in capsys.readouterr().out
+
+
+def test_a_blank_category_is_refused(db, capsys, answers):
+    answers("", "Shoes", "Jordan 1 Chicago", "10", "no",
+            "100.00", "90.00", "Brand New", "", "default")
+    psells.add(db)
+
+    assert only_product(db)["category"] == "Shoes"
+    assert "Input cannot be blank. Please try again." in capsys.readouterr().out
+
+
+def test_a_quantity_of_zero_is_refused(db, capsys, answers):
+    answers("Shoes", "Jordan 1 Chicago", "0", "10", "no",
+            "100.00", "90.00", "Brand New", "", "default")
+    psells.add(db)
+
+    assert only_product(db)["quantity_received"] == 10
+    assert "Value must be at least 1." in capsys.readouterr().out
+
+
+def test_an_unrecognised_discontinued_answer_is_refused(db, capsys, answers):
+    answers("Shoes", "Jordan 1 Chicago", "10", "maybe", "no",
+            "100.00", "90.00", "Brand New", "", "default")
+    psells.add(db)
+
+    assert only_product(db)["retail_discontinued"] == 0
+    assert "Invalid choice. Please try again." in capsys.readouterr().out
+
+
+def test_a_partner_percentage_above_one_hundred_is_refused(db, capsys, answers):
+    answers("Shoes", "Jordan 1 Chicago", "10", "no",
+            "100.00", "90.00", "Brand New", "", "custom_percent", "150", "35")
+    psells.add(db)
+
+    assert only_product(db)["partner_share_percent"] == 35
+    assert "Value must be at most 100." in capsys.readouterr().out
