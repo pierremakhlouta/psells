@@ -503,3 +503,94 @@ def test_choosing_between_two_matches_by_id(db, capsys, answers, partner_rate):
     assert "Multiple products found:" in printed
     assert "Invalid ID. Please choose one of the IDs shown above." in printed
     assert only_sale(db)["item_id"] == 2
+
+
+# Record a return -------------------------------------------------------------
+
+def only_return(connection):
+    return connection.execute("SELECT * FROM returns").fetchone()
+
+
+def received(connection, product_id):
+    return connection.execute(
+        "SELECT quantity_received FROM products WHERE id = ?",
+        (product_id,)
+    ).fetchone()[0]
+
+
+def test_a_return_is_stored_and_reduces_stock(db, capsys, answers,
+                                              partner_rate):
+    """Received 10, sold 3, returned 2, so 5 remain."""
+    add_product(db, 1, quantity_received=10, name="Jordan 1 Chicago")
+    add_sale(db, 1, item_id=1, quantity=3)
+
+    answers("jordan", "2", "2026-09-14", "damaged box")
+    psells.record_return(db)
+
+    returned = only_return(db)
+
+    assert returned["item_id"] == 1
+    assert returned["quantity"] == 2
+    assert returned["date"] == "2026-09-14"
+    assert returned["notes"] == "damaged box"
+    assert available(db, 1) == 5
+    assert "Return recorded." in capsys.readouterr().out
+
+
+def test_a_return_does_not_change_the_intake_quantity(db, answers,
+                                                      partner_rate):
+    """The Phase 02 reversal, pinned.
+
+    quantity_received means the units originally taken in and nothing else. It
+    used to be decremented, which made it mean units still held and left no
+    record of the original figure anywhere. A return is now its own row and the
+    intake number is never touched.
+    """
+    add_product(db, 1, quantity_received=10, name="Jordan 1 Chicago")
+
+    answers("jordan", "4", "", "")
+    psells.record_return(db)
+
+    assert received(db, 1) == 10
+    assert available(db, 1) == 6
+
+
+def test_returning_more_than_is_available_is_refused(db, capsys, answers,
+                                                     partner_rate):
+    add_product(db, 1, quantity_received=3, name="Jordan 1 Chicago")
+
+    answers("jordan", "5", "3", "", "")
+    psells.record_return(db)
+
+    assert only_return(db)["quantity"] == 3
+    assert available(db, 1) == 0
+    assert "Value must be at most 3." in capsys.readouterr().out
+
+
+def test_returning_none_is_refused(db, capsys, answers, partner_rate):
+    add_product(db, 1, quantity_received=3, name="Jordan 1 Chicago")
+
+    answers("jordan", "0", "1", "", "")
+    psells.record_return(db)
+
+    assert only_return(db)["quantity"] == 1
+    assert "Value must be at least 1." in capsys.readouterr().out
+
+
+def test_a_product_with_no_stock_left_cannot_be_returned(db, capsys, answers,
+                                                         partner_rate):
+    add_product(db, 1, quantity_received=2, name="Jordan 1 Chicago")
+    add_return(db, 1, item_id=1, quantity=2)
+
+    answers("jordan")
+    psells.record_return(db)
+
+    assert "No stock available to return." in capsys.readouterr().out
+    assert db.execute("SELECT COUNT(*) FROM returns").fetchone()[0] == 1
+
+
+def test_returning_from_an_empty_inventory(db, capsys, answers, partner_rate):
+    answers()
+    psells.record_return(db)
+
+    assert "Inventory is empty." in capsys.readouterr().out
