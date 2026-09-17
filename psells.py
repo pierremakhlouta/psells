@@ -6,8 +6,38 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 
-CONFIG_FILE = "data/config.json"
-DB_FILE = "data/psells.db"
+# Where the data lives.
+#
+# Both default to the data folder beside this file rather than beside the shell
+# that started the process. Relative paths cost this project three separate
+# surprises: the CI tests failed four frames below the line under test because a
+# checkout has no data folder, the API served nothing unless uvicorn happened to
+# be started from the right directory, and a sandbox worked only as a side
+# effect of changing directory.
+#
+# The environment variables make that last one deliberate rather than
+# accidental, and are how a container will be pointed at a mounted volume:
+#
+#     PSELLS_DB=/somewhere/else.db uvicorn api:app
+#
+# They are read once, when this module is imported, because a process does not
+# change its mind about which database it is using halfway through.
+
+PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def path_from_environment(variable, *parts):
+    """An override from the environment, or a path beside this file.
+
+    An empty variable counts as unset. Exporting PSELLS_DB= and meaning "use the
+    default" is a reasonable reading, and treating it as a path to the file ""
+    is not.
+    """
+    return os.environ.get(variable) or os.path.join(PROJECT_DIR, *parts)
+
+
+CONFIG_FILE = path_from_environment("PSELLS_CONFIG", "data", "config.json")
+DB_FILE = path_from_environment("PSELLS_DB", "data", "psells.db")
 
 
 def connect(check_same_thread=True):

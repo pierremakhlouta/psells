@@ -1,3 +1,4 @@
+import os
 import sqlite3
 
 import pytest
@@ -485,3 +486,36 @@ def test_create_sale_freezes_the_cut_at_the_moment_of_sale(db, partner_rate,
     ]
 
     assert stored == [4000, 1000]
+
+
+# Where the data lives --------------------------------------------------------
+
+def test_the_default_paths_sit_beside_psells_not_beside_the_shell(monkeypatch):
+    """An absolute path under the project, whatever directory anybody is in."""
+    monkeypatch.delenv("PSELLS_DB", raising=False)
+
+    path = psells.path_from_environment("PSELLS_DB", "data", "psells.db")
+
+    assert os.path.isabs(path)
+    assert path == os.path.join(psells.PROJECT_DIR, "data", "psells.db")
+
+
+def test_the_environment_overrides_the_default(monkeypatch):
+    monkeypatch.setenv("PSELLS_DB", "/tmp/somewhere-else.db")
+
+    assert psells.path_from_environment(
+        "PSELLS_DB", "data", "psells.db"
+    ) == "/tmp/somewhere-else.db"
+
+
+def test_an_empty_variable_counts_as_unset(monkeypatch):
+    """PSELLS_DB= means use the default, not open the file named "".
+
+    Exporting a variable as empty is a normal way to say "never mind", and
+    os.environ.get would otherwise hand back the empty string as a real answer.
+    """
+    monkeypatch.setenv("PSELLS_DB", "")
+
+    assert psells.path_from_environment(
+        "PSELLS_DB", "data", "psells.db"
+    ) == os.path.join(psells.PROJECT_DIR, "data", "psells.db")

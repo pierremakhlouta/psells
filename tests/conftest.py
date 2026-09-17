@@ -45,11 +45,13 @@ def partner_rate(monkeypatch):
 
     Two reasons, and the second matters more than the first.
 
-    A default-mode product sends partner_share_for to the config file, which is
-    read relative to the working directory. data/ is gitignored, so a checkout
-    has no config file and the test dies with FileNotFoundError raised four
-    frames below the line under test. It passes on a developer's machine and
-    fails on CI, which is the worst shape a test failure can take.
+    A default-mode product sends partner_share_for to the config file. data/ is
+    gitignored, so a checkout has no config file at all and the test dies with
+    FileNotFoundError raised four frames below the line under test. It passes on
+    a developer's machine and fails on CI, which is the worst shape a test
+    failure can take. Resolving that path beside psells.py rather than beside
+    the shell removed one cause of this and not this one: on CI the file is
+    missing, not merely somewhere else.
 
     And the real rate is a business figure that does not belong in a public
     repository. Pinning an invented 40 percent keeps it out, and makes every

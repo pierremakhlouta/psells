@@ -14,8 +14,11 @@ Run it with:
 
     uvicorn api:app --reload
 
-from the project folder, because psells.py opens data/psells.db and
-data/config.json by paths relative to the working directory.
+from anywhere. psells.py resolves its database and configuration beside its own
+file, and PSELLS_DB and PSELLS_CONFIG override both, which is how to point this
+at a copy rather than at the real records:
+
+    PSELLS_DB=/path/to/copy.db uvicorn api:app
 """
 
 import datetime
