@@ -968,3 +968,147 @@ def test_editing_a_product_that_does_not_match(db, capsys, answers,
     psells.edit(db)
 
     assert "No products found." in capsys.readouterr().out
+
+
+# Edit a product, part two: the partner share and the retail transitions -------
+#
+# Four situations, and edit treats each differently: staying at retail, going
+# discontinued, staying discontinued, and coming back. Only the first offers a
+# choice of mode, because a percentage of a price that no longer exists is not
+# a number worth computing.
+
+def discontinued_product(connection, amount_cents=2500):
+    add_product(
+        connection, 1, quantity_received=5, name="Retired Diver",
+        retail_discontinued=1,
+        retail_price_cents=0,
+        partner_share_mode="custom_amount",
+        partner_share_amount_cents=amount_cents,
+    )
+
+
+def test_the_current_share_is_shown_before_it_is_changed(db, capsys, answers):
+    add_product(db, 1, quantity_received=5, name="Jordan 1 Chicago",
+                partner_share_mode="custom_percent",
+                partner_share_percent=35.5)
+
+    answers("jordan", "", "", "", "", "", "", "", "", "no")
+    psells.edit(db)
+
+    printed = capsys.readouterr().out
+
+    assert "Current partner-share mode: custom_percent" in printed
+    assert "Current partner-share percentage: 35.5" in printed
+
+
+def test_the_current_fixed_amount_is_shown_as_money(db, capsys, answers):
+    add_product(db, 1, quantity_received=5, name="Jordan 1 Chicago",
+                partner_share_mode="custom_amount",
+                partner_share_amount_cents=2500)
+
+    answers("jordan", "", "", "", "", "", "", "", "", "no")
+    psells.edit(db)
+
+    assert "Current partner-share amount: $25.00" in capsys.readouterr().out
+
+
+def test_the_share_can_be_changed_to_a_percentage(db, answers, partner_rate):
+    add_product(db, 1, quantity_received=5, name="Jordan 1 Chicago")
+
+    answers("jordan", "", "", "", "", "", "", "", "",
+            "yes", "custom_percent", "30")
+    psells.edit(db)
+
+    product = product_row(db)
+
+    assert product["partner_share_mode"] == "custom_percent"
+    assert product["partner_share_percent"] == 30
+    assert product["partner_share_amount_cents"] is None
+
+
+def test_going_discontinued_forces_a_fixed_amount(db, answers, partner_rate):
+    """No retail price is asked for and no mode is offered.
+
+    Nine answers where the ordinary edit takes ten. The retail price question
+    disappears because the price becomes zero by definition, and the mode
+    question never appears because the fixed amount is the only one left.
+    """
+    add_product(db, 1, quantity_received=5, name="Jordan 1 Chicago")
+
+    answers("jordan", "", "", "", "yes", "", "", "", "15.00")
+    psells.edit(db)
+
+    product = product_row(db)
+
+    assert product["retail_discontinued"] == 1
+    assert product["retail_price_cents"] == 0
+    assert product["partner_share_mode"] == "custom_amount"
+    assert product["partner_share_amount_cents"] == 1500
+    assert product["partner_share_percent"] is None
+
+
+def test_going_discontinued_leaves_an_existing_fixed_amount_alone(db, answers):
+    """Already on a fixed amount, so there is nothing to ask.
+
+    Eight answers. A partner-share question appearing here would consume one
+    that is not there and fail rather than quietly changing the agreed figure.
+    """
+    add_product(db, 1, quantity_received=5, name="Jordan 1 Chicago",
+                partner_share_mode="custom_amount",
+                partner_share_amount_cents=2500)
+
+    answers("jordan", "", "", "", "yes", "", "", "")
+    psells.edit(db)
+
+    product = product_row(db)
+
+    assert product["retail_discontinued"] == 1
+    assert product["retail_price_cents"] == 0
+    assert product["partner_share_amount_cents"] == 2500
+
+
+def test_a_discontinued_product_can_change_its_fixed_amount(db, answers):
+    discontinued_product(db)
+
+    answers("retired", "", "", "", "", "", "", "", "yes", "30.00")
+    psells.edit(db)
+
+    product = product_row(db)
+
+    assert product["retail_discontinued"] == 1
+    assert product["partner_share_amount_cents"] == 3000
+
+
+def test_coming_back_to_retail_asks_for_a_new_price(db, answers):
+    """There is no previous retail price to offer, because it was zero.
+
+    So this one question in edit has no default and no bracket, and a blank is
+    not accepted. The next test covers what happens when one is given.
+    """
+    discontinued_product(db)
+
+    answers("retired", "", "", "", "no", "80.00", "", "", "", "no")
+    psells.edit(db)
+
+    product = product_row(db)
+
+    assert product["retail_discontinued"] == 0
+    assert product["retail_price_cents"] == 8000
+    assert product["partner_share_mode"] == "custom_amount"
+    assert product["partner_share_amount_cents"] == 2500
+
+
+def test_coming_back_to_retail_will_not_take_a_blank_price(db, capsys, answers):
+    """The message is the generic one, which is worth knowing.
+
+    Every other field in edit takes Enter to keep its value, so a blank here is
+    a reasonable thing to try, and what comes back talks about the format of an
+    amount rather than saying a price is required.
+    """
+    discontinued_product(db)
+
+    answers("retired", "", "", "", "no", "", "80.00", "", "", "", "no")
+    psells.edit(db)
+
+    assert product_row(db)["retail_price_cents"] == 8000
+    assert "Please enter an amount in dollars" in capsys.readouterr().out
