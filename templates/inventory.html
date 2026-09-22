@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+
+{% block title %}Inventory · PSells{% endblock %}
+
+{% block content %}
+<h1>Inventory</h1>
+
+{#- Every figure arrives worked out. This file formats and never computes: the
+    partner cut comes from partner_share_for in web.py, and the money filter is
+    psells.format_cents. Neither money column can be None, which matters
+    because the filter would fail on one. listed_price_cents is NOT NULL in the
+    schema, and partner_share_for always returns a whole number of cents. -#}
+<table>
+  <thead>
+    <tr>
+      <th class="num">ID</th>
+      <th>Name</th>
+      <th>Category</th>
+      <th>Condition</th>
+      <th class="num">Available</th>
+      <th class="num">Listed price</th>
+      <th class="num">Partner cut</th>
+      <th>Retail</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for product, partner_cut in inventory %}
+    <tr>
+      <td class="num">{{ product.id }}</td>
+      <td>{{ product.name }}</td>
+      <td>{{ product.category }}</td>
+      <td>{{ product.condition }}</td>
+      <td class="num">{{ product.quantity_available }}</td>
+      <td class="num">{{ product.listed_price_cents|money }}</td>
+      <td class="num">{{ partner_cut|money }}</td>
+      <td>{% if product.retail_discontinued %}Discontinued{% endif %}</td>
+    </tr>
+    {% else %}
+    <tr>
+      <td colspan="8" class="empty">No products yet.</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

@@ -6,6 +6,11 @@ comes from products_view, the partner cut from partner_share_for, the dashboard
 from dashboard_totals, and a sale is recorded by create_sale. Nothing in this
 file works out a business figure for itself, and nothing in it should.
 
+The same application serves the web pages in web.py, included at the bottom
+of this file, so one uvicorn command runs both. They are a separate file
+because they return HTML for a person rather than JSON for a program, and they
+do not appear in the generated documentation at /docs.
+
 Money crosses the wire as a whole number of cents, never as dollars and never
 as a formatted string. That matches how it is stored, keeps every value exact,
 and leaves formatting to whatever is showing it to a person.
@@ -27,6 +32,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 import psells
+import web
 from dependencies import Connection
 
 
@@ -219,3 +225,12 @@ def record_sale(new_sale: NewSale, connection: Connection):
             (new_sale.item_id,)
         ).fetchone()[0],
     )
+
+
+# The web pages ---------------------------------------------------------------
+#
+# Included rather than written here. web.py takes its connection from
+# dependencies.py rather than from this file, which is what lets this file
+# import web.py without web.py having to import this one back.
+
+app.include_router(web.router)

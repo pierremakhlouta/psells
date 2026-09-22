@@ -1,9 +1,11 @@
-"""Row builders shared by the test files.
+"""Row builders, and a table reader, shared by the test files.
 
 These live here rather than in conftest.py because they are ordinary functions
 rather than fixtures, so a test file imports them by name. pytest puts this
 folder on the import path, which is what makes `from helpers import ...` work.
 """
+
+from html.parser import HTMLParser
 
 
 def add_product(connection, product_id, quantity_received, **overrides):
@@ -63,3 +65,53 @@ def add_payment(connection, payment_id, amount_cents, note=""):
         "INSERT INTO payments VALUES (?, ?, ?, ?)",
         (payment_id, "2026-09-01", amount_cents, note)
     )
+
+
+class _TableBody(HTMLParser):
+    """Collects the text of every cell in the body of an HTML table."""
+
+    def __init__(self):
+        # convert_charrefs turns &lt; back into <, so a cell reads exactly as a
+        # person sees it in the browser rather than as it was sent.
+        super().__init__(convert_charrefs=True)
+        self.rows = []
+        self._in_body = False
+        self._row = None
+        self._cell = None
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "tbody":
+            self._in_body = True
+        elif tag == "tr" and self._in_body:
+            self._row = []
+        elif tag == "td" and self._row is not None:
+            self._cell = []
+
+    def handle_endtag(self, tag):
+        if tag == "td" and self._cell is not None:
+            self._row.append(" ".join("".join(self._cell).split()))
+            self._cell = None
+        elif tag == "tr" and self._row is not None:
+            self.rows.append(self._row)
+            self._row = None
+        elif tag == "tbody":
+            self._in_body = False
+
+    def handle_data(self, data):
+        if self._cell is not None:
+            self._cell.append(data)
+
+
+def table_rows(html):
+    """The body rows of the table in a page, each a list of cell texts.
+
+    Built on the standard library's HTML parser rather than on searching the
+    page for a string, because "$40.00" appearing somewhere in a page is not
+    the same as it appearing in the right column of the right row. Whitespace
+    inside a cell is collapsed, so indentation in a template does not matter.
+    """
+    parser = _TableBody()
+    parser.feed(html)
+    parser.close()
+
+    return parser.rows
