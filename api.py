@@ -22,13 +22,12 @@ at a copy rather than at the real records:
 """
 
 import datetime
-import sqlite3
-from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 import psells
+from dependencies import Connection
 
 
 app = FastAPI(
@@ -39,31 +38,6 @@ app = FastAPI(
     ),
     version="0.1.0",
 )
-
-
-# Connections -----------------------------------------------------------------
-
-def get_connection():
-    """One connection per request, closed when the request finishes.
-
-    A connection cannot be shared between the two. Python's sqlite3 refuses to
-    use a connection from any thread other than the one that opened it, and
-    every endpoint here is a plain def, which FastAPI runs in a thread pool. A
-    module-level connection would work in testing and fail under a second
-    caller.
-
-    psells.connect is used rather than sqlite3.connect directly, so the foreign
-    key pragma and the row factory are applied exactly once, in one place.
-    """
-    connection = psells.connect(check_same_thread=False)
-
-    try:
-        yield connection
-    finally:
-        connection.close()
-
-
-Connection = Annotated[sqlite3.Connection, Depends(get_connection)]
 
 
 # What the API sends back -----------------------------------------------------

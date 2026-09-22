@@ -3,28 +3,15 @@
 These drive the real application through a real request cycle, using FastAPI's
 TestClient, which calls the app directly rather than opening a socket. The
 database is the same in-memory one the other tests use, swapped in by overriding
-the connection dependency, so no test touches a file.
+the connection dependency, so no test touches a file. The client fixture that
+does this lives in conftest.py.
 """
 
 from datetime import date
 
-import pytest
-from fastapi.testclient import TestClient
-
-import api
 import psells
 
 from helpers import add_payment, add_product, add_return, add_sale
-
-
-@pytest.fixture
-def client(db, partner_rate):
-    """A client whose requests run against the in-memory database."""
-    api.app.dependency_overrides[api.get_connection] = lambda: db
-
-    yield TestClient(api.app)
-
-    api.app.dependency_overrides.clear()
 
 
 def test_products_is_empty_to_start_with(client):

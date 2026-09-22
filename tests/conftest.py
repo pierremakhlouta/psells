@@ -9,7 +9,10 @@ import os
 import sqlite3
 
 import pytest
+from fastapi.testclient import TestClient
 
+import api
+import dependencies
 import psells
 
 
@@ -80,3 +83,22 @@ def answers(monkeypatch):
         monkeypatch.setattr("builtins.input", lambda prompt="": next(remaining))
 
     return queue
+
+
+@pytest.fixture
+def client(db, partner_rate):
+    """A test client whose requests run against the in-memory database.
+
+    It calls the application directly rather than opening a socket, and swaps
+    the connection dependency for the in-memory db fixture, so no request made
+    through it touches a file. Here rather than in test_api.py so that any test
+    file driving the application gets the same override.
+
+    The override is keyed on dependencies.get_connection, the function itself,
+    so it replaces the connection for every route that asks for one.
+    """
+    api.app.dependency_overrides[dependencies.get_connection] = lambda: db
+
+    yield TestClient(api.app)
+
+    api.app.dependency_overrides.clear()
