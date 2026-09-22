@@ -115,3 +115,45 @@ def table_rows(html):
     parser.close()
 
     return parser.rows
+
+
+class _Figures(HTMLParser):
+    """Collects each <dt> label and the <dd> value that follows it."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.figures = {}
+        self._tag = None
+        self._text = []
+        self._label = None
+
+    def handle_starttag(self, tag, attrs):
+        if tag in ("dt", "dd"):
+            self._tag = tag
+            self._text = []
+
+    def handle_endtag(self, tag):
+        if tag != self._tag:
+            return
+
+        text = " ".join("".join(self._text).split())
+
+        if tag == "dt":
+            self._label = text
+        else:
+            self.figures[self._label] = text
+
+        self._tag = None
+
+    def handle_data(self, data):
+        if self._tag is not None:
+            self._text.append(data)
+
+
+def figures(html):
+    """Every labelled figure in a page, as {label: value}, both as shown."""
+    parser = _Figures()
+    parser.feed(html)
+    parser.close()
+
+    return parser.figures

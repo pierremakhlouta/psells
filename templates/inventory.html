@@ -5,6 +5,25 @@
 {% block content %}
 <h1>Inventory</h1>
 
+{#- The same nine figures, with the same labels, the command line's dashboard
+    prints. totals is the dictionary dashboard_totals returns, unchanged: counts
+    for the four quantities, cents for the five amounts. -#}
+<section class="dashboard" aria-label="Dashboard">
+  <dl>
+    <div><dt>Total received</dt><dd class="num">{{ totals.total_received }}</dd></div>
+    <div><dt>Total sold</dt><dd class="num">{{ totals.total_sold }}</dd></div>
+    <div><dt>Total available</dt><dd class="num">{{ totals.total_available }}</dd></div>
+    <div><dt>Total returned</dt><dd class="num">{{ totals.total_returned }}</dd></div>
+  </dl>
+  <dl>
+    <div><dt>Total revenue</dt><dd class="num">{{ totals.total_revenue|money }}</dd></div>
+    <div><dt>Total profit</dt><dd class="num">{{ totals.total_profit|money }}</dd></div>
+    <div><dt>Total partner share earned</dt><dd class="num">{{ totals.total_partner_share|money }}</dd></div>
+    <div><dt>Total paid</dt><dd class="num">{{ totals.total_paid|money }}</dd></div>
+    <div><dt>Balance owing</dt><dd class="num">{{ totals.balance_owing|money }}</dd></div>
+  </dl>
+</section>
+
 {#- Every figure arrives worked out. This file formats and never computes: the
     partner cut comes from partner_share_for in web.py, and the money filter is
     psells.format_cents. Neither money column can be None, which matters

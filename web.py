@@ -44,7 +44,11 @@ templates.env.filters["money"] = psells.format_cents
 
 @router.get("/", response_class=HTMLResponse)
 def inventory_page(request: Request, connection: Connection):
-    """Every product in one table, the screen that replaces the spreadsheet.
+    """Every product in one table, under the dashboard figures.
+
+    The screen that replaces the spreadsheet. The nine figures above the table
+    are dashboard_totals, the function the command line's dashboard and the
+    API's /dashboard call, handed to the template as they come back.
 
     The partner cut is not a column of products_view, so it is worked out here
     for each product by partner_share_for, the same function the API's
@@ -57,5 +61,10 @@ def inventory_page(request: Request, connection: Connection):
     ]
 
     return templates.TemplateResponse(
-        request, "inventory.html", {"inventory": inventory}
+        request,
+        "inventory.html",
+        {
+            "totals": psells.dashboard_totals(connection),
+            "inventory": inventory,
+        },
     )

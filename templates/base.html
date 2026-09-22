@@ -68,6 +68,33 @@
     .num { text-align: right; font-variant-numeric: tabular-nums; }
 
     .empty { padding: 2rem; text-align: center; color: #656d76; }
+
+    .dashboard {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .dashboard dl {
+      margin: 0;
+      padding: 0.25rem 1rem;
+      background: #ffffff;
+      border: 1px solid #d0d7de;
+      border-radius: 6px;
+    }
+
+    .dashboard dl div {
+      display: flex;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 0.45rem 0;
+      border-bottom: 1px solid #eaeef2;
+    }
+
+    .dashboard dl div:last-child { border-bottom: none; }
+    .dashboard dt { color: #656d76; }
+    .dashboard dd { margin: 0; font-weight: 600; }
   </style>
 </head>
 <body>

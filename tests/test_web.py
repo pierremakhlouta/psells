@@ -5,18 +5,21 @@ client fixture from conftest.py, against the same in-memory database. A page is
 read with table_rows, which parses the HTML and returns what each cell says,
 rather than by searching the page for a string.
 
-Three kinds of test live here. What a page shows. That it shows the same figure
-the API serves, which is the second of the three rules in web.py and the only
-one a test can enforce directly. And that text from the database cannot become
+Three kinds of test live here. What a page shows. That it shows the same figures
+the API serves, for the products and for the dashboard, which is the second of
+the three rules in web.py and the only one a test can enforce directly. And that text from the database cannot become
 markup in the browser.
 """
 
 import os
 
+from jinja2 import nodes
+
 import psells
 import web
 
-from helpers import add_product, add_return, add_sale, table_rows
+from helpers import (add_payment, add_product, add_return, add_sale,
+                     figures, table_rows)
 
 
 # Column positions in the inventory table, so a test says which figure it
@@ -89,6 +92,96 @@ def test_products_are_listed_in_id_order(client, db):
     ids = [row[ID] for row in table_rows(client.get("/").text)]
 
     assert ids == ["1", "2", "3"]
+
+
+# The dashboard panel ---------------------------------------------------------
+
+# The labels the command line prints, paired with the key /dashboard serves
+# each figure under. Money is in cents in the API and formatted on the page.
+DASHBOARD = {
+    "Total received": "total_received",
+    "Total sold": "total_sold",
+    "Total available": "total_available",
+    "Total returned": "total_returned",
+    "Total revenue": "total_revenue_cents",
+    "Total profit": "total_profit_cents",
+    "Total partner share earned": "total_partner_share_cents",
+    "Total paid": "total_paid_cents",
+    "Balance owing": "balance_owing_cents",
+}
+
+
+def test_the_dashboard_is_all_zeros_on_an_empty_database(client):
+    shown = figures(client.get("/").text)
+
+    assert shown == {
+        "Total received": "0",
+        "Total sold": "0",
+        "Total available": "0",
+        "Total returned": "0",
+        "Total revenue": "$0.00",
+        "Total profit": "$0.00",
+        "Total partner share earned": "$0.00",
+        "Total paid": "$0.00",
+        "Balance owing": "$0.00",
+    }
+
+
+def test_the_dashboard_figures(client, db):
+    """Ten received, four sold at 90.00 with a 35.00 cut, one returned, 50.00
+    paid. Revenue 360.00, partner share 140.00, profit 220.00, owing 90.00."""
+    add_product(db, 1, quantity_received=10)
+    add_sale(db, 1, item_id=1, quantity=4,
+             sale_price_cents=9000, partner_share_cents=3500)
+    add_return(db, 1, item_id=1, quantity=1)
+    add_payment(db, 1, amount_cents=5000)
+
+    shown = figures(client.get("/").text)
+
+    assert shown["Total received"] == "10"
+    assert shown["Total sold"] == "4"
+    assert shown["Total available"] == "5"
+    assert shown["Total returned"] == "1"
+    assert shown["Total revenue"] == "$360.00"
+    assert shown["Total partner share earned"] == "$140.00"
+    assert shown["Total profit"] == "$220.00"
+    assert shown["Total paid"] == "$50.00"
+    assert shown["Balance owing"] == "$90.00"
+
+
+def test_an_overpaid_partner_shows_a_negative_balance(client, db):
+    """The case the sign fix was for, now where a person will see it."""
+    add_product(db, 1, quantity_received=1)
+    add_sale(db, 1, item_id=1, quantity=1,
+             sale_price_cents=2000, partner_share_cents=500)
+    add_payment(db, 1, amount_cents=800)
+
+    assert figures(client.get("/").text)["Balance owing"] == "-$3.00"
+
+
+def test_the_dashboard_shows_the_figures_the_api_serves(client, db):
+    """All nine, against /dashboard, on a database with something in it."""
+    add_product(db, 1, quantity_received=10)
+    add_product(db, 2, quantity_received=3,
+                partner_share_mode="custom_amount",
+                partner_share_amount_cents=1234)
+    add_sale(db, 1, item_id=1, quantity=4,
+             sale_price_cents=9001, partner_share_cents=3600)
+    add_sale(db, 2, item_id=2, quantity=2,
+             sale_price_cents=5000, partner_share_cents=1234)
+    add_return(db, 1, item_id=1, quantity=1)
+    add_payment(db, 1, amount_cents=20000)
+
+    served = client.get("/dashboard").json()
+    shown = figures(client.get("/").text)
+
+    assert shown.keys() == DASHBOARD.keys()
+
+    for label, key in DASHBOARD.items():
+        if key.endswith("_cents"):
+            assert shown[label] == psells.format_cents(served[key]), label
+        else:
+            assert shown[label] == str(served[key]), label
 
 
 # The page and the API agree --------------------------------------------------
@@ -180,3 +273,51 @@ def test_pages_are_not_in_the_api_documentation(client):
 
     assert "/" not in paths
     assert set(paths) == {"/products", "/dashboard", "/sales"}
+
+
+# Templates format and never compute -----------------------------------------
+#
+# The third rule, enforced by reading the templates the way Jinja2 does rather
+# than by searching them as text. A template that recomputes a figure correctly
+# passes every comparison against the API, because it agrees today; this is
+# what stops the second copy existing at all.
+
+ARITHMETIC = (nodes.Add, nodes.Sub, nodes.Mul, nodes.Div, nodes.FloorDiv,
+              nodes.Mod, nodes.Pow, nodes.Neg)
+
+# Every filter a template may use. Adding one here is a decision, and the
+# question to ask is whether it formats or computes.
+ALLOWED_FILTERS = {"money"}
+
+
+def every_template():
+    """Each template's name and the tree Jinja2 parses it into."""
+    environment = web.templates.env
+
+    for name in environment.list_templates():
+        source = environment.loader.get_source(environment, name)[0]
+        yield name, environment.parse(source)
+
+
+def test_there_are_templates_to_check():
+    """So the two tests below cannot pass by finding nothing."""
+    names = [name for name, _ in every_template()]
+
+    assert "base.html" in names
+    assert "inventory.html" in names
+
+
+def test_no_template_does_arithmetic():
+    for name, tree in every_template():
+        found = [type(node).__name__ for node in tree.find_all(ARITHMETIC)]
+
+        assert found == [], f"{name} computes: {found}"
+
+
+def test_templates_use_only_the_allowed_filters():
+    for name, tree in every_template():
+        used = {node.name for node in tree.find_all(nodes.Filter)}
+
+        assert used <= ALLOWED_FILTERS, (
+            f"{name} uses {sorted(used - ALLOWED_FILTERS)}"
+        )
