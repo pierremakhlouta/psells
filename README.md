@@ -157,6 +157,36 @@ To try it against a copy rather than the real records:
     sqlite3 data/psells.db ".backup 'copy.db'"
     PSELLS_DB=copy.db uvicorn api:app
 
+## Running it in a container
+
+The `Dockerfile` builds an image holding the code and nothing else. The
+database and the configuration file are mounted into it at `/data` when it
+starts, so an image never carries a record. It names every file it copies
+rather than copying the folder, and `.dockerignore` keeps `data/` out of the
+build altogether; `tests/test_container.py` fails if either stops being true.
+
+To run it against the sample data, build a sample folder first, then the image:
+
+    rm -rf /tmp/psells-sample && mkdir /tmp/psells-sample
+    sqlite3 /tmp/psells-sample/psells.db < schema.sql
+    sqlite3 /tmp/psells-sample/psells.db < sample_data/seed.sql
+    cp sample_data/config.json /tmp/psells-sample/
+
+    docker build -t psells .
+    docker run --rm -p 127.0.0.1:8000:8000 -v /tmp/psells-sample:/data psells
+
+Then open `http://127.0.0.1:8000/`. Inside the container the server listens on
+`0.0.0.0`, because Docker forwards a published port to the container's network
+interface and a server on the container's own `127.0.0.1` would never receive
+it. `-p 127.0.0.1:8000:8000` is what keeps it to this machine. Leaving out the
+`127.0.0.1:` publishes it to the whole network, which with no authentication
+means anyone on the same Wi-Fi can change the records.
+
+Do not mount the real `data/` folder into the container. SQLite's file locks
+are not guaranteed to hold across Docker Desktop's file sharing, so the
+container and the command line on the Mac could write at the same moment, and
+the real data moves to PostgreSQL in this phase anyway.
+
 ## Backups
 
 `backup.sh` takes a verified copy of the database into `~/PSells-Backups/daily/`,
@@ -185,7 +215,7 @@ the machine is reliably awake matters more than the exact hour.
     pip install -r requirements-dev.txt
     pytest
 
-Five files, and the split is deliberate, so a red run says what kind of thing
+Six files, and the split is deliberate, so a red run says what kind of thing
 broke before you read a line of it.
 
 `test_domain.py` covers everything in `psells.py` that has no input or output:
@@ -212,6 +242,10 @@ pages show with what the API serves.
 
 `test_cross_site.py` covers the refusal of writes from another site.
 
+`test_container.py` reads the `Dockerfile` and `.dockerignore` and fails if the
+image could ever be built from the whole folder or from `data/`, or if it
+leaves out a module the server imports.
+
 No test needs a data file. They build databases in memory from `schema.sql`
 itself, so a constraint added to the schema is exercised by the existing tests
 automatically. Everything runs on every push through GitHub Actions, alongside a
@@ -226,7 +260,9 @@ Worth stating plainly rather than leaving to be discovered.
 - **There is no authentication.** Anyone who can reach the port can read every
   figure and change every record, through the pages or the API. The server
   listens on `127.0.0.1` only, which is the whole of the protection at the
-  moment, so do not put it on `0.0.0.0`.
+  moment, so do not put it on `0.0.0.0`. In a container it has to listen on
+  `0.0.0.0`, and the same protection comes from publishing the port as
+  `127.0.0.1:8000:8000`.
 - **The protection against cross-site writes relies on the browser's labels.**
   Every current browser sends them, and a page cannot change them, but a token
   in every form would not depend on them. That is the thing to add alongside

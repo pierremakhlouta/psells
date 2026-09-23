@@ -1,0 +1,17 @@
+# Kept out of the build context, the folder Docker reads before it builds.
+# Anything listed here never reaches the Docker daemon, let alone an image.
+#
+# data/ above all: the real database and the real partner percentage live there.
+# The Dockerfile names every file it copies, so this is the second of two locks.
+data/
+
+.git/
+.github/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.vscode/
+.DS_Store
+tests/
+sample_data/
