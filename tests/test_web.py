@@ -13,13 +13,14 @@ markup in the browser.
 
 import os
 
+import pytest
 from jinja2 import nodes
 
 import psells
 import web
 
 from helpers import (add_payment, add_product, add_return, add_sale,
-                     figures, forms, table_rows)
+                     figures, form_data, forms, table_rows)
 
 
 # Column positions in the inventory table, so a test says which figure it
@@ -227,6 +228,209 @@ def test_a_search_does_not_change_the_dashboard(client, db):
     searched = figures(client.get("/", params={"q": "chicago"}).text)
 
     assert searched == everything
+
+
+# Adding a product ------------------------------------------------------------
+
+def add_form(client):
+    """The form the add page serves, read the way a browser reads it."""
+    (form,) = [form for form in forms(client.get("/products/new").text)
+               if form["method"] == "post"]
+
+    return form
+
+
+def submit_add_form(client, follow_redirects=False, headers=None, **typed):
+    """Fill in the served form and submit it through its own action.
+
+    Starts from what the blank form would send, so a field the page forgot to
+    offer is missing here too, then applies what the test types.
+    """
+    form = add_form(client)
+    data = form_data(form)
+    data.update(typed)
+
+    return client.post(form["action"], data=data, headers=headers or {},
+                       follow_redirects=follow_redirects)
+
+
+GOOD = {
+    "category": "Shoes",
+    "name": "Jordan 1 Chicago",
+    "quantity_received": "10",
+    "retail_price": "100.00",
+    "listed_price": "90.00",
+    "condition": "Brand New",
+}
+
+
+def field(form, name):
+    (found,) = [f for f in form["inputs"] if f.get("name") == name]
+
+    return found
+
+
+def products_stored(db):
+    return db.execute("SELECT COUNT(*) FROM products").fetchone()[0]
+
+
+def test_the_add_form_offers_every_field_the_reader_reads(client):
+    """Three lists of the same names: the form, the model that receives it,
+    and psells. A field missing from any one would be silently dropped."""
+    form = add_form(client)
+    offered = {f["name"] for f in form["inputs"] if "name" in f}
+
+    assert form["method"] == "post"
+    assert form["action"].endswith("/products/new")
+    assert offered == set(psells.PRODUCT_FORM_FIELDS)
+    assert set(web.ProductForm.model_fields) == set(psells.PRODUCT_FORM_FIELDS)
+
+
+def test_a_blank_form_starts_empty_on_the_default_share(client):
+    data = form_data(add_form(client))
+
+    assert data.pop("partner_share_mode") == "default"
+    assert set(data.values()) == {""}
+
+
+def test_adding_a_product_answers_303_to_the_inventory(client, db):
+    """303, not 307: a 307 would make the browser post the form again."""
+    response = submit_add_form(client, **GOOD)
+
+    assert response.status_code == 303
+    assert response.headers["location"].endswith("/?added=1")
+    assert products_stored(db) == 1
+
+
+def test_the_product_is_stored_as_typed_and_in_cents(client, db):
+    submit_add_form(client, **GOOD, notes="boxed")
+
+    stored = dict(db.execute("SELECT * FROM products").fetchone())
+
+    assert stored["name"] == "Jordan 1 Chicago"
+    assert stored["quantity_received"] == 10
+    assert stored["retail_price_cents"] == 10000
+    assert stored["listed_price_cents"] == 9000
+    assert stored["notes"] == "boxed"
+    assert stored["partner_share_mode"] == "default"
+
+
+def test_after_adding_the_inventory_shows_it_and_says_so(client, db):
+    page = submit_add_form(client, follow_redirects=True, **GOOD).text
+
+    assert [row[NAME] for row in table_rows(page)] == ["Jordan 1 Chicago"]
+    assert "Added Jordan 1 Chicago, id 1." in page
+
+
+@pytest.mark.parametrize("typed, expected", [
+    ({"partner_share_mode": "custom_percent", "partner_share_percent": "35.5"},
+     ("custom_percent", 35.5, None, 0)),
+    ({"partner_share_mode": "custom_amount", "partner_share_amount": "12.50"},
+     ("custom_amount", None, 1250, 0)),
+    ({"retail_discontinued": "yes", "retail_price": "",
+      "partner_share_mode": "custom_amount", "partner_share_amount": "7.00"},
+     ("custom_amount", None, 700, 1)),
+])
+def test_each_partner_share_is_stored(client, db, typed, expected):
+    response = submit_add_form(client, **{**GOOD, **typed})
+
+    assert response.status_code == 303
+    assert tuple(db.execute(
+        "SELECT partner_share_mode, partner_share_percent, "
+        "partner_share_amount_cents, retail_discontinued FROM products"
+    ).fetchone()) == expected
+
+
+def test_the_form_stores_what_create_product_would(client, db):
+    """Same values by both routes, same row apart from the id."""
+    submit_add_form(client, **GOOD, notes="boxed")
+    psells.create_product(
+        db, category="Shoes", name="Jordan 1 Chicago", quantity_received=10,
+        retail_discontinued=False, retail_price_cents=10000,
+        listed_price_cents=9000, condition="Brand New", notes="boxed",
+        partner_share_mode="default", partner_share_percent=None,
+        partner_share_amount_cents=None,
+    )
+
+    first, second = [dict(row) for row in db.execute(
+        "SELECT * FROM products ORDER BY id")]
+    first.pop("id")
+    second.pop("id")
+
+    assert first == second
+
+
+def test_an_empty_form_is_refused_with_422_and_nothing_stored(client, db):
+    response = submit_add_form(client)
+
+    assert response.status_code == 422
+    assert products_stored(db) == 0
+    assert "The product was not added." in response.text
+
+
+def test_a_refused_form_keeps_everything_typed(client, db):
+    """One typo, and every other field, the box and the dropdown come back."""
+    typed = {**GOOD, "listed_price": "9O.00", "notes": "boxed, <10 only",
+             "retail_discontinued": "yes", "retail_price": "",
+             "partner_share_mode": "custom_amount",
+             "partner_share_amount": "12.50"}
+
+    response = submit_add_form(client, **typed)
+    form = forms(response.text)[-1]
+
+    assert response.status_code == 422
+    assert form_data(form) == {**typed, "partner_share_percent": ""}
+    assert "checked" in field(form, "retail_discontinued")
+    assert field(form, "partner_share_mode")["value"] == "custom_amount"
+    assert field(form, "listed_price")["aria-invalid"] == "true"
+    assert psells.MONEY_TEXT_PROBLEM in response.text
+
+
+def test_markup_typed_into_the_form_stays_text_when_shown_again(client, db):
+    response = submit_add_form(client, **{**GOOD, "listed_price": "abc",
+                                          "name": '<script>alert("x")</script>'})
+
+    assert response.status_code == 422
+    assert "<script>" not in response.text
+    assert field(forms(response.text)[-1], "name")["value"] == (
+        '<script>alert("x")</script>')
+
+
+def test_a_forged_mode_is_refused_as_bad_input_not_a_server_error(client, db):
+    response = submit_add_form(client, **GOOD, partner_share_mode="everything")
+
+    assert response.status_code == 422
+    assert products_stored(db) == 0
+
+
+def test_a_percentage_of_nan_is_refused(client, db):
+    response = submit_add_form(client, **GOOD,
+                               partner_share_mode="custom_percent",
+                               partner_share_percent="nan")
+
+    assert response.status_code == 422
+    assert products_stored(db) == 0
+
+
+def test_the_confirmation_names_only_a_product_that_exists(client, db):
+    add_product(db, 1, quantity_received=1, name="Jordan 1 Chicago")
+
+    for added in ["999", "abc", "", "1.0"]:
+        page = client.get("/", params={"added": added})
+
+        assert page.status_code == 200
+        assert "Added " not in page.text, added
+
+    assert "Added Jordan 1 Chicago, id 1." in client.get(
+        "/", params={"added": "1"}).text
+
+
+def test_an_add_from_another_site_is_refused(client, db):
+    response = submit_add_form(client, **GOOD,
+                               headers={"Origin": "https://evil.example"})
+
+    assert response.status_code == 403
+    assert products_stored(db) == 0
 
 
 # The dashboard panel ---------------------------------------------------------
@@ -440,6 +644,7 @@ def test_there_are_templates_to_check():
 
     assert "base.html" in names
     assert "inventory.html" in names
+    assert "product_form.html" in names
 
 
 def test_no_template_does_arithmetic():

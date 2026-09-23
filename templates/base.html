@@ -111,6 +111,61 @@
       border-radius: 6px;
     }
 
+    .notice {
+      margin: 0 0 1rem;
+      padding: 0.6rem 1rem;
+      background: #dafbe1;
+      border: 1px solid #aceebb;
+      border-radius: 6px;
+    }
+
+    .form-error {
+      margin: 0 0 1rem;
+      padding: 0.6rem 1rem;
+      background: #ffebe9;
+      border: 1px solid #ffcecb;
+      border-radius: 6px;
+    }
+
+    .product-form {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 1rem 1.5rem;
+      max-width: 900px;
+      padding: 1.25rem;
+      background: #ffffff;
+      border: 1px solid #d0d7de;
+      border-radius: 6px;
+    }
+
+    .field { display: flex; flex-direction: column; gap: 0.3rem; }
+    .field.wide { grid-column: 1 / -1; }
+    .field label { font-weight: 600; }
+    .field small { color: #656d76; }
+    .field .error { margin: 0; color: #cf222e; }
+
+    .field input[type="text"], .field select, .field textarea {
+      padding: 0.4rem 0.6rem;
+      font: inherit;
+      border: 1px solid #d0d7de;
+      border-radius: 6px;
+    }
+
+    .field.has-error input, .field.has-error select { border-color: #cf222e; }
+    .field.check { flex-direction: row; align-items: center; }
+
+    .actions { grid-column: 1 / -1; display: flex; gap: 1rem; align-items: center; }
+
+    .actions button {
+      padding: 0.5rem 1.2rem;
+      font: inherit;
+      color: #ffffff;
+      background: #1f883d;
+      border: 1px solid #1a7f37;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+
     .search button {
       padding: 0.4rem 0.9rem;
       font: inherit;
@@ -126,6 +181,7 @@
     <nav>
       <a class="brand" href="{{ url_for('inventory_page') }}">PSells</a>
       <a href="{{ url_for('inventory_page') }}">Inventory</a>
+      <a href="{{ url_for('add_product_page') }}">Add product</a>
     </nav>
   </header>
 

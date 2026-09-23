@@ -12,3 +12,8 @@ uvicorn==0.53.0
 # The template engine for the web pages. FastAPI does not install it, because
 # not every FastAPI application renders HTML.
 jinja2==3.1.6
+
+# Reads the body of a form post. FastAPI checks for it when a route that takes
+# form fields is defined, at import, so without it the whole application fails
+# to start, the API included. Not the unrelated package called plain multipart.
+python-multipart==0.0.32

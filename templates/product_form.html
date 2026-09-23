@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+
+{% block title %}Add a product · PSells{% endblock %}
+
+{#- One field: its label, its input holding what was typed, and its problem.
+    A macro, so the eight text fields are written once. values and errors are
+    the template's own, so the macro can read them. values holds text exactly
+    as it arrived; errors holds a sentence per field that was refused. -#}
+{% macro field(key, label, hint="", inputmode="", required=false, wide=false) %}
+<div class="field{% if wide %} wide{% endif %}{% if errors[key] %} has-error{% endif %}">
+  <label for="{{ key }}">{{ label }}</label>
+  <input type="text" id="{{ key }}" name="{{ key }}" value="{{ values[key] }}"
+         {%- if inputmode %} inputmode="{{ inputmode }}"{% endif %}
+         {%- if required %} required{% endif %}
+         {%- if errors[key] %} aria-invalid="true" aria-describedby="{{ key }}-error"{% endif %}>
+  {% if hint %}<small>{{ hint }}</small>{% endif %}
+  {% if errors[key] %}<p class="error" id="{{ key }}-error">{{ errors[key] }}</p>{% endif %}
+</div>
+{% endmacro %}
+
+{% block content %}
+<h1>Add a product</h1>
+
+{% if errors %}
+<p class="form-error" role="alert">The product was not added. Fix the fields marked below.</p>
+{% endif %}
+
+{#- method="post": the values travel in the body, not the URL. The server
+    answers a success with a 303 back to the inventory, so refreshing that page
+    cannot add the product twice. Money fields are plain text with a decimal
+    keypad rather than type="number", so every rule about amounts stays in
+    parse_money. required is a convenience only; the server checks everything. -#}
+<form class="product-form" action="{{ url_for('add_product_submit') }}" method="post">
+  {{ field("category", "Category", required=true) }}
+  {{ field("name", "Name", required=true) }}
+  {{ field("condition", "Condition", required=true) }}
+  {{ field("quantity_received", "Quantity received", inputmode="numeric", required=true) }}
+
+  <div class="field check wide{% if errors.retail_discontinued %} has-error{% endif %}">
+    <input type="checkbox" id="retail_discontinued" name="retail_discontinued" value="yes"
+           {%- if values.retail_discontinued == "yes" %} checked{% endif %}>
+    <label for="retail_discontinued">Discontinued at retail</label>
+    {% if errors.retail_discontinued %}<p class="error">{{ errors.retail_discontinued }}</p>{% endif %}
+  </div>
+
+  {{ field("retail_price", "Retail price ($)", hint="Leave blank if discontinued at retail.", inputmode="decimal") }}
+  {{ field("listed_price", "Listed price ($)", inputmode="decimal", required=true) }}
+
+  <div class="field{% if errors.partner_share_mode %} has-error{% endif %}">
+    <label for="partner_share_mode">Partner share</label>
+    <select id="partner_share_mode" name="partner_share_mode">
+      {% for mode, label in [("default", "Default rate"),
+                             ("custom_percent", "Custom percentage"),
+                             ("custom_amount", "Fixed amount per unit")] %}
+      <option value="{{ mode }}"{% if values.partner_share_mode == mode %} selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    <small>A product discontinued at retail takes a fixed amount.</small>
+    {% if errors.partner_share_mode %}<p class="error">{{ errors.partner_share_mode }}</p>{% endif %}
+  </div>
+
+  {{ field("partner_share_percent", "Partner percentage (%)", hint="Only for a custom percentage.", inputmode="decimal") }}
+  {{ field("partner_share_amount", "Partner amount per unit ($)", hint="Only for a fixed amount.", inputmode="decimal") }}
+  {{ field("notes", "Notes", wide=true) }}
+
+  <div class="actions">
+    <button type="submit">Add product</button>
+    <a href="{{ url_for('inventory_page') }}">Cancel</a>
+  </div>
+</form>
+{% endblock %}

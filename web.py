@@ -18,10 +18,12 @@ for a person rather than JSON for a program.
 """
 
 import os
+from typing import Annotated
 
-from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Form, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
 
 import psells
 from dependencies import Connection
@@ -43,7 +45,8 @@ templates.env.filters["money"] = psells.format_cents
 
 
 @router.get("/", response_class=HTMLResponse)
-def inventory_page(request: Request, connection: Connection, q: str = ""):
+def inventory_page(request: Request, connection: Connection, q: str = "",
+                   added: str = ""):
     """Every product in one table, under the dashboard figures.
 
     The screen that replaces the spreadsheet. The nine figures above the table
@@ -57,6 +60,11 @@ def inventory_page(request: Request, connection: Connection, q: str = ""):
     and the whole inventory, which is said here rather than left to the fact
     that an empty string is found inside every string.
 
+    added is the id of a product just added, carried here by the redirect
+    after the add form. It is read as text and matched against the ids that
+    exist, so a typed ?added=abc or an id that does not exist shows nothing
+    rather than an error or a false message.
+
     The dashboard is never narrowed by a search. It describes the business,
     and totals for whichever rows happen to be showing would mean adding them
     up here, outside psells.
@@ -67,10 +75,16 @@ def inventory_page(request: Request, connection: Connection, q: str = ""):
     handed the figure and never works it out.
     """
     term = q.strip()
-    products = psells.all_products(connection)
+    everything = psells.all_products(connection)
+    products = everything
 
     if term:
-        products = psells.find_items_by_name_or_category(products, term)
+        products = psells.find_items_by_name_or_category(everything, term)
+
+    added_product = next(
+        (product for product in everything if str(product["id"]) == added),
+        None,
+    )
 
     inventory = [
         (product, psells.partner_share_for(product))
@@ -84,5 +98,77 @@ def inventory_page(request: Request, connection: Connection, q: str = ""):
             "totals": psells.dashboard_totals(connection),
             "inventory": inventory,
             "q": term,
+            "added": added_product,
         },
+    )
+
+
+# Adding a product ------------------------------------------------------------
+
+class ProductForm(BaseModel):
+    """The add form's fields, every one text, every one optional.
+
+    Optional because FastAPI treats a blank form field as not sent, and a
+    required one would answer a blank with a JSON error rather than the form.
+    PSells decides what blank means, in read_product_text. Text because money
+    must reach parse_money as typed: a float here would be converted by the
+    framework before any PSells code ran.
+    """
+
+    category: str = ""
+    name: str = ""
+    quantity_received: str = ""
+    retail_discontinued: str = ""
+    retail_price: str = ""
+    listed_price: str = ""
+    condition: str = ""
+    notes: str = ""
+    partner_share_mode: str = ""
+    partner_share_percent: str = ""
+    partner_share_amount: str = ""
+
+
+BLANK_PRODUCT = ProductForm(partner_share_mode="default").model_dump()
+
+
+def product_form(request, values, problems, status_code=200):
+    """The add form, empty or as it was typed, with a sentence per problem.
+
+    One template for both, so there is one copy of the form.
+    """
+    return templates.TemplateResponse(
+        request,
+        "product_form.html",
+        {"values": values, "errors": problems},
+        status_code=status_code,
+    )
+
+
+@router.get("/products/new", response_class=HTMLResponse)
+def add_product_page(request: Request):
+    return product_form(request, BLANK_PRODUCT, {})
+
+
+@router.post("/products/new", response_class=HTMLResponse)
+def add_product_submit(request: Request, connection: Connection,
+                       form: Annotated[ProductForm, Form()]):
+    """Add the product, or show the form again with every problem.
+
+    Success redirects with 303, so the page left on screen came from a GET and
+    refreshing it cannot add the product twice. RedirectResponse defaults to
+    307, which would re-send the post, so the code is always written out.
+
+    A refusal writes nothing and answers 422 with everything as it was typed,
+    so one mistake costs one correction.
+    """
+    fields = form.model_dump()
+
+    try:
+        product_id = psells.create_product_from_text(connection, fields)
+    except psells.ProductError as refused:
+        return product_form(request, fields, refused.problems, status_code=422)
+
+    return RedirectResponse(
+        request.url_for("inventory_page").include_query_params(added=product_id),
+        status_code=303,
     )

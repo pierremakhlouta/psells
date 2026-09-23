@@ -5,6 +5,10 @@
 {% block content %}
 <h1>Inventory</h1>
 
+{% if added %}
+<p class="notice" role="status">Added {{ added.name }}, id {{ added.id }}.</p>
+{% endif %}
+
 {#- The same nine figures, with the same labels, the command line's dashboard
     prints. totals is the dictionary dashboard_totals returns, unchanged: counts
     for the four quantities, cents for the five amounts. -#}

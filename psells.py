@@ -626,11 +626,13 @@ def product_problems(category, name, quantity_received, retail_discontinued,
         )
 
     if partner_share_mode == "custom_percent":
-        # The range check also refuses nan and infinity, which float()
-        # accepts from text: nan compares false with every number, so it is
-        # never between 0 and 100, and infinity is never at most 100. Stored,
-        # nan would become NULL and fail the schema's matrix constraint.
-        if not (isinstance(partner_share_percent, (int, float))
+        # A missing percentage is reported as required by create_product. The
+        # range check also refuses nan and infinity, which float() accepts
+        # from text: nan compares false with every number, so it is never
+        # between 0 and 100, and infinity is never at most 100. Stored, nan
+        # would become NULL and fail the schema's matrix constraint.
+        if partner_share_percent is not None and not (
+                isinstance(partner_share_percent, (int, float))
                 and not isinstance(partner_share_percent, bool)
                 and 0 <= partner_share_percent <= 100):
             problems["partner_share_percent"] = (
@@ -642,7 +644,9 @@ def product_problems(category, name, quantity_received, retail_discontinued,
         )
 
     if partner_share_mode == "custom_amount":
-        if not (_is_whole_number(partner_share_amount_cents)
+        # A missing amount is reported as required by create_product.
+        if partner_share_amount_cents is not None and not (
+                _is_whole_number(partner_share_amount_cents)
                 and partner_share_amount_cents >= 0):
             problems["partner_share_amount"] = (
                 "Partner share amount cannot be negative."
@@ -654,6 +658,40 @@ def product_problems(category, name, quantity_received, retail_discontinued,
 
     return problems
 
+
+def _every_product_problem(category, name, quantity_received,
+                           retail_discontinued, retail_price_cents,
+                           listed_price_cents, condition, partner_share_mode,
+                           partner_share_percent, partner_share_amount_cents):
+    """product_problems, plus a field that is None where one is needed.
+
+    None means "could not be read", which only a caller parsing text can
+    produce, and a product cannot be stored with a field missing.
+    """
+    problems = product_problems(
+        category, name, quantity_received, retail_discontinued,
+        retail_price_cents, listed_price_cents, condition,
+        partner_share_mode, partner_share_percent, partner_share_amount_cents,
+    )
+
+    needed = [("category", category), ("name", name),
+              ("quantity_received", quantity_received),
+              ("retail_price", retail_price_cents),
+              ("listed_price", listed_price_cents),
+              ("condition", condition),
+              ("partner_share_mode", partner_share_mode)]
+
+    if partner_share_mode == "custom_percent":
+        needed.append(("partner_share_percent", partner_share_percent))
+
+    if partner_share_mode == "custom_amount":
+        needed.append(("partner_share_amount", partner_share_amount_cents))
+
+    for field, value in needed:
+        if value is None:
+            problems.setdefault(field, "This field is required.")
+
+    return problems
 
 def create_product(connection, category, name, quantity_received,
                    retail_discontinued, retail_price_cents, listed_price_cents,
@@ -671,22 +709,11 @@ def create_product(connection, category, name, quantity_received,
     nothing. Text is stripped here too, so a caller that forgets cannot store
     leading or trailing spaces.
     """
-    problems = product_problems(
+    problems = _every_product_problem(
         category, name, quantity_received, retail_discontinued,
         retail_price_cents, listed_price_cents, condition,
         partner_share_mode, partner_share_percent, partner_share_amount_cents,
     )
-
-    # None means "could not be read", which only a caller parsing text can
-    # produce, and a product cannot be stored with a field missing.
-    for field, value in (("category", category), ("name", name),
-                         ("quantity_received", quantity_received),
-                         ("retail_price", retail_price_cents),
-                         ("listed_price", listed_price_cents),
-                         ("condition", condition),
-                         ("partner_share_mode", partner_share_mode)):
-        if value is None:
-            problems.setdefault(field, "This field is required.")
 
     if problems:
         raise ProductError(problems)
@@ -710,6 +737,115 @@ def create_product(connection, category, name, quantity_received,
         )
 
     return cursor.lastrowid
+
+
+# The fields a product form sends, by the names it sends them under. Every value
+# arrives as text, and a field the person left empty arrives as "".
+PRODUCT_FORM_FIELDS = (
+    "category", "name", "quantity_received", "retail_discontinued",
+    "retail_price", "listed_price", "condition", "notes",
+    "partner_share_mode", "partner_share_percent", "partner_share_amount",
+)
+
+MONEY_TEXT_PROBLEM = "Please enter an amount in dollars, for example 12.50."
+
+
+def read_product_text(fields):
+    """Turn a product form's text into create_product's values.
+
+    Returns (values, problems). A field that cannot be read becomes None in
+    values, with a sentence in problems saying why; create_product then treats
+    the None as required rather than reporting it twice.
+
+    Money goes through parse_money, the only place text becomes cents. A field
+    that does not apply to the choices made is ignored, as the command line
+    never asks it: the retail price of a product discontinued at retail, which
+    is zero by definition, and the percentage or amount of a mode that was not
+    chosen.
+    """
+    text = {key: (fields.get(key) or "").strip() for key in PRODUCT_FORM_FIELDS}
+    problems = {}
+
+    def money(key):
+        if not text[key]:
+            problems[key] = "This field is required."
+            return None
+
+        try:
+            return parse_money(text[key])
+        except ValueError:
+            problems[key] = MONEY_TEXT_PROBLEM
+            return None
+
+    quantity_received = None
+
+    if not text["quantity_received"]:
+        problems["quantity_received"] = "This field is required."
+    else:
+        try:
+            quantity_received = int(text["quantity_received"])
+        except ValueError:
+            problems["quantity_received"] = (
+                "Quantity received must be a whole number, at least 1."
+            )
+
+    # A ticked checkbox sends its value, "yes"; an unticked one sends nothing.
+    if text["retail_discontinued"] not in ("", "yes"):
+        problems["retail_discontinued"] = "Discontinued is either ticked or not."
+
+    retail_discontinued = text["retail_discontinued"] == "yes"
+    retail_price_cents = 0 if retail_discontinued else money("retail_price")
+
+    mode = text["partner_share_mode"] or None
+    percent = None
+    amount_cents = None
+
+    if mode == "custom_percent" and text["partner_share_percent"]:
+        try:
+            # nan and inf read as floats here and are refused by the range
+            # check in product_problems.
+            percent = float(text["partner_share_percent"])
+        except ValueError:
+            problems["partner_share_percent"] = (
+                "Partner share percentage must be a number from 0 to 100."
+            )
+
+    if mode == "custom_amount" and text["partner_share_amount"]:
+        amount_cents = money("partner_share_amount")
+
+    values = {
+        "category": text["category"],
+        "name": text["name"],
+        "quantity_received": quantity_received,
+        "retail_discontinued": retail_discontinued,
+        "retail_price_cents": retail_price_cents,
+        "listed_price_cents": money("listed_price"),
+        "condition": text["condition"],
+        "notes": text["notes"],
+        "partner_share_mode": mode,
+        "partner_share_percent": percent,
+        "partner_share_amount_cents": amount_cents,
+    }
+
+    return values, problems
+
+
+def create_product_from_text(connection, fields):
+    """Add a product from a form's text and return its new id.
+
+    Every problem is reported at once: what could not be read, and every rule
+    the readable fields break, in one ProductError. Nothing is stored unless
+    there are none.
+    """
+    values, problems = read_product_text(fields)
+
+    if problems:
+        rule_values = {key: value for key, value in values.items()
+                       if key != "notes"}
+        raise ProductError({**_every_product_problem(**rule_values),
+                            **problems})
+
+    return create_product(connection, **values)
 
 def view_dashboard(connection):
     totals = dashboard_totals(connection)

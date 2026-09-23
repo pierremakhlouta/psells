@@ -708,6 +708,150 @@ def test_a_field_that_could_not_be_read_is_required(db):
     }) == {}
 
 
+# A product from a form's text. Everything arrives as a string, and a field
+# left empty arrives as "". These test the reading; the rules themselves are
+# create_product's, tested above.
+
+def form_text(**overrides):
+    """A form as a browser sends it, for an acceptable default-share product."""
+    fields = {
+        "category": "Shoes",
+        "name": "Jordan 1 Chicago",
+        "quantity_received": "10",
+        "retail_discontinued": "",
+        "retail_price": "100.00",
+        "listed_price": "90.00",
+        "condition": "Brand New",
+        "notes": "",
+        "partner_share_mode": "default",
+        "partner_share_percent": "",
+        "partner_share_amount": "",
+    }
+    fields.update(overrides)
+
+    return fields
+
+
+def text_refusal(db, **overrides):
+    with pytest.raises(psells.ProductError) as refused:
+        psells.create_product_from_text(db, form_text(**overrides))
+
+    assert db.execute("SELECT COUNT(*) FROM products").fetchone()[0] == 0
+
+    return refused.value.problems
+
+
+def test_a_product_is_read_from_text_and_stored_in_cents(db):
+    product_id = psells.create_product_from_text(db, form_text())
+
+    stored = db.execute(
+        "SELECT quantity_received, retail_price_cents, listed_price_cents "
+        "FROM products WHERE id = ?", (product_id,)
+    ).fetchone()
+
+    assert tuple(stored) == (10, 10000, 9000)
+
+
+def test_every_field_left_empty_is_reported_at_once(db):
+    problems = text_refusal(db, **{key: "" for key in form_text()})
+
+    assert problems == {
+        "category": "Category cannot be blank.",
+        "name": "Name cannot be blank.",
+        "condition": "Condition cannot be blank.",
+        "quantity_received": "This field is required.",
+        "retail_price": "This field is required.",
+        "listed_price": "This field is required.",
+        "partner_share_mode": "This field is required.",
+    }
+
+
+def test_spaces_alone_count_as_empty(db):
+    problems = text_refusal(db, name="   ", quantity_received="  ")
+
+    assert problems["name"] == "Name cannot be blank."
+    assert problems["quantity_received"] == "This field is required."
+
+
+def test_money_that_is_not_an_amount_gets_the_command_lines_sentence(db):
+    problems = text_refusal(db, listed_price="9O.00", retail_price="12.345")
+
+    assert problems == {
+        "listed_price": psells.MONEY_TEXT_PROBLEM,
+        "retail_price": psells.MONEY_TEXT_PROBLEM,
+    }
+
+
+def test_a_quantity_must_be_written_as_a_whole_number(db):
+    assert text_refusal(db, quantity_received="2.5") == {
+        "quantity_received":
+            "Quantity received must be a whole number, at least 1.",
+    }
+
+
+def test_what_cannot_be_read_and_what_breaks_a_rule_come_together(db):
+    """A blank name is a rule; a price of abc cannot be read. One refusal."""
+    problems = text_refusal(db, name="", listed_price="abc",
+                            quantity_received="0")
+
+    assert set(problems) == {"name", "listed_price", "quantity_received"}
+
+
+def test_the_discontinued_box_is_ticked_or_not_and_nothing_else(db):
+    assert set(text_refusal(db, retail_discontinued="maybe")) == {
+        "retail_discontinued"}
+
+
+def test_a_discontinued_product_ignores_the_retail_price_typed(db):
+    """Zero by definition, and the command line never asks for it."""
+    product_id = psells.create_product_from_text(db, form_text(
+        retail_discontinued="yes", retail_price="100.00",
+        partner_share_mode="custom_amount", partner_share_amount="12.50",
+    ))
+
+    stored = db.execute(
+        "SELECT retail_discontinued, retail_price_cents, "
+        "partner_share_amount_cents FROM products WHERE id = ?", (product_id,)
+    ).fetchone()
+
+    assert tuple(stored) == (1, 0, 1250)
+
+
+def test_a_value_for_a_mode_not_chosen_is_ignored(db):
+    product_id = psells.create_product_from_text(db, form_text(
+        partner_share_percent="35", partner_share_amount="5.00",
+    ))
+
+    stored = db.execute(
+        "SELECT partner_share_percent, partner_share_amount_cents "
+        "FROM products WHERE id = ?", (product_id,)
+    ).fetchone()
+
+    assert tuple(stored) == (None, None)
+
+
+def test_the_chosen_modes_value_is_required(db):
+    assert text_refusal(db, partner_share_mode="custom_percent") == {
+        "partner_share_percent": "This field is required."}
+    assert text_refusal(db, partner_share_mode="custom_amount") == {
+        "partner_share_amount": "This field is required."}
+
+
+@pytest.mark.parametrize("text", ["abc", "nan", "inf", "150", "-1"])
+def test_a_percentage_typed_badly_is_refused(db, text):
+    problems = text_refusal(db, partner_share_mode="custom_percent",
+                            partner_share_percent=text)
+
+    assert problems == {"partner_share_percent":
+                        "Partner share percentage must be a number from 0 to 100."}
+
+
+def test_a_fixed_amount_is_read_as_money(db):
+    assert text_refusal(db, partner_share_mode="custom_amount",
+                        partner_share_amount="12.5.0") == {
+        "partner_share_amount": psells.MONEY_TEXT_PROBLEM}
+
+
 # Formatting money -------------------------------------------------------------
 #
 # format_cents had no test of its own until Phase 03b. It was covered only

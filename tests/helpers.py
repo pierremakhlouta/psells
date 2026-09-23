@@ -160,26 +160,45 @@ def figures(html):
 
 
 class _Forms(HTMLParser):
-    """Collects every <form> and the attributes of each <input> inside it."""
+    """Collects every <form>, with each <input> and <select> inside it."""
 
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.forms = []
         self._form = None
+        self._select = None
 
     def handle_starttag(self, tag, attrs):
+        attributes = dict(attrs)
+
         if tag == "form":
-            attributes = dict(attrs)
             self._form = {
                 "action": attributes.get("action", ""),
                 "method": attributes.get("method", "get").lower(),
                 "inputs": [],
             }
-        elif tag == "input" and self._form is not None:
-            self._form["inputs"].append(dict(attrs))
+        elif self._form is None:
+            return
+        elif tag == "input":
+            self._form["inputs"].append(attributes)
+        elif tag == "select":
+            self._select = dict(attributes, options=[], selected=None)
+        elif tag == "option" and self._select is not None:
+            self._select["options"].append(attributes.get("value"))
+
+            if "selected" in attributes:
+                self._select["selected"] = attributes.get("value")
 
     def handle_endtag(self, tag):
-        if tag == "form" and self._form is not None:
+        if tag == "select" and self._select is not None:
+            # A browser sends the selected option, or the first if none is.
+            options = self._select["options"]
+            chosen = self._select.pop("selected")
+            self._select["value"] = chosen if chosen is not None else (
+                options[0] if options else None)
+            self._form["inputs"].append(self._select)
+            self._select = None
+        elif tag == "form" and self._form is not None:
             self.forms.append(self._form)
             self._form = None
 
@@ -189,11 +208,32 @@ def forms(html):
 
     Each input is the full dictionary of its attributes, exactly as a browser
     would read them, so a test can see which name a form will send, what value
-    it holds, and whether anything unexpected has been added to it. Only
-    <input> elements are collected for now; nothing here uses another kind.
+    it holds, and whether anything unexpected has been added to it. A <select>
+    is listed among the inputs with its options, and value set to the option a
+    browser would send: the selected one, or the first.
     """
     parser = _Forms()
     parser.feed(html)
     parser.close()
 
     return parser.forms
+
+
+def form_data(form):
+    """What a browser would send for this form as it stands, by name.
+
+    A checkbox is sent only when ticked, and sends its value.
+    """
+    data = {}
+
+    for field in form["inputs"]:
+        if "name" not in field:
+            continue
+
+        if field.get("type") == "checkbox":
+            if "checked" in field:
+                data[field["name"]] = field.get("value", "on")
+        else:
+            data[field["name"]] = field.get("value") or ""
+
+    return data
