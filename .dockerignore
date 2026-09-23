@@ -5,6 +5,10 @@
 # The Dockerfile names every file it copies, so this is the second of two locks.
 data/
 
+# The database password. An image never needs it; Compose hands it to the
+# database container at startup.
+.env
+
 .git/
 .github/
 venv/

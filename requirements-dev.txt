@@ -14,3 +14,8 @@ httpx2==2.13.0
 # Required only by import_excel.py, the one-time migration out of Excel. Kept
 # so that script can still be read and run against an old workbook.
 openpyxl==3.1.5
+# Lets tests/test_container.py read compose.yaml as data, so the rules it holds
+# (ports on 127.0.0.1 only, no database port, no password in the file) are
+# checked on every run instead of remembered.
+pyyaml==6.0.3
+

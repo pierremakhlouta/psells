@@ -1,0 +1,73 @@
+# PSells as a stack: the web server and a PostgreSQL database beside it.
+#
+#     docker compose up --build
+#
+# Values come from .env beside this file, which Compose reads on its own and
+# which is gitignored; .env.example lists what it must hold. Every value is
+# written as ${NAME:?...}, so a missing one stops Compose with that sentence
+# instead of starting a database with an empty password.
+#
+# Nothing uses the database yet. The application still reads the SQLite file
+# in PSELLS_DATA_DIR until it is switched over later in Phase 04.
+
+# Fixes the prefix Docker gives the volume and network, so they are
+# psells_pgdata and psells_default whatever this folder happens to be called.
+name: psells
+
+services:
+  app:
+    build: .
+    ports:
+      # 127.0.0.1 only. There is no authentication, and without this prefix
+      # anyone on the same network could read and change every record.
+      - "127.0.0.1:8000:8000"
+    volumes:
+      # Required, never defaulted: a default of ./data would mount the real
+      # SQLite file, whose locks are not dependable across Docker Desktop's
+      # file sharing.
+      - "${PSELLS_DATA_DIR:?set PSELLS_DATA_DIR in .env}:/data"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      # Healthy once uvicorn accepts connections. Docker accepts a connection on
+      # the published port before the app inside is listening and then drops
+      # it, so a request made the moment the container starts gets an empty
+      # reply. "docker compose up --wait" waits for this instead. It opens a
+      # socket rather than requesting a page, so it adds nothing to the log.
+      # Python rather than curl, because the slim image has no curl.
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8000), 2).close()"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      start_interval: 1s
+
+  db:
+    # A major version, not a patch; pinned exactly with the CI piece.
+    image: postgres:18
+    environment:
+      POSTGRES_USER: "${POSTGRES_USER:?set POSTGRES_USER in .env}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}"
+      POSTGRES_DB: "${POSTGRES_DB:?set POSTGRES_DB in .env}"
+    volumes:
+      # From version 18 the image keeps its data in a versioned folder under
+      # /var/lib/postgresql, and the volume goes on that parent. Mounting it at
+      # /var/lib/postgresql/data, as every guide for 17 and earlier says, is
+      # refused at startup.
+      - "pgdata:/var/lib/postgresql"
+    # No ports, deliberately. Only the app reaches the database, over the
+    # network Compose creates for this stack. A SQL prompt is:
+    #     docker compose exec db psql -U <user> <database>
+    healthcheck:
+      # $$ passes a literal $ through Compose, so the variables are read inside
+      # the container rather than substituted from .env when the file is read.
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+volumes:
+  # The database lives here, inside Docker Desktop's disk, not in this folder.
+  # "docker compose down -v" deletes it, and so does resetting Docker Desktop.
+  # Plain "docker compose down" keeps it.
+  pgdata:

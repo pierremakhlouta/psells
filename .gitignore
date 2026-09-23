@@ -20,3 +20,8 @@ data/
 .vscode/
 
 .pytest_cache/
+
+# Compose settings, including the database password. .env.example is the
+# committed template.
+
+.env

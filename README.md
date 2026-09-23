@@ -34,8 +34,9 @@ there is nothing to install in order to run it.
 
 The web pages and the HTTP API run in one process and need FastAPI, uvicorn,
 Jinja2 for the templates, and python-multipart to read form posts. Development
-also needs pytest, httpx2 for the test client, and openpyxl for
-`import_excel.py`, the one-time script that read the original spreadsheet:
+also needs pytest, httpx2 for the test client, PyYAML so a test can read
+`compose.yaml`, and openpyxl for `import_excel.py`, the one-time script that
+read the original spreadsheet:
 
     pip install -r requirements.txt        # to run
     pip install -r requirements-dev.txt    # to work on it
@@ -187,6 +188,39 @@ are not guaranteed to hold across Docker Desktop's file sharing, so the
 container and the command line on the Mac could write at the same moment, and
 the real data moves to PostgreSQL in this phase anyway.
 
+### With Compose and PostgreSQL
+
+`compose.yaml` runs the web server beside a PostgreSQL 18 database. The
+application does not use the database yet; it still reads the SQLite file in
+the mounted folder, and moves to PostgreSQL later in this phase.
+
+Its settings, including the database password, live in `.env` beside
+`compose.yaml`, which is gitignored and kept out of every image. Start from the
+template and set a real password:
+
+    cp .env.example .env
+    openssl rand -hex 24      # paste the result as POSTGRES_PASSWORD in .env
+
+With the sample folder built as above:
+
+    docker compose up --build -d --wait
+    docker compose ps
+    docker compose exec db psql -U psells psells
+    docker compose down
+
+`--wait` returns once both services report healthy: the database when it
+accepts connections, the web server when uvicorn does. Without it, a request
+made straight after `up` can get an empty reply, because Docker accepts a
+connection on the published port before the server inside is listening.
+
+The web server is published on `127.0.0.1:8000` only. The database publishes no
+port at all: only the web server reaches it, over the private network Compose
+creates, and `docker compose exec db psql` is the way to a SQL prompt. Its
+files live in a Docker volume named `psells_pgdata`, not in this folder.
+`docker compose down` keeps that volume; `docker compose down -v` deletes it,
+and with it the database. `tests/test_container.py` holds the port, password
+and volume rules in place.
+
 ## Backups
 
 `backup.sh` takes a verified copy of the database into `~/PSells-Backups/daily/`,
@@ -242,9 +276,11 @@ pages show with what the API serves.
 
 `test_cross_site.py` covers the refusal of writes from another site.
 
-`test_container.py` reads the `Dockerfile` and `.dockerignore` and fails if the
-image could ever be built from the whole folder or from `data/`, or if it
-leaves out a module the server imports.
+`test_container.py` reads the `Dockerfile`, `.dockerignore` and `compose.yaml`
+and fails if the image could ever be built from the whole folder or from
+`data/`, if it leaves out a module the server imports, if any port is published
+beyond this machine, if the database publishes a port at all, or if a password
+is written into `compose.yaml`.
 
 No test needs a data file. They build databases in memory from `schema.sql`
 itself, so a constraint added to the schema is exercised by the existing tests
