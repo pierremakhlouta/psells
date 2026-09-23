@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+
+{% block title %}Record a payment · PSells{% endblock %}
+
+{% from "macros.html" import field with context %}
+
+{% block content %}
+<h1>Record a payment to the partner</h1>
+<p class="lead">Money paid to the partner. It belongs to no product. The balance
+  owing is the partner share earned on every sale minus every payment, so a
+  payment moves only the amount paid and the balance.</p>
+
+{#- The same three figures the dashboard panel shows, from dashboard_totals. -#}
+<section class="dashboard" aria-label="Partner balance">
+  <dl>
+    <div><dt>Total partner share earned</dt><dd class="num">{{ totals.total_partner_share|money }}</dd></div>
+    <div><dt>Total paid</dt><dd class="num">{{ totals.total_paid|money }}</dd></div>
+    <div><dt>Balance owing</dt><dd class="num">{{ totals.balance_owing|money }}</dd></div>
+  </dl>
+</section>
+
+{% if errors %}
+<p class="form-error" role="alert">The payment was not recorded. Fix the fields marked below.</p>
+{% endif %}
+
+<form class="product-form" action="{{ url_for('add_payment_submit') }}" method="post">
+  {{ field("amount", "Amount ($)", hint="Zero is allowed.", inputmode="decimal", required=true) }}
+  {{ field("date", "Date", hint="Today unless you change it.", type="date") }}
+  {{ field("notes", "Notes", hint="For example, how it was paid.", wide=true) }}
+
+  <div class="actions">
+    <button type="submit">Record payment</button>
+    <a href="{{ url_for('inventory_page') }}">Cancel</a>
+  </div>
+</form>
+{% endblock %}

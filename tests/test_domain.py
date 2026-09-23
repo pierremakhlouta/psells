@@ -1272,6 +1272,25 @@ def test_create_payment_refuses_with_a_sentence(db, amount, date_text,
     assert payments_stored(db) == []
 
 
+def test_create_payment_from_text_reports_every_problem_at_once(db):
+    with pytest.raises(psells.PaymentInputError) as refused:
+        psells.create_payment_from_text(db, {"amount": "abc",
+                                             "date": "2026-02-30"})
+
+    assert refused.value.problems == {
+        "amount": psells.MONEY_TEXT_PROBLEM,
+        "date": "Please enter a valid date in YYYY-MM-DD format.",
+    }
+    assert isinstance(refused.value, psells.PaymentError)
+
+
+def test_all_payments_are_listed_oldest_first(db):
+    psells.create_payment(db, 100, "2026-09-14", "b")
+    psells.create_payment(db, 200, "2026-09-01", "a")
+
+    assert [p["amount_cents"] for p in psells.all_payments(db)] == [100, 200]
+
+
 # Where the data lives --------------------------------------------------------
 
 def test_the_default_paths_sit_beside_psells_not_beside_the_shell(monkeypatch):

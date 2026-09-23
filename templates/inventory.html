@@ -17,6 +17,9 @@
 {% if returned %}
 <p class="notice" role="status">Recorded a return of {{ returned.name }}, id {{ returned.id }}.</p>
 {% endif %}
+{% if paid %}
+<p class="notice" role="status">Recorded a payment of {{ paid.amount_cents|money }} dated {{ paid.date }}.</p>
+{% endif %}
 
 {#- The same nine figures, with the same labels, the command line's dashboard
     prints. totals is the dictionary dashboard_totals returns, unchanged: counts
@@ -36,6 +39,7 @@
     <div><dt>Balance owing</dt><dd class="num">{{ totals.balance_owing|money }}</dd></div>
   </dl>
 </section>
+<p class="panel-link"><a href="{{ url_for('add_payment_page') }}">Record a payment to the partner</a></p>
 
 {#- A GET form: pressing Search loads /?q=what+was+typed. The input's name must
     be q, the name of the route's parameter, or the search is silently never

@@ -932,6 +932,158 @@ def test_a_return_from_another_site_is_refused(client, db):
     assert returns_stored(db) == []
 
 
+# Recording a payment ---------------------------------------------------------
+
+def payment_form_of(client):
+    (form,) = [form for form in forms(client.get("/payments/new").text)
+               if form["method"] == "post"]
+
+    return form
+
+
+def submit_payment_form(client, follow_redirects=False, headers=None,
+                        **typed):
+    form = payment_form_of(client)
+    data = form_data(form)
+    data.update(typed)
+
+    return client.post(form["action"], data=data, headers=headers or {},
+                       follow_redirects=follow_redirects)
+
+
+def payments_stored(db):
+    return [dict(row) for row in db.execute("SELECT * FROM payments ORDER BY id")]
+
+
+def test_the_payment_page_is_linked_from_the_nav_and_the_panel(client):
+    page = client.get("/").text
+
+    assert page.count('href="http://testserver/payments/new"') == 2
+
+
+def test_the_payment_form_offers_the_fields_the_reader_reads(client):
+    form = payment_form_of(client)
+
+    assert form["action"].endswith("/payments/new")
+    assert {f["name"] for f in form["inputs"]} == set(psells.PAYMENT_FORM_FIELDS)
+    assert set(web.PaymentForm.model_fields) == set(psells.PAYMENT_FORM_FIELDS)
+    assert form_data(form) == {"amount": "", "date": date.today().isoformat(),
+                               "notes": ""}
+
+
+def test_the_payment_page_shows_the_balance_the_api_serves(client, db):
+    add_product(db, 1, quantity_received=5)
+    add_sale(db, 1, item_id=1, quantity=2, sale_price_cents=9000,
+             partner_share_cents=3500)
+    add_payment(db, 1, amount_cents=2000)
+
+    shown = figures(client.get("/payments/new").text)
+    served = client.get("/dashboard").json()
+
+    assert shown == {
+        "Total partner share earned":
+            psells.format_cents(served["total_partner_share_cents"]),
+        "Total paid": psells.format_cents(served["total_paid_cents"]),
+        "Balance owing": psells.format_cents(served["balance_owing_cents"]),
+    }
+
+
+def test_a_payment_answers_303_and_is_stored(client, db):
+    response = submit_payment_form(client, amount="150.00", date="2026-9-14",
+                                   notes="e-transfer")
+
+    assert response.status_code == 303
+    assert response.headers["location"].endswith("/?paid=1")
+    assert payments_stored(db) == [{"id": 1, "date": "2026-09-14",
+                                    "amount_cents": 15000,
+                                    "notes": "e-transfer"}]
+    assert "Recorded a payment of $150.00 dated 2026-09-14." in client.get(
+        response.headers["location"]).text
+
+
+def test_a_payment_moves_only_paid_and_the_balance_on_the_page(client, db):
+    add_product(db, 1, quantity_received=5)
+    add_sale(db, 1, item_id=1, quantity=2, sale_price_cents=9000,
+             partner_share_cents=3500)
+    before = figures(client.get("/").text)
+
+    after = figures(submit_payment_form(client, follow_redirects=True,
+                                        amount="50.00").text)
+
+    assert after["Total paid"] == "$50.00"
+    assert after["Balance owing"] == "$20.00"
+    for label in before:
+        if label not in ("Total paid", "Balance owing"):
+            assert after[label] == before[label], label
+
+
+def test_an_overpayment_shows_a_negative_balance(client, db):
+    add_product(db, 1, quantity_received=5)
+    add_sale(db, 1, item_id=1, quantity=1, sale_price_cents=2000,
+             partner_share_cents=500)
+
+    page = submit_payment_form(client, follow_redirects=True,
+                               amount="8.00").text
+
+    assert figures(page)["Balance owing"] == "-$3.00"
+
+
+def test_the_form_records_what_the_command_lines_function_would(client, db):
+    submit_payment_form(client, amount="12.50", date="2026-09-14", notes="n")
+    psells.create_payment(db, 1250, "2026-09-14", "n")
+
+    first, second = payments_stored(db)
+    first.pop("id")
+    second.pop("id")
+
+    assert first == second
+
+
+def test_a_payment_of_zero_is_accepted_from_the_page(client, db):
+    assert submit_payment_form(client, amount="0").status_code == 303
+    assert payments_stored(db)[0]["amount_cents"] == 0
+
+
+@pytest.mark.parametrize("typed, field_name", [
+    ({"amount": ""}, "amount"),
+    ({"amount": "abc"}, "amount"),
+    ({"amount": "12.505"}, "amount"),
+    ({"amount": "-5.00"}, "amount"),
+    ({"amount": "5", "date": "2026-13-01"}, "date"),
+])
+def test_payment_input_wrong_in_itself_is_a_422(client, db, typed,
+                                                field_name):
+    response = submit_payment_form(client, notes="kept", **typed)
+    form = forms(response.text)[-1]
+
+    assert response.status_code == 422
+    assert payments_stored(db) == []
+    assert field(form, field_name)["aria-invalid"] == "true"
+    assert form_data(form)["notes"] == "kept"
+
+
+def test_the_payment_notice_names_only_a_payment_that_exists(client, db):
+    """With a payment present, so the lookup actually runs for each value."""
+    add_payment(db, 1, amount_cents=15000)
+
+    for paid in ["999", "abc", "1.0", ""]:
+        page = client.get("/", params={"paid": paid})
+
+        assert page.status_code == 200, paid
+        assert "Recorded a payment" not in page.text, paid
+
+    assert "Recorded a payment of $150.00" in client.get(
+        "/", params={"paid": "1"}).text
+
+
+def test_a_payment_from_another_site_is_refused(client, db):
+    response = submit_payment_form(client, amount="100.00",
+                                   headers={"Origin": "https://evil.example"})
+
+    assert response.status_code == 403
+    assert payments_stored(db) == []
+
+
 # The dashboard panel ---------------------------------------------------------
 
 # The labels the command line prints, paired with the key /dashboard serves
@@ -1146,6 +1298,7 @@ def test_there_are_templates_to_check():
     assert "product_form.html" in names
     assert "sale_form.html" in names
     assert "return_form.html" in names
+    assert "payment_form.html" in names
     assert "macros.html" in names
 
 

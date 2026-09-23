@@ -48,7 +48,7 @@ templates.env.filters["money"] = psells.format_cents
 @router.get("/", response_class=HTMLResponse)
 def inventory_page(request: Request, connection: Connection, q: str = "",
                    added: str = "", edited: str = "", sold: str = "",
-                   returned: str = ""):
+                   returned: str = "", paid: str = ""):
     """Every product in one table, under the dashboard figures.
 
     The screen that replaces the spreadsheet. The nine figures above the table
@@ -63,7 +63,8 @@ def inventory_page(request: Request, connection: Connection, q: str = "",
     that an empty string is found inside every string.
 
     added, edited, sold and returned are the id of a product just added,
-    changed, sold or returned, carried here by the redirect after a form. Each is read as text and matched against
+    changed, sold or returned, and paid the id of a payment just recorded,
+    carried here by the redirect after a form. Each is read as text and matched against
     the ids that exist, so a typed ?added=abc or an id that does not exist
     shows nothing rather than an error or a false message.
 
@@ -87,6 +88,12 @@ def inventory_page(request: Request, connection: Connection, q: str = "",
         return next((product for product in everything
                      if str(product["id"]) == product_id), None)
 
+    payment_recorded = next(
+        (payment for payment in psells.all_payments(connection)
+         if str(payment["id"]) == paid),
+        None,
+    ) if paid else None
+
     inventory = [
         (product, psells.partner_share_for(product))
         for product in products
@@ -103,6 +110,7 @@ def inventory_page(request: Request, connection: Connection, q: str = "",
             "edited": named(edited),
             "sold": named(sold),
             "returned": named(returned),
+            "paid": payment_recorded,
         },
     )
 
@@ -404,5 +412,60 @@ def return_product_submit(request: Request, connection: Connection,
     return RedirectResponse(
         request.url_for("inventory_page").include_query_params(
             returned=product_id),
+        status_code=303,
+    )
+
+
+# Recording a payment to the partner ------------------------------------------
+
+class PaymentForm(BaseModel):
+    """The payment form's fields, text and optional, as for the others."""
+
+    amount: str = ""
+    date: str = ""
+    notes: str = ""
+
+
+def payment_form(request, connection, values, problems, status_code=200):
+    """The payment form, under what is owed. The three figures are
+    dashboard_totals', the same the dashboard panel shows."""
+    return templates.TemplateResponse(
+        request,
+        "payment_form.html",
+        {"totals": psells.dashboard_totals(connection), "values": values,
+         "errors": problems},
+        status_code=status_code,
+    )
+
+
+@router.get("/payments/new", response_class=HTMLResponse)
+def add_payment_page(request: Request, connection: Connection):
+    """Dated today, amount blank: there is no default amount to pay."""
+    values = {"amount": "", "date": datetime.date.today().isoformat(),
+              "notes": ""}
+
+    return payment_form(request, connection, values, {})
+
+
+@router.post("/payments/new", response_class=HTMLResponse)
+def add_payment_submit(request: Request, connection: Connection,
+                       form: Annotated[PaymentForm, Form()]):
+    """Record the payment, or show the form again with every problem.
+
+    Success redirects with 303 carrying the new payment's id. A refresh that
+    repeated this post would pay the partner twice on paper, which is the one
+    mistake here that would change the balance owing.
+    """
+    fields = form.model_dump()
+
+    try:
+        payment_id = psells.create_payment_from_text(connection, fields)
+    except psells.PaymentInputError as refused:
+        return payment_form(request, connection, fields, refused.problems,
+                            status_code=422)
+
+    return RedirectResponse(
+        request.url_for("inventory_page").include_query_params(
+            paid=payment_id),
         status_code=303,
     )

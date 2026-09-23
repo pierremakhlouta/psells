@@ -1231,6 +1231,58 @@ def create_return_from_text(connection, product_id, fields):
     return create_return(connection, product_id, quantity, return_date,
                          text["notes"])
 
+
+def all_payments(connection):
+    """Every payment to the partner, oldest first."""
+    return connection.execute(
+        "SELECT * FROM payments ORDER BY id"
+    ).fetchall()
+
+
+# The fields a payment form sends.
+PAYMENT_FORM_FIELDS = ("amount", "date", "notes")
+
+
+class PaymentInputError(PaymentError):
+    """A payment form whose text is wrong in itself, a sentence per field."""
+
+    def __init__(self, problems):
+        self.problems = dict(problems)
+        super().__init__(" ".join(self.problems.values()))
+
+
+def create_payment_from_text(connection, fields):
+    """Record a payment from a form's text and return the new payment's id.
+
+    The amount is read by parse_money and may be zero, as on the command line.
+    The date is read as every form's date is. Raises PaymentInputError with a
+    sentence per field when anything is wrong; a payment has no stock to
+    disagree with, so there is no second kind of refusal.
+    """
+    text = {key: (fields.get(key) or "").strip() for key in PAYMENT_FORM_FIELDS}
+    problems = {}
+
+    amount_cents = None
+
+    if not text["amount"]:
+        problems["amount"] = "This field is required."
+    else:
+        try:
+            amount_cents = parse_money(text["amount"])
+        except ValueError:
+            problems["amount"] = MONEY_TEXT_PROBLEM
+        else:
+            if amount_cents < 0:
+                problems["amount"] = "Amount cannot be negative."
+
+    payment_date = _read_date_text(text["date"], problems)
+
+    if problems:
+        raise PaymentInputError(problems)
+
+    return create_payment(connection, amount_cents, payment_date,
+                          text["notes"])
+
 def view_dashboard(connection):
     totals = dashboard_totals(connection)
 
