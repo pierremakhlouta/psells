@@ -534,6 +534,175 @@ def create_sale(connection, product_id, quantity, sale_price_cents, sale_date):
     return partner_cut
 
 
+
+PARTNER_SHARE_MODES = ("default", "custom_percent", "custom_amount")
+
+
+class ProductError(ValueError):
+    """A product that cannot be stored, with every reason at once.
+
+    problems maps a field name to a sentence safe to show a person. It holds
+    every problem found, not just the first: the command line asks one question
+    at a time and can stop at the first bad answer, but a form arrives whole,
+    and making someone fix one field, resubmit and meet the next is a bad way to
+    be told there were three.
+    """
+
+    def __init__(self, problems):
+        self.problems = dict(problems)
+        super().__init__(" ".join(self.problems.values()))
+
+
+def _is_whole_number(value):
+    # bool is a subclass of int, so True would otherwise pass as 1.
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def product_problems(category, name, quantity_received, retail_discontinued,
+                     retail_price_cents, listed_price_cents, condition,
+                     partner_share_mode, partner_share_percent,
+                     partner_share_amount_cents):
+    """Every rule a new product must satisfy, as {field: sentence}.
+
+    Empty when the product is acceptable. These are the rules add has always
+    enforced through its prompts, and the ones the schema enforces again at the
+    bottom, stated once here so that a caller with no prompts, a web form, is
+    held to the same rules and told about them in sentences rather than by a
+    constraint failure.
+
+    A value of None means the caller could not read that field at all, and has
+    already said so; it is skipped here rather than reported twice.
+    """
+    problems = {}
+
+    for field, label, text in (("category", "Category", category),
+                               ("name", "Name", name),
+                               ("condition", "Condition", condition)):
+        if text is not None and not str(text).strip():
+            problems[field] = f"{label} cannot be blank."
+
+    if quantity_received is not None and not (
+            _is_whole_number(quantity_received) and quantity_received >= 1):
+        problems["quantity_received"] = (
+            "Quantity received must be a whole number, at least 1."
+        )
+
+    if retail_discontinued:
+        # Zero is what discontinued means in the schema, not a price someone
+        # typed, and the only mode that makes sense is a fixed amount: there is
+        # no retail price left to take a percentage of.
+        if retail_price_cents not in (None, 0):
+            problems["retail_price"] = (
+                "A product discontinued at retail has no retail price."
+            )
+
+        if partner_share_mode not in (None, "custom_amount"):
+            problems["partner_share_mode"] = (
+                "A product discontinued at retail takes a fixed partner "
+                "amount per unit."
+            )
+
+    elif retail_price_cents is not None and not (
+            _is_whole_number(retail_price_cents) and retail_price_cents >= 1):
+        problems["retail_price"] = "Retail price must be at least $0.01."
+
+    if listed_price_cents is not None and not (
+            _is_whole_number(listed_price_cents) and listed_price_cents >= 0):
+        problems["listed_price"] = "Listed price cannot be negative."
+
+    if (partner_share_mode is not None
+            and partner_share_mode not in PARTNER_SHARE_MODES):
+        problems["partner_share_mode"] = (
+            "Partner share mode must be default, custom_percent or "
+            "custom_amount."
+        )
+
+    if partner_share_mode == "custom_percent":
+        # The range check also refuses nan and infinity, which float()
+        # accepts from text: nan compares false with every number, so it is
+        # never between 0 and 100, and infinity is never at most 100. Stored,
+        # nan would become NULL and fail the schema's matrix constraint.
+        if not (isinstance(partner_share_percent, (int, float))
+                and not isinstance(partner_share_percent, bool)
+                and 0 <= partner_share_percent <= 100):
+            problems["partner_share_percent"] = (
+                "Partner share percentage must be a number from 0 to 100."
+            )
+    elif partner_share_percent is not None:
+        problems["partner_share_percent"] = (
+            "A partner share percentage belongs only to custom_percent."
+        )
+
+    if partner_share_mode == "custom_amount":
+        if not (_is_whole_number(partner_share_amount_cents)
+                and partner_share_amount_cents >= 0):
+            problems["partner_share_amount"] = (
+                "Partner share amount cannot be negative."
+            )
+    elif partner_share_amount_cents is not None:
+        problems["partner_share_amount"] = (
+            "A fixed partner amount belongs only to custom_amount."
+        )
+
+    return problems
+
+
+def create_product(connection, category, name, quantity_received,
+                   retail_discontinued, retail_price_cents, listed_price_cents,
+                   condition, notes, partner_share_mode, partner_share_percent,
+                   partner_share_amount_cents):
+    """Store one new product and return the id SQLite gave it.
+
+    The whole of adding a product with none of the asking. add is the same
+    operation driven by a keyboard; the web form drives it from a request. Both
+    end here, so the rules are checked once, by product_problems, and every
+    problem is raised together in one ProductError.
+
+    The checks repeat what add's prompts already guarantee, which is
+    deliberate, as in create_sale: a caller that is not a prompt has guaranteed
+    nothing. Text is stripped here too, so a caller that forgets cannot store
+    leading or trailing spaces.
+    """
+    problems = product_problems(
+        category, name, quantity_received, retail_discontinued,
+        retail_price_cents, listed_price_cents, condition,
+        partner_share_mode, partner_share_percent, partner_share_amount_cents,
+    )
+
+    # None means "could not be read", which only a caller parsing text can
+    # produce, and a product cannot be stored with a field missing.
+    for field, value in (("category", category), ("name", name),
+                         ("quantity_received", quantity_received),
+                         ("retail_price", retail_price_cents),
+                         ("listed_price", listed_price_cents),
+                         ("condition", condition),
+                         ("partner_share_mode", partner_share_mode)):
+        if value is None:
+            problems.setdefault(field, "This field is required.")
+
+    if problems:
+        raise ProductError(problems)
+
+    # The id is left out so SQLite assigns it, the same way it did during the
+    # migration.
+    with connection:
+        cursor = connection.execute(
+            "INSERT INTO products "
+            "(category, name, quantity_received, retail_price_cents, "
+            "listed_price_cents, retail_discontinued, partner_share_mode, "
+            "partner_share_percent, partner_share_amount_cents, "
+            "condition, notes) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (category.strip(), name.strip(), quantity_received,
+             retail_price_cents, listed_price_cents,
+             1 if retail_discontinued else 0,
+             partner_share_mode, partner_share_percent,
+             partner_share_amount_cents, condition.strip(),
+             (notes or "").strip())
+        )
+
+    return cursor.lastrowid
+
 def view_dashboard(connection):
     totals = dashboard_totals(connection)
 
@@ -735,20 +904,11 @@ def add(connection):
 
     mode, percent, amount_cents = ask_partner_share(retail_discontinued)
 
-    # The id is left out so SQLite assigns it, the same way it did during the
-    # migration.
-    with connection:
-        connection.execute(
-            "INSERT INTO products "
-            "(category, name, quantity_received, retail_price_cents, "
-            "listed_price_cents, retail_discontinued, partner_share_mode, "
-            "partner_share_percent, partner_share_amount_cents, "
-            "condition, notes) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (category, name, quantity_received, retail_price_cents,
-             listed_price_cents, 1 if retail_discontinued else 0,
-             mode, percent, amount_cents, condition, notes)
-        )
+    create_product(
+        connection, category, name, quantity_received, retail_discontinued,
+        retail_price_cents, listed_price_cents, condition, notes,
+        mode, percent, amount_cents,
+    )
 
     print("Product added successfully.")
 

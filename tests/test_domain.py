@@ -488,6 +488,226 @@ def test_create_sale_freezes_the_cut_at_the_moment_of_sale(db, partner_rate,
     assert stored == [4000, 1000]
 
 
+# The whole of adding a product with none of the asking. add drives it from a
+# keyboard and the web form will drive it from a request, so every rule is
+# tested here once, directly, rather than through either of them.
+
+def new_product(**overrides):
+    """Arguments for an acceptable product on the default share."""
+    values = {
+        "category": "Shoes",
+        "name": "Jordan 1 Chicago",
+        "quantity_received": 10,
+        "retail_discontinued": False,
+        "retail_price_cents": 10000,
+        "listed_price_cents": 9000,
+        "condition": "Brand New",
+        "notes": "boxed",
+        "partner_share_mode": "default",
+        "partner_share_percent": None,
+        "partner_share_amount_cents": None,
+    }
+    values.update(overrides)
+
+    return values
+
+
+def refusal(db, **overrides):
+    """The problems create_product raises, having checked nothing was stored."""
+    with pytest.raises(psells.ProductError) as refused:
+        psells.create_product(db, **new_product(**overrides))
+
+    assert db.execute("SELECT COUNT(*) FROM products").fetchone()[0] == 0
+
+    return refused.value.problems
+
+
+def test_create_product_stores_every_field_and_returns_the_id(db):
+    product_id = psells.create_product(db, **new_product())
+
+    stored = dict(db.execute(
+        "SELECT * FROM products WHERE id = ?", (product_id,)
+    ).fetchone())
+
+    assert stored == {
+        "id": product_id,
+        "category": "Shoes",
+        "name": "Jordan 1 Chicago",
+        "quantity_received": 10,
+        "retail_price_cents": 10000,
+        "listed_price_cents": 9000,
+        "retail_discontinued": 0,
+        "partner_share_mode": "default",
+        "partner_share_percent": None,
+        "partner_share_amount_cents": None,
+        "condition": "Brand New",
+        "notes": "boxed",
+    }
+
+
+def test_create_product_lets_sqlite_choose_the_id(db):
+    first = psells.create_product(db, **new_product())
+    second = psells.create_product(db, **new_product(name="Jordan 4 Bred"))
+
+    assert second == first + 1
+
+
+def test_create_product_strips_the_text_it_stores(db):
+    product_id = psells.create_product(db, **new_product(
+        category="  Shoes ", name=" Jordan 1 ", condition=" Used ",
+        notes="  boxed  ",
+    ))
+
+    stored = db.execute(
+        "SELECT category, name, condition, notes FROM products WHERE id = ?",
+        (product_id,)
+    ).fetchone()
+
+    assert tuple(stored) == ("Shoes", "Jordan 1", "Used", "boxed")
+
+
+def test_create_product_stores_a_custom_percentage(db):
+    product_id = psells.create_product(db, **new_product(
+        partner_share_mode="custom_percent", partner_share_percent=35.5,
+    ))
+
+    stored = db.execute(
+        "SELECT partner_share_percent, partner_share_amount_cents "
+        "FROM products WHERE id = ?", (product_id,)
+    ).fetchone()
+
+    assert tuple(stored) == (35.5, None)
+
+
+def test_create_product_stores_a_discontinued_product(db):
+    product_id = psells.create_product(db, **new_product(
+        retail_discontinued=True, retail_price_cents=0,
+        partner_share_mode="custom_amount", partner_share_amount_cents=1250,
+    ))
+
+    stored = db.execute(
+        "SELECT retail_discontinued, retail_price_cents, "
+        "partner_share_mode, partner_share_amount_cents "
+        "FROM products WHERE id = ?", (product_id,)
+    ).fetchone()
+
+    assert tuple(stored) == (1, 0, "custom_amount", 1250)
+
+
+def test_create_product_reports_every_problem_at_once(db):
+    """Seven things wrong, seven sentences, one refusal, nothing stored."""
+    problems = refusal(
+        db,
+        category=" ", name="", quantity_received=0, retail_price_cents=0,
+        listed_price_cents=-1, condition="", partner_share_mode="bogus",
+    )
+
+    assert set(problems) == {
+        "category", "name", "quantity_received", "retail_price",
+        "listed_price", "condition", "partner_share_mode",
+    }
+    assert problems["category"] == "Category cannot be blank."
+
+
+def test_a_product_error_is_a_value_error_that_reads_as_a_sentence(db):
+    with pytest.raises(ValueError) as refused:
+        psells.create_product(db, **new_product(name="", condition=""))
+
+    assert str(refused.value) == (
+        "Name cannot be blank. Condition cannot be blank."
+    )
+
+
+def test_a_quantity_must_be_a_whole_number_of_at_least_one(db):
+    assert "quantity_received" in refusal(db, quantity_received=0)
+    assert "quantity_received" in refusal(db, quantity_received=2.5)
+    assert "quantity_received" in refusal(db, quantity_received=True)
+
+    assert psells.create_product(db, **new_product(quantity_received=1))
+
+
+def test_a_retail_price_must_be_at_least_one_cent(db):
+    """Zero is reserved for products discontinued at retail."""
+    assert refusal(db, retail_price_cents=0)["retail_price"] == (
+        "Retail price must be at least $0.01."
+    )
+
+    assert psells.create_product(db, **new_product(retail_price_cents=1))
+
+
+def test_a_listed_price_of_zero_is_allowed(db):
+    assert psells.create_product(db, **new_product(listed_price_cents=0))
+
+
+def test_a_discontinued_product_cannot_have_a_retail_price(db):
+    problems = refusal(
+        db, retail_discontinued=True, retail_price_cents=5000,
+        partner_share_mode="custom_amount", partner_share_amount_cents=100,
+    )
+
+    assert set(problems) == {"retail_price"}
+
+
+def test_a_discontinued_product_must_take_a_fixed_amount(db):
+    problems = refusal(db, retail_discontinued=True, retail_price_cents=0)
+
+    assert set(problems) == {"partner_share_mode"}
+
+
+@pytest.mark.parametrize("percent", [-1, 100.5, float("nan"), float("inf"),
+                                     True, None, "35"])
+def test_a_percentage_outside_nought_to_a_hundred_is_refused(db, percent):
+    """nan and infinity included: float() accepts both from text."""
+    problems = refusal(db, partner_share_mode="custom_percent",
+                       partner_share_percent=percent)
+
+    assert set(problems) == {"partner_share_percent"}
+
+
+@pytest.mark.parametrize("percent", [0, 100, 12.5])
+def test_a_percentage_from_nought_to_a_hundred_is_accepted(db, percent):
+    assert psells.create_product(db, **new_product(
+        partner_share_mode="custom_percent", partner_share_percent=percent,
+    ))
+
+
+def test_a_fixed_amount_cannot_be_negative_but_can_be_zero(db):
+    """Zero is accepted on purpose: open issue I9, still intentional."""
+    problems = refusal(db, partner_share_mode="custom_amount",
+                       partner_share_amount_cents=-1)
+
+    assert set(problems) == {"partner_share_amount"}
+    assert psells.create_product(db, **new_product(
+        partner_share_mode="custom_amount", partner_share_amount_cents=0,
+    ))
+
+
+def test_a_mode_carries_only_its_own_value(db):
+    """The shape the matrix constraint requires, refused in a sentence first."""
+    assert set(refusal(db, partner_share_percent=40)) == {
+        "partner_share_percent"}
+    assert set(refusal(db, partner_share_amount_cents=500)) == {
+        "partner_share_amount"}
+    assert set(refusal(db, partner_share_mode="custom_percent",
+                       partner_share_percent=40,
+                       partner_share_amount_cents=500)) == {
+        "partner_share_amount"}
+
+
+def test_a_field_that_could_not_be_read_is_required(db):
+    """None is what a caller parsing text passes for a field it could not
+    read. product_problems skips it, create_product refuses it."""
+    problems = refusal(db, name=None, listed_price_cents=None)
+
+    assert problems == {
+        "name": "This field is required.",
+        "listed_price": "This field is required.",
+    }
+    assert psells.product_problems(**{
+        k: v for k, v in new_product(name=None).items() if k != "notes"
+    }) == {}
+
+
 # Formatting money -------------------------------------------------------------
 #
 # format_cents had no test of its own until Phase 03b. It was covered only
