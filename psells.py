@@ -653,6 +653,75 @@ def create_payment(connection, amount_cents, payment_date, notes):
 
     return cursor.lastrowid
 
+class DeleteRefused(ValueError):
+    """A product that cannot be deleted, with the sentence saying why."""
+
+
+def deletion_blocker(connection, product_id):
+    """Why this product cannot be deleted, as a sentence, or None if it can.
+
+    A product with sales or returns recorded against it keeps them: the foreign
+    keys would refuse the delete anyway, but "FOREIGN KEY constraint failed" is
+    not an answer to a person. Asked before offering to delete, so nobody is
+    asked to confirm something that is then refused.
+    """
+    sale_count = connection.execute(
+        "SELECT COUNT(*) FROM sales WHERE item_id = ?",
+        (product_id,)
+    ).fetchone()[0]
+
+    return_count = connection.execute(
+        "SELECT COUNT(*) FROM returns WHERE item_id = ?",
+        (product_id,)
+    ).fetchone()[0]
+
+    blocking = []
+
+    if sale_count:
+        blocking.append(f"{sale_count} sale" + ("" if sale_count == 1 else "s"))
+
+    if return_count:
+        blocking.append(
+            f"{return_count} return" + ("" if return_count == 1 else "s")
+        )
+
+    if not blocking:
+        return None
+
+    return f"This product has {' and '.join(blocking)} recorded against it."
+
+
+def delete_product(connection, product_id):
+    """Delete a product with no history, or raise saying why not.
+
+    The whole of deleting with none of the asking. delete asks for a yes first;
+    the web page's confirmation is its own page. The check is repeated here
+    rather than trusted, and the database is the last word: if it still
+    refuses, something points at the product that deletion_blocker does not
+    know about, and the refusal is a sentence rather than a stack trace.
+
+    Raises ProductNotFound for an id that does not exist, and DeleteRefused
+    otherwise.
+    """
+    if connection.execute("SELECT 1 FROM products WHERE id = ?",
+                          (product_id,)).fetchone() is None:
+        raise ProductNotFound(f"No product with id {product_id}.")
+
+    blocker = deletion_blocker(connection, product_id)
+
+    if blocker is not None:
+        raise DeleteRefused(blocker)
+
+    try:
+        with connection:
+            connection.execute("DELETE FROM products WHERE id = ?",
+                               (product_id,))
+    except sqlite3.IntegrityError:
+        raise DeleteRefused(
+            "The database refused the deletion. Something still refers to "
+            "this product, so nothing was removed."
+        )
+
 PARTNER_SHARE_MODES = ("default", "custom_percent", "custom_amount")
 
 
@@ -1614,31 +1683,12 @@ def delete(connection):
     print("Product selected:")
     print_product(product)
 
-    # Ask what is pointing at this product before offering to delete it. The
-    # foreign keys would refuse it anyway, but "FOREIGN KEY constraint failed"
-    # is not an answer to a person standing at a menu.
-    sale_count = connection.execute(
-        "SELECT COUNT(*) FROM sales WHERE item_id = ?",
-        (product["id"],)
-    ).fetchone()[0]
+    # Ask what is pointing at this product before offering to delete it, so
+    # nobody is asked to confirm something that is then refused.
+    blocker = deletion_blocker(connection, product["id"])
 
-    return_count = connection.execute(
-        "SELECT COUNT(*) FROM returns WHERE item_id = ?",
-        (product["id"],)
-    ).fetchone()[0]
-
-    blocking = []
-
-    if sale_count:
-        blocking.append(f"{sale_count} sale" + ("" if sale_count == 1 else "s"))
-
-    if return_count:
-        blocking.append(
-            f"{return_count} return" + ("" if return_count == 1 else "s")
-        )
-
-    if blocking:
-        print(f"This product has {' and '.join(blocking)} recorded against it.")
+    if blocker is not None:
+        print(blocker)
         print("Deleting it would lose that history, so it is refused.")
         print("If you no longer stock it, leaving it in place costs nothing.")
         return
@@ -1653,12 +1703,8 @@ def delete(connection):
         return
 
     try:
-        with connection:
-            connection.execute(
-                "DELETE FROM products WHERE id = ?",
-                (product["id"],)
-            )
-    except sqlite3.IntegrityError:
+        delete_product(connection, product["id"])
+    except DeleteRefused:
         # The check above should have caught this. If it did not, something
         # points at this product that the check does not know about, and a
         # sentence beats a stack trace.

@@ -1291,6 +1291,77 @@ def test_all_payments_are_listed_oldest_first(db):
     assert [p["amount_cents"] for p in psells.all_payments(db)] == [100, 200]
 
 
+# Deleting a product with none of the asking.
+
+def products_left(db):
+    return [row[0] for row in db.execute("SELECT id FROM products ORDER BY id")]
+
+
+def test_a_product_with_no_history_has_no_blocker_and_is_deleted(db):
+    add_product(db, 1, quantity_received=5)
+    add_product(db, 2, quantity_received=5)
+
+    assert psells.deletion_blocker(db, 1) is None
+
+    psells.delete_product(db, 1)
+
+    assert products_left(db) == [2]
+
+
+@pytest.mark.parametrize("sales, returns, sentence", [
+    (1, 0, "This product has 1 sale recorded against it."),
+    (2, 0, "This product has 2 sales recorded against it."),
+    (0, 1, "This product has 1 return recorded against it."),
+    (2, 3, "This product has 2 sales and 3 returns recorded against it."),
+])
+def test_history_blocks_the_delete_with_a_sentence(db, sales, returns,
+                                                   sentence):
+    add_product(db, 1, quantity_received=10)
+    for n in range(sales):
+        add_sale(db, n + 1, item_id=1, quantity=1)
+    for n in range(returns):
+        add_return(db, n + 1, item_id=1, quantity=1)
+
+    assert psells.deletion_blocker(db, 1) == sentence
+
+    with pytest.raises(psells.DeleteRefused) as refused:
+        psells.delete_product(db, 1)
+
+    assert str(refused.value) == sentence
+    assert products_left(db) == [1]
+
+
+def test_deleting_a_product_that_does_not_exist(db):
+    with pytest.raises(psells.ProductNotFound):
+        psells.delete_product(db, 99)
+
+
+def test_when_the_database_still_refuses_it_is_a_sentence(db):
+    """Something points at the product that deletion_blocker does not know
+    about: here, a table added for the test. The database refuses, and that
+    arrives as DeleteRefused, not as an IntegrityError.
+
+    The setup is committed first. A refused write inside `with connection:`
+    rolls back everything uncommitted on the connection, and the helpers do
+    not commit, so without this the refusal would also remove the product the
+    test just inserted. The application commits every write it makes, so this
+    matches the state it is really in.
+    """
+    add_product(db, 1, quantity_received=5)
+    db.execute("CREATE TABLE notes_elsewhere (item_id INTEGER NOT NULL "
+               "REFERENCES products(id) ON DELETE RESTRICT)")
+    db.execute("INSERT INTO notes_elsewhere VALUES (1)")
+    db.commit()
+
+    assert psells.deletion_blocker(db, 1) is None
+
+    with pytest.raises(psells.DeleteRefused) as refused:
+        psells.delete_product(db, 1)
+
+    assert "The database refused the deletion." in str(refused.value)
+    assert products_left(db) == [1]
+
+
 # Where the data lives --------------------------------------------------------
 
 def test_the_default_paths_sit_beside_psells_not_beside_the_shell(monkeypatch):
