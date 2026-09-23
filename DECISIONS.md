@@ -274,3 +274,92 @@ calls only, not every detail, and no specific business figures.
   work on it, so a deployment installs neither a test runner nor a spreadsheet
   library. The automated checks install both, and the vulnerability audit reads
   both files.
+
+- **The web pages call the application's functions directly, not the API.** The
+  pages and the API run in one process, and a page could have fetched its data
+  from the API over the network instead. That would have doubled the work for
+  every page, needed an HTTP client and a configured address, risked one request
+  waiting on another inside the same small pool of threads, and made every page
+  test depend on a running server. Calling the same functions the command line
+  calls satisfies the rule that matters, one implementation of every business
+  rule, and three narrower rules keep it honest: a page route does no arithmetic
+  on money, stock or partner share; wherever a page shows a figure the API also
+  serves, a test asserts the two agree; and templates format and never compute.
+
+- **"Templates never compute" is enforced by reading them.** A test comparing
+  page and API only catches a figure that disagrees, and a template recomputing
+  profit correctly would pass it. So the tests parse every template the way the
+  template engine does and fail on any arithmetic, and on any formatting filter
+  other than the one that renders money. Adding a filter is therefore a decision,
+  and the question to ask is whether it formats or computes.
+
+- **Every write was separated from its prompts before a page used it.** Adding,
+  editing, selling, returning, paying and deleting were each conversations the
+  terminal holds with a person, which a web request cannot. Each was split into
+  the prompting and a function that does the work and checks every rule again,
+  because a caller that is not a prompt has guaranteed nothing. Each split was
+  made against the existing tests of the terminal behaviour and changed none of
+  them, and bugs found while moving code were fixed in commits of their own.
+
+- **A save redirects; a refusal shows the form again.** Every form answers a
+  successful save by sending the browser to another page to load, so refreshing
+  cannot repeat it, which matters most for a sale: a repeated sale is a second
+  sale with a second partner cut. A refusal writes nothing and shows the same
+  form with a sentence beside each field that is wrong and everything already
+  typed kept. Input that is wrong in itself and input the stock disagrees with
+  are answered differently, the same distinction the API makes.
+
+- **Writes from another site are refused by checking where the browser says
+  they came from.** Any page open in the same browser could otherwise submit a
+  form to the running server, and binding it to this machine does not stop that.
+  Every current browser labels each request with its origin in a way a page
+  cannot change, and writes labelled as coming from anywhere else are refused
+  before anything runs, including from another server on the same machine. The
+  alternative, a secret token in every form, needs a secret stored somewhere and
+  belongs with logins and sessions; it is the thing to add when authentication is
+  decided.
+
+- **On the web edit page, an emptied field means cleared.** The terminal treats
+  a blank answer as "keep the current value". A web form opens already filled
+  in, so a field that arrives empty was emptied on purpose, and treating it as
+  "keep" would make it impossible to clear anything from a browser. The rule
+  underneath is the same, notes may be empty; the two interfaces express it
+  differently, and the terminal still cannot clear a note.
+
+- **A page does not invent a default the business does not have.** A sale form
+  starts at one unit and today's date, but with the price left blank, because
+  the terminal has never assumed a price either. The listed price is shown
+  beside the field instead.
+
+- **Deleting is further away than every other action.** It is offered from a
+  product's edit page rather than from each row, the page that offers it is the
+  confirmation, and only its button deletes: a link alone never does, so no
+  browser prefetch or link preview can. A product with sales or returns is told
+  why it cannot be deleted instead of being offered a button that would then be
+  refused.
+
+- **Ids may be reused, until PostgreSQL.** Deleting the newest product frees its
+  id for the next one. The original reasoning for allowing that, that products
+  with history can never be deleted, still holds for the records. The web pages
+  add one case it did not cover: a browser tab left open on a deleted product's
+  form would post to the new product that inherited its id. Rebuilding the table
+  to prevent reuse was judged not worth doing on live data at the end of a phase,
+  because the planned move to PostgreSQL removes the case entirely.
+
+- **The API grows no write endpoints until there is authentication.** The pages
+  need the work separated from the prompts, and it has been. Putting HTTP
+  endpoints on top of it now would add unauthenticated ways to change the
+  records that nothing yet calls.
+
+- **Pinned versions are checked weekly.** Pinning makes a build repeatable and
+  then goes quiet forever. The vulnerability audit answers whether a pinned
+  version is known to be unsafe; a weekly automated check answers whether it has
+  aged, and opens a pull request that the same checks then test. Its pull
+  requests appear on the repository under a bot's name, which was accepted
+  knowingly before it was set up.
+
+- **Money shown to people groups its thousands; money read back does not.** A
+  figure is easier to read as 12,345.67 than as 12345.67, so everything displayed
+  is grouped. The text an edit form holds for typing over is not, because it has
+  to read back as exactly the amount that is stored.
+
