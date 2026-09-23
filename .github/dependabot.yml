@@ -1,0 +1,32 @@
+# Dependabot: tells PSells when a pinned version has aged.
+#
+# Every dependency in requirements.txt and requirements-dev.txt is pinned to an
+# exact version, and so is every action in the workflows. Pins make a build
+# repeatable and say nothing when a newer release fixes a bug or a
+# vulnerability. pip-audit, in security.yml, catches known vulnerabilities; this
+# catches age. Once a week Dependabot checks for newer versions and opens a pull
+# request raising the pin, and the three workflows run against that branch like
+# any other push, so a bump that breaks something arrives already red.
+#
+# Grouped, so a week's updates arrive as one pull request per ecosystem rather
+# than one per package. Its pull requests, and any commit made by merging one,
+# appear on the repository under the name dependabot[bot]; that was decided
+# knowingly at the start of Phase 03b.
+version: 2
+
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      python:
+        patterns: ["*"]
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      actions:
+        patterns: ["*"]
