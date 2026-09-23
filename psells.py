@@ -616,6 +616,43 @@ def create_return(connection, product_id, quantity, return_date, notes):
 
     return cursor.lastrowid
 
+class PaymentError(ValueError):
+    """A payment that cannot be recorded, with a message safe to show."""
+
+
+def create_payment(connection, amount_cents, payment_date, notes):
+    """Record one payment to the partner and return the new payment's id.
+
+    The whole of recording a payment with none of the asking. record_payment is
+    the same operation driven by a keyboard; the web form drives it from a
+    request. A payment belongs to no product: it is money paid to the partner,
+    and the balance owing is the partner share earned on sales minus every
+    payment.
+
+    A payment of zero is accepted. That is deliberate and was confirmed as
+    wanted rather than tolerated; a test on the command line says so. A negative
+    amount is refused. The date is written back zero-padded, as for a sale.
+    """
+    if not _is_whole_number(amount_cents) or amount_cents < 0:
+        raise PaymentError("Amount cannot be negative.")
+
+    try:
+        payment_date = datetime.strptime(payment_date, "%Y-%m-%d").strftime(
+            "%Y-%m-%d")
+    except (ValueError, TypeError):
+        raise PaymentError(
+            f"{payment_date!r} is not a date in YYYY-MM-DD form."
+        )
+
+    with connection:
+        cursor = connection.execute(
+            "INSERT INTO payments (date, amount_cents, notes) "
+            "VALUES (?, ?, ?)",
+            (payment_date, amount_cents, (notes or "").strip())
+        )
+
+    return cursor.lastrowid
+
 PARTNER_SHARE_MODES = ("default", "custom_percent", "custom_amount")
 
 
@@ -1682,12 +1719,7 @@ def record_payment(connection):
 
     notes = ask_optional_text("Notes: ")
 
-    with connection:
-        connection.execute(
-            "INSERT INTO payments (date, amount_cents, notes) "
-            "VALUES (?, ?, ?)",
-            (payment_date, amount_cents, notes)
-        )
+    create_payment(connection, amount_cents, payment_date, notes)
 
     print("Payment recorded.")
 

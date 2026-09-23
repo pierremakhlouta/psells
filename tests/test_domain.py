@@ -1219,6 +1219,59 @@ def test_create_return_for_a_product_that_does_not_exist(db):
         psells.create_return(db, 99, 1, "2026-09-14", "")
 
 
+# The whole of recording a payment with none of the asking.
+
+def payments_stored(db):
+    return [dict(row) for row in db.execute("SELECT * FROM payments ORDER BY id")]
+
+
+def test_create_payment_stores_the_row_and_returns_its_id(db):
+    payment_id = psells.create_payment(db, 15000, "2026-9-14", " e-transfer ")
+
+    assert payments_stored(db) == [{"id": payment_id, "date": "2026-09-14",
+                                    "amount_cents": 15000,
+                                    "notes": "e-transfer"}]
+
+
+def test_a_payment_moves_only_paid_and_the_balance(db):
+    """Balance owing is partner share earned minus paid, and nothing else."""
+    add_product(db, 1, quantity_received=10)
+    add_sale(db, 1, item_id=1, quantity=2, sale_price_cents=9000,
+             partner_share_cents=3500)
+    before = psells.dashboard_totals(db)
+
+    psells.create_payment(db, 5000, "2026-09-14", "")
+    after = psells.dashboard_totals(db)
+
+    assert after["total_paid"] == before["total_paid"] + 5000
+    assert after["balance_owing"] == before["balance_owing"] - 5000
+    for key in before:
+        if key not in ("total_paid", "balance_owing"):
+            assert after[key] == before[key], key
+
+
+def test_a_payment_of_zero_is_accepted(db):
+    """Deliberate, as on the command line."""
+    psells.create_payment(db, 0, "2026-09-14", "")
+
+    assert payments_stored(db)[0]["amount_cents"] == 0
+
+
+@pytest.mark.parametrize("amount, date_text, message", [
+    (-1, "2026-09-14", "Amount cannot be negative."),
+    (12.5, "2026-09-14", "Amount cannot be negative."),
+    (True, "2026-09-14", "Amount cannot be negative."),
+    (100, "2026-13-01", "'2026-13-01' is not a date in YYYY-MM-DD form."),
+])
+def test_create_payment_refuses_with_a_sentence(db, amount, date_text,
+                                                message):
+    with pytest.raises(psells.PaymentError) as refused:
+        psells.create_payment(db, amount, date_text, "")
+
+    assert str(refused.value) == message
+    assert payments_stored(db) == []
+
+
 # Where the data lives --------------------------------------------------------
 
 def test_the_default_paths_sit_beside_psells_not_beside_the_shell(monkeypatch):
