@@ -1044,6 +1044,45 @@ def test_update_product_from_text_for_a_missing_product(db):
         psells.update_product_from_text(db, 99, form_text(listed_price="x"))
 
 
+# A sale from a form's text.
+
+def test_a_sale_is_read_from_text(db, partner_rate):
+    add_product(db, 1, quantity_received=5)
+
+    cut = psells.create_sale_from_text(
+        db, 1, {"quantity": " 2 ", "sale_price": "85.50", "date": "2026-9-3"})
+
+    stored = db.execute("SELECT quantity, sale_price_cents, date, "
+                        "partner_share_cents FROM sales").fetchone()
+
+    assert tuple(stored) == (2, 8550, "2026-09-03", 4000)
+    assert cut == 4000
+
+
+def test_every_sale_field_left_empty_is_reported_at_once(db):
+    """A blank date is not a problem: it means today."""
+    with pytest.raises(psells.SaleInputError) as refused:
+        psells.create_sale_from_text(db, 1, {})
+
+    assert refused.value.problems == {
+        "quantity": "This field is required.",
+        "sale_price": "This field is required.",
+    }
+
+
+def test_a_sale_input_error_is_a_sale_error(db):
+    """So a caller catching SaleError, as the API does, still catches it."""
+    with pytest.raises(psells.SaleError):
+        psells.create_sale_from_text(db, 1, {"quantity": "x"})
+
+
+def test_input_problems_are_found_before_the_product_is_looked_up(db):
+    """No product 99, but the text is wrong: the text is reported."""
+    with pytest.raises(psells.SaleInputError):
+        psells.create_sale_from_text(db, 99, {"quantity": "0",
+                                              "sale_price": "1"})
+
+
 # Formatting money -------------------------------------------------------------
 #
 # format_cents had no test of its own until Phase 03b. It was covered only

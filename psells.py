@@ -988,6 +988,96 @@ def update_product_from_text(connection, product_id, fields):
 
     update_product(connection, product_id, **values)
 
+
+# The fields a sale form sends. As with a product form, every value is text.
+SALE_FORM_FIELDS = ("quantity", "sale_price", "date")
+
+
+class SaleInputError(SaleError):
+    """A sale form whose text is wrong in itself, with a sentence per field.
+
+    A SaleError, so a caller catching SaleError still catches it. Separate from
+    the stock refusals create_sale raises, because the two have different
+    answers: this one means correct what was typed, and a stock refusal means
+    what was typed was fine and the stock disagrees with it.
+    """
+
+    def __init__(self, problems):
+        self.problems = dict(problems)
+        super().__init__(" ".join(self.problems.values()))
+
+
+def read_sale_text(fields):
+    """Turn a sale form's text into create_sale's values.
+
+    Returns (values, problems), as read_product_text does. The date is read the
+    way the command line's ask_date reads it: blank means today, and a date
+    that parses is written back in the zero-padded form the schema requires, so
+    2026-9-3 is stored as 2026-09-03 rather than refused by a constraint.
+    """
+    text = {key: (fields.get(key) or "").strip() for key in SALE_FORM_FIELDS}
+    problems = {}
+
+    quantity = None
+
+    if not text["quantity"]:
+        problems["quantity"] = "This field is required."
+    else:
+        try:
+            quantity = int(text["quantity"])
+        except ValueError:
+            pass
+
+        if quantity is None or quantity < 1:
+            problems["quantity"] = "Quantity must be a whole number, at least 1."
+            quantity = None
+
+    sale_price_cents = None
+
+    if not text["sale_price"]:
+        problems["sale_price"] = "This field is required."
+    else:
+        try:
+            sale_price_cents = parse_money(text["sale_price"])
+        except ValueError:
+            problems["sale_price"] = MONEY_TEXT_PROBLEM
+        else:
+            if sale_price_cents < 0:
+                problems["sale_price"] = "Sale price cannot be negative."
+                sale_price_cents = None
+
+    sale_date = None
+
+    if not text["date"]:
+        sale_date = date.today().isoformat()
+    else:
+        try:
+            sale_date = datetime.strptime(text["date"], "%Y-%m-%d").strftime(
+                "%Y-%m-%d")
+        except ValueError:
+            problems["date"] = "Please enter a valid date in YYYY-MM-DD format."
+
+    values = {"quantity": quantity, "sale_price_cents": sale_price_cents,
+              "sale_date": sale_date}
+
+    return values, problems
+
+
+def create_sale_from_text(connection, product_id, fields):
+    """Record a sale from a form's text and return the partner cut frozen.
+
+    Raises SaleInputError when the text is wrong in itself, and otherwise
+    whatever create_sale raises: ProductNotFound, or SaleError when the stock
+    disagrees with a sale that was well formed.
+    """
+    values, problems = read_sale_text(fields)
+
+    if problems:
+        raise SaleInputError(problems)
+
+    return create_sale(connection, product_id, values["quantity"],
+                       values["sale_price_cents"], values["sale_date"])
+
 def view_dashboard(connection):
     totals = dashboard_totals(connection)
 

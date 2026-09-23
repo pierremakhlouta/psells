@@ -2,21 +2,7 @@
 
 {% block title %}{% if product %}Edit {{ product.name }}{% else %}Add a product{% endif %} · PSells{% endblock %}
 
-{#- One field: its label, its input holding what was typed, and its problem.
-    A macro, so the eight text fields are written once. values and errors are
-    the template's own, so the macro can read them. values holds text exactly
-    as it arrived; errors holds a sentence per field that was refused. -#}
-{% macro field(key, label, hint="", inputmode="", required=false, wide=false) %}
-<div class="field{% if wide %} wide{% endif %}{% if errors[key] %} has-error{% endif %}">
-  <label for="{{ key }}">{{ label }}</label>
-  <input type="text" id="{{ key }}" name="{{ key }}" value="{{ values[key] }}"
-         {%- if inputmode %} inputmode="{{ inputmode }}"{% endif %}
-         {%- if required %} required{% endif %}
-         {%- if errors[key] %} aria-invalid="true" aria-describedby="{{ key }}-error"{% endif %}>
-  {% if hint %}<small>{{ hint }}</small>{% endif %}
-  {% if errors[key] %}<p class="error" id="{{ key }}-error">{{ errors[key] }}</p>{% endif %}
-</div>
-{% endmacro %}
+{% from "macros.html" import field with context %}
 
 {% block content %}
 {% if product %}

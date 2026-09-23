@@ -11,6 +11,9 @@
 {% if edited %}
 <p class="notice" role="status">Saved changes to {{ edited.name }}, id {{ edited.id }}.</p>
 {% endif %}
+{% if sold %}
+<p class="notice" role="status">Recorded a sale of {{ sold.name }}, id {{ sold.id }}.</p>
+{% endif %}
 
 {#- The same nine figures, with the same labels, the command line's dashboard
     prints. totals is the dictionary dashboard_totals returns, unchanged: counts
@@ -74,7 +77,10 @@
       <td class="num">{{ product.listed_price_cents|money }}</td>
       <td class="num">{{ partner_cut|money }}</td>
       <td>{% if product.retail_discontinued %}Discontinued{% endif %}</td>
-      <td><a href="{{ url_for('edit_product_page', product_id=product.id) }}">Edit</a></td>
+      <td class="row-actions">
+        {%- if product.quantity_available > 0 %}<a href="{{ url_for('sell_product_page', product_id=product.id) }}">Sell</a> {% endif -%}
+        <a href="{{ url_for('edit_product_page', product_id=product.id) }}">Edit</a>
+      </td>
     </tr>
     {% else %}
     <tr>

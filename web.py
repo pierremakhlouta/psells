@@ -17,6 +17,7 @@ them appears in the API's generated documentation, because they return HTML
 for a person rather than JSON for a program.
 """
 
+import datetime
 import os
 from typing import Annotated
 
@@ -46,7 +47,7 @@ templates.env.filters["money"] = psells.format_cents
 
 @router.get("/", response_class=HTMLResponse)
 def inventory_page(request: Request, connection: Connection, q: str = "",
-                   added: str = "", edited: str = ""):
+                   added: str = "", edited: str = "", sold: str = ""):
     """Every product in one table, under the dashboard figures.
 
     The screen that replaces the spreadsheet. The nine figures above the table
@@ -60,8 +61,8 @@ def inventory_page(request: Request, connection: Connection, q: str = "",
     and the whole inventory, which is said here rather than left to the fact
     that an empty string is found inside every string.
 
-    added and edited are the id of a product just added or changed, carried
-    here by the redirect after a form. Each is read as text and matched against
+    added, edited and sold are the id of a product just added, changed or
+    sold, carried here by the redirect after a form. Each is read as text and matched against
     the ids that exist, so a typed ?added=abc or an id that does not exist
     shows nothing rather than an error or a false message.
 
@@ -99,6 +100,7 @@ def inventory_page(request: Request, connection: Connection, q: str = "",
             "q": term,
             "added": named(added),
             "edited": named(edited),
+            "sold": named(sold),
         },
     )
 
@@ -247,5 +249,90 @@ def edit_product_submit(request: Request, connection: Connection,
     return RedirectResponse(
         request.url_for("inventory_page").include_query_params(
             edited=product_id),
+        status_code=303,
+    )
+
+
+# Recording a sale ------------------------------------------------------------
+
+class SaleForm(BaseModel):
+    """The sale form's fields: text, optional, for the reasons ProductForm
+    gives. The date is text too, even from a date picker, and is read by
+    read_sale_text as the command line reads it."""
+
+    quantity: str = ""
+    sale_price: str = ""
+    date: str = ""
+
+
+def sale_form(request, product, values, problems, status_code=200):
+    """The sale form for one product, with the partner cut it would freeze.
+
+    The cut is partner_share_for, the same call create_sale makes when the sale
+    is recorded, so the figure on the page is the figure that will be frozen.
+    """
+    return templates.TemplateResponse(
+        request,
+        "sale_form.html",
+        {
+            "product": product,
+            "partner_cut": psells.partner_share_for(product),
+            "values": values,
+            "errors": problems,
+        },
+        status_code=status_code,
+    )
+
+
+@router.get("/products/{product_id:int}/sell", response_class=HTMLResponse)
+def sell_product_page(request: Request, connection: Connection,
+                      product_id: int):
+    """The sale form, starting at one unit, dated today, price blank.
+
+    The price is left blank on purpose: the command line has no default price,
+    so the page does not invent one. The listed price is shown beside it.
+    """
+    product = find_product(connection, product_id)
+
+    if product is None:
+        return not_found(request, product_id)
+
+    values = {"quantity": "1", "sale_price": "",
+              "date": datetime.date.today().isoformat()}
+
+    return sale_form(request, product, values, {})
+
+
+@router.post("/products/{product_id:int}/sell", response_class=HTMLResponse)
+def sell_product_submit(request: Request, connection: Connection,
+                        product_id: int, form: Annotated[SaleForm, Form()]):
+    """Record the sale, or show the form again saying why not.
+
+    422 when what was typed is wrong in itself, 409 when it was fine and the
+    stock disagrees, the same split the API makes. Success redirects with 303,
+    which matters most here: a sale repeated by a refresh is a second sale,
+    with a second partner cut frozen onto it.
+    """
+    product = find_product(connection, product_id)
+
+    if product is None:
+        return not_found(request, product_id)
+
+    fields = form.model_dump()
+
+    try:
+        psells.create_sale_from_text(connection, product_id, fields)
+    except psells.SaleInputError as refused:
+        return sale_form(request, product, fields, refused.problems,
+                         status_code=422)
+    except psells.ProductNotFound:
+        return not_found(request, product_id)
+    except psells.SaleError as refused:
+        return sale_form(request, product, fields,
+                         {"quantity": str(refused)}, status_code=409)
+
+    return RedirectResponse(
+        request.url_for("inventory_page").include_query_params(
+            sold=product_id),
         status_code=303,
     )

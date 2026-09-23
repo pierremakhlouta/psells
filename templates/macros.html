@@ -1,0 +1,17 @@
+{#- One field: its label, its input holding what was typed, and its problem.
+    Shared by every form. Imported "with context", which is what lets it read
+    the importing template's values and errors. Imported without it, both are
+    undefined, and the first errors[key] raises UndefinedError: every form page
+    becomes a 500. Checked, not assumed. values holds text exactly
+    as it arrived; errors holds a sentence per field that was refused. -#}
+{% macro field(key, label, hint="", inputmode="", required=false, wide=false, type="text") %}
+<div class="field{% if wide %} wide{% endif %}{% if errors[key] %} has-error{% endif %}">
+  <label for="{{ key }}">{{ label }}</label>
+  <input type="{{ type }}" id="{{ key }}" name="{{ key }}" value="{{ values[key] }}"
+         {%- if inputmode %} inputmode="{{ inputmode }}"{% endif %}
+         {%- if required %} required{% endif %}
+         {%- if errors[key] %} aria-invalid="true" aria-describedby="{{ key }}-error"{% endif %}>
+  {% if hint %}<small>{{ hint }}</small>{% endif %}
+  {% if errors[key] %}<p class="error" id="{{ key }}-error">{{ errors[key] }}</p>{% endif %}
+</div>
+{% endmacro %}

@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+
+{% block title %}Sell {{ product.name }} · PSells{% endblock %}
+
+{% from "macros.html" import field with context %}
+
+{% block content %}
+<h1>Record a sale</h1>
+
+{#- What is being sold, and the partner cut per unit that recording it will
+    freeze onto the sale. Every figure arrives worked out: available from
+    products_view, the cut from partner_share_for. -#}
+<section class="dashboard" aria-label="Product">
+  <dl>
+    <div><dt>Product</dt><dd>{{ product.name }}, id {{ product.id }}</dd></div>
+    <div><dt>Available</dt><dd class="num">{{ product.quantity_available }}</dd></div>
+    <div><dt>Listed price</dt><dd class="num">{{ product.listed_price_cents|money }}</dd></div>
+    <div><dt>Partner cut per unit</dt><dd class="num">{{ partner_cut|money }}</dd></div>
+  </dl>
+</section>
+
+{% if product.quantity_available > 0 %}
+
+{% if errors %}
+<p class="form-error" role="alert">The sale was not recorded. Fix the fields marked below.</p>
+{% endif %}
+
+{#- The partner cut shown above is the one frozen when this is submitted.
+    Changing the product's partner share later does not change this sale. -#}
+<form class="product-form" action="{{ url_for('sell_product_submit', product_id=product.id) }}" method="post">
+  {{ field("quantity", "Quantity sold", inputmode="numeric", required=true) }}
+  {{ field("sale_price", "Sale price per unit ($)", hint="Listed at " ~ product.listed_price_cents|money ~ ".", inputmode="decimal", required=true) }}
+  {{ field("date", "Date", hint="Today unless you change it.", type="date") }}
+
+  <div class="actions">
+    <button type="submit">Record sale</button>
+    <a href="{{ url_for('inventory_page') }}">Cancel</a>
+  </div>
+</form>
+
+{% else %}
+<p class="form-error">No stock available to sell.</p>
+{% endif %}
+{% endblock %}

@@ -12,6 +12,7 @@ markup in the browser.
 """
 
 import os
+from datetime import date
 
 import pytest
 from jinja2 import nodes
@@ -51,7 +52,7 @@ def test_a_product_is_one_row_with_every_column(client, db):
 
     assert rows == [[
         "1", "Jordan 1 Chicago", "Shoes", "Brand New",
-        "10", "$90.00", "$40.00", "", "Edit",
+        "10", "$90.00", "$40.00", "", "Sell Edit",
     ]]
 
 
@@ -465,7 +466,7 @@ def test_every_row_links_to_its_edit_page(client, db):
     page = client.get("/").text
 
     assert 'href="http://testserver/products/7/edit"' in page
-    assert table_rows(page)[0][ACTIONS] == "Edit"
+    assert table_rows(page)[0][ACTIONS] == "Sell Edit"
 
 
 def test_the_edit_form_opens_filled_with_the_product(client, db):
@@ -616,6 +617,196 @@ def test_an_edit_from_another_site_is_refused(client, db):
 
     assert response.status_code == 403
     assert stored(db)["name"] == "Keep me"
+
+
+# Recording a sale ------------------------------------------------------------
+
+def sale_form_of(client, product_id=1):
+    page = client.get(f"/products/{product_id}/sell").text
+    posts = [form for form in forms(page) if form["method"] == "post"]
+
+    return page, (posts[0] if posts else None)
+
+
+def submit_sale_form(client, product_id=1, follow_redirects=False,
+                     headers=None, **typed):
+    _, form = sale_form_of(client, product_id)
+    data = form_data(form)
+    data.update(typed)
+
+    return client.post(form["action"], data=data, headers=headers or {},
+                       follow_redirects=follow_redirects)
+
+
+def sales_stored(db):
+    return [dict(row) for row in db.execute("SELECT * FROM sales ORDER BY id")]
+
+
+def test_only_a_product_with_stock_offers_sell(client, db):
+    add_product(db, 1, quantity_received=2)
+    add_product(db, 2, quantity_received=2)
+    add_sale(db, 1, item_id=2, quantity=2)
+
+    rows = {row[ID]: row for row in table_rows(client.get("/").text)}
+
+    assert rows["1"][ACTIONS] == "Sell Edit"
+    assert rows["2"][ACTIONS] == "Edit"
+
+
+def test_the_sale_form_offers_the_fields_the_reader_reads(client, db):
+    add_product(db, 1, quantity_received=5)
+
+    _, form = sale_form_of(client)
+
+    assert form["action"].endswith("/products/1/sell")
+    assert {f["name"] for f in form["inputs"]} == set(psells.SALE_FORM_FIELDS)
+    assert set(web.SaleForm.model_fields) == set(psells.SALE_FORM_FIELDS)
+    assert form_data(form) == {"quantity": "1", "sale_price": "",
+                               "date": date.today().isoformat()}
+    assert field(form, "date")["type"] == "date"
+
+
+def test_the_sale_form_shows_the_cut_the_api_serves(client, db):
+    """The figure on the page is the one that will be frozen onto the sale."""
+    add_product(db, 1, quantity_received=5, partner_share_mode="custom_percent",
+                partner_share_percent=12.5, retail_price_cents=10003)
+
+    page, _ = sale_form_of(client)
+    served = client.get("/products").json()[0]
+
+    assert figures(page)["Partner cut per unit"] == psells.format_cents(
+        served["partner_share_cents"])
+    assert figures(page)["Available"] == str(served["quantity_available"])
+
+
+def test_a_sale_answers_303_and_is_stored_with_its_frozen_cut(client, db):
+    add_product(db, 1, quantity_received=5)
+
+    response = submit_sale_form(client, quantity="2", sale_price="85.50",
+                                date="2026-09-20")
+
+    assert response.status_code == 303
+    assert response.headers["location"].endswith("/?sold=1")
+    assert sales_stored(db) == [{
+        "id": 1, "date": "2026-09-20", "item_id": 1, "quantity": 2,
+        "sale_price_cents": 8550, "partner_share_cents": 4000,
+    }]
+
+
+def test_after_a_sale_the_stock_and_the_dashboard_move(client, db):
+    add_product(db, 1, quantity_received=5, name="Jordan 1 Chicago")
+
+    page = submit_sale_form(client, follow_redirects=True, quantity="2",
+                            sale_price="90.00").text
+
+    assert "Recorded a sale of Jordan 1 Chicago, id 1." in page
+    assert table_rows(page)[0][AVAILABLE] == "3"
+    assert figures(page)["Total revenue"] == "$180.00"
+
+
+def test_the_form_records_what_the_api_would(client, db):
+    """The same sale by both front doors, the same row apart from the id."""
+    add_product(db, 1, quantity_received=5)
+
+    submit_sale_form(client, quantity="2", sale_price="85.50",
+                     date="2026-09-20")
+    client.post("/sales", json={"item_id": 1, "quantity": 2,
+                                "sale_price_cents": 8550,
+                                "date": "2026-09-20"})
+
+    first, second = sales_stored(db)
+    first.pop("id")
+    second.pop("id")
+
+    assert first == second
+
+
+def test_a_blank_date_means_today(client, db):
+    add_product(db, 1, quantity_received=5)
+
+    submit_sale_form(client, sale_price="90.00", date="")
+
+    assert sales_stored(db)[0]["date"] == date.today().isoformat()
+
+
+def test_a_date_without_leading_zeros_is_stored_padded(client, db):
+    """The schema accepts only 2026-09-03; the command line writes that form
+    from whatever parsed, and so does the page."""
+    add_product(db, 1, quantity_received=5)
+
+    response = submit_sale_form(client, sale_price="90.00", date="2026-9-3")
+
+    assert response.status_code == 303
+    assert sales_stored(db)[0]["date"] == "2026-09-03"
+
+
+@pytest.mark.parametrize("typed, field_name", [
+    ({"sale_price": ""}, "sale_price"),
+    ({"sale_price": "9O"}, "sale_price"),
+    ({"sale_price": "-1.00"}, "sale_price"),
+    ({"sale_price": "90", "quantity": "0"}, "quantity"),
+    ({"sale_price": "90", "quantity": "two"}, "quantity"),
+    ({"sale_price": "90", "date": "2026-02-30"}, "date"),
+])
+def test_input_wrong_in_itself_is_a_422(client, db, typed, field_name):
+    add_product(db, 1, quantity_received=5)
+
+    response = submit_sale_form(client, **typed)
+
+    assert response.status_code == 422
+    assert sales_stored(db) == []
+    assert field(forms(response.text)[-1], field_name)["aria-invalid"] == "true"
+
+
+def test_selling_more_than_is_available_is_a_409(client, db):
+    """Well formed, and the stock disagrees: create_sale's own sentence,
+    beside the quantity, with what was typed kept."""
+    add_product(db, 1, quantity_received=3)
+
+    response = submit_sale_form(client, quantity="5", sale_price="90.00")
+    form = forms(response.text)[-1]
+
+    assert response.status_code == 409
+    assert sales_stored(db) == []
+    assert "Only 3 available, so 5 cannot be sold." in response.text
+    assert form_data(form)["quantity"] == "5"
+    assert form_data(form)["sale_price"] == "90.00"
+
+
+def test_a_sold_out_product_has_no_form_and_refuses_a_post(client, db):
+    add_product(db, 1, quantity_received=1)
+    add_sale(db, 1, item_id=1, quantity=1)
+
+    page, form = sale_form_of(client)
+
+    assert form is None
+    assert "No stock available to sell." in page
+
+    response = client.post("/products/1/sell",
+                           data={"quantity": "1", "sale_price": "90"})
+
+    assert response.status_code == 409
+    assert len(sales_stored(db)) == 1
+
+
+def test_selling_a_product_that_does_not_exist_is_a_404(client, db):
+    for method in ("get", "post"):
+        response = getattr(client, method)("/products/99/sell")
+
+        assert response.status_code == 404
+        assert "No product 99" in response.text
+
+    assert client.get("/products/abc/sell").status_code == 404
+
+
+def test_a_sale_from_another_site_is_refused(client, db):
+    add_product(db, 1, quantity_received=5)
+
+    response = submit_sale_form(client, sale_price="90.00",
+                                headers={"Origin": "https://evil.example"})
+
+    assert response.status_code == 403
+    assert sales_stored(db) == []
 
 
 # The dashboard panel ---------------------------------------------------------
@@ -830,6 +1021,8 @@ def test_there_are_templates_to_check():
     assert "base.html" in names
     assert "inventory.html" in names
     assert "product_form.html" in names
+    assert "sale_form.html" in names
+    assert "macros.html" in names
 
 
 def test_no_template_does_arithmetic():
