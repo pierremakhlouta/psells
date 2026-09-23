@@ -2,8 +2,10 @@
 
 [![Tests](https://github.com/pierremakhlouta/psells/actions/workflows/tests.yml/badge.svg)](https://github.com/pierremakhlouta/psells/actions/workflows/tests.yml)
 [![Security](https://github.com/pierremakhlouta/psells/actions/workflows/security.yml/badge.svg)](https://github.com/pierremakhlouta/psells/actions/workflows/security.yml)
+[![Lint](https://github.com/pierremakhlouta/psells/actions/workflows/lint.yml/badge.svg)](https://github.com/pierremakhlouta/psells/actions/workflows/lint.yml)
 
-A command-line inventory and profit tracker for my reselling business.
+An inventory and profit tracker for my reselling business, used from a browser
+or from the terminal.
 
 PSells replaces the spreadsheet that used to run the business. It tracks the
 products held, the sales made, stock returned to the supplying partner, and the
@@ -13,6 +15,7 @@ payouts made to that partner, and computes a live dashboard from all four.
 
 - Full inventory management: view, browse by category, search, add, edit, delete
 - Records sales, returns to the partner, and partner payouts
+- Does all of it from a browser, in server-rendered pages, or from the terminal
 - Works out each item's partner cut from a rule set per item
 - Computes stock levels, revenue, profit, and the balance owing to the partner
 - Refuses to delete a product that has sales or returns against it
@@ -26,12 +29,13 @@ for why it is built this way.
 ## Requirements
 
 Python 3, and the `sqlite3` command line tool, which ships with macOS and most
-Linux distributions. The application itself uses only the standard library, so
+Linux distributions. The terminal application uses only the standard library, so
 there is nothing to install in order to run it.
 
-The HTTP API needs FastAPI and uvicorn. Development also needs pytest, httpx2
-for the API tests, and openpyxl for `import_excel.py`, the one-time script that
-read the original spreadsheet:
+The web pages and the HTTP API run in one process and need FastAPI, uvicorn,
+Jinja2 for the templates, and python-multipart to read form posts. Development
+also needs pytest, httpx2 for the test client, and openpyxl for
+`import_excel.py`, the one-time script that read the original spreadsheet:
 
     pip install -r requirements.txt        # to run
     pip install -r requirements-dev.txt    # to work on it
@@ -77,34 +81,65 @@ The real data is not in this repository. Everything under `data/` is gitignored,
 because this tracks a real business and its prices, margins and commercial terms
 do not belong in a public repository.
 
-To see the application working, build a database from the schema and load the
-invented sample records into it:
+To see the application working, build a separate database from the schema, load
+the invented sample records into it, and point the application at it and at the
+sample configuration. From the project folder:
 
-    mkdir -p data
-    cp sample_data/config.json data/
-    sqlite3 data/psells.db < schema.sql
-    sqlite3 data/psells.db < sample_data/seed.sql
-    python3 psells.py
+    sqlite3 /tmp/psells-sample.db < schema.sql
+    sqlite3 /tmp/psells-sample.db < sample_data/seed.sql
 
-The configuration file has to be copied across as well, because the application
-needs it in order to start and will say so plainly rather than failing partway
-through a task. The percentage in `sample_data/config.json` is a placeholder, not
-the real figure.
+    PSELLS_DB=/tmp/psells-sample.db PSELLS_CONFIG=sample_data/config.json python3 psells.py
+    PSELLS_DB=/tmp/psells-sample.db PSELLS_CONFIG=sample_data/config.json uvicorn api:app
+
+Both variables are set on the command itself rather than exported, so the next
+command in the same terminal goes back to the real data. Do not copy the sample
+files into `data/` on a machine that has real data there: the sample
+configuration would replace the real partner percentage and the database would
+be built where the real one lives. The percentage in `sample_data/config.json`
+is a placeholder, not the real figure.
 
 The sample set is small and invented, but it covers the cases worth seeing: all
 three partner-share modes, a product discontinued at retail, one that has sold
 out, a return, and two partner payments.
 
-## The HTTP API
-
-`api.py` serves the same data over HTTP. It is a second way in, not a second
-application: every figure it returns comes from the functions the command line
-uses, and it works nothing out for itself.
+## The web interface
 
     uvicorn api:app --reload
 
-Then open `http://127.0.0.1:8000/docs`, which is generated from the code and
-lists every endpoint with its fields and types.
+Then open `http://127.0.0.1:8000/`. One process serves the pages and the API.
+
+- **Inventory**, the home page: the nine dashboard figures above a table of
+  every product with its stock, listed price, partner cut and retail status, and
+  a search box that matches name or category.
+- **Add** and **Edit** a product. The edit form opens filled in; a field emptied
+  there is cleared, unlike the command line, where Enter keeps the current value.
+- **Sell**, **Return** and **Edit** from each row with stock, **Record payment**
+  from the navigation, and **Delete** from a product's edit page.
+
+The pages are a view, not a second implementation, and three rules keep them
+one. A page route calls the same `psells` functions the command line calls and
+does no arithmetic on money, stock or partner share. Wherever a page shows a
+figure the API also serves, a test asserts the two agree. And templates format
+and never compute, which a test enforces by parsing every template and failing
+on any arithmetic or any filter other than the one that formats money.
+
+Every form answers a successful save with a 303 redirect, so refreshing the page
+afterwards cannot repeat it. A refusal shows the form again with a sentence
+beside each field that is wrong and everything already typed kept: 422 when what
+was typed is wrong in itself, 409 when it was fine and the stock disagrees.
+
+Any write that a browser labels as coming from another site is refused with a
+403 before any route runs, including one sent from another server on the same
+machine. See [DECISIONS.md](DECISIONS.md) for why this checks the browser's
+labels rather than using a token.
+
+## The HTTP API
+
+`api.py` serves the same data over HTTP. It is another way in, not another
+application: every figure it returns comes from the functions the command line
+uses, and it works nothing out for itself. It is served by the same uvicorn
+process as the pages; open `http://127.0.0.1:8000/docs`, which is generated from
+the code and lists every endpoint with its fields and types.
 
     GET  /products    every product, with stock and the partner cut per unit
     GET  /dashboard   the nine dashboard figures
@@ -150,13 +185,15 @@ the machine is reliably awake matters more than the exact hour.
     pip install -r requirements-dev.txt
     pytest
 
-Three files, and the split is deliberate, so a red run says what kind of thing
+Five files, and the split is deliberate, so a red run says what kind of thing
 broke before you read a line of it.
 
-`test_domain.py` covers the calculations that have no input or output:
+`test_domain.py` covers everything in `psells.py` that has no input or output:
 partner-share in all three modes including its rounding, search, the dashboard
-totals, the derived stock quantities, the rule that a product with history
-cannot be deleted, and `create_sale`.
+totals, the derived stock quantities, money formatting, and every write with its
+rules (`create_product`, `update_product`, `create_sale`, `create_return`,
+`create_payment`, `delete_product`) and the readers that turn a form's text into
+their values.
 
 `test_features.py` covers the ten menu functions end to end. They prompt and
 print, so input is faked with pytest's `monkeypatch` and output is read back
@@ -167,26 +204,49 @@ asks one more, the queue runs dry and the test fails rather than hanging.
 `test_api.py` drives the HTTP endpoints through FastAPI's test client, with the
 connection dependency pointed at the same in-memory database.
 
+`test_web.py` drives the pages the same way, reading each page with small
+parsers built on the standard library, so an assertion names a cell in a row
+or a field in a form rather than finding a string somewhere on the page. Its
+tests submit through the forms the pages actually serve, and compare what the
+pages show with what the API serves.
+
+`test_cross_site.py` covers the refusal of writes from another site.
+
 No test needs a data file. They build databases in memory from `schema.sql`
 itself, so a constraint added to the schema is exercised by the existing tests
 automatically. Everything runs on every push through GitHub Actions, alongside a
 dependency vulnerability audit and a shellcheck pass over the shell scripts.
+Dependabot checks every pinned version weekly and opens a pull request when one
+has a newer release.
 
 ## Known limitations
 
 Worth stating plainly rather than leaving to be discovered.
 
-- **The API has no authentication.** Anyone who can reach the port can read
-  every figure and record a sale. It listens on `127.0.0.1` only, which is the
-  whole of the protection at the moment, so do not put it on `0.0.0.0`.
-- **The API can read and sell, and nothing else.** Adding, editing, deleting,
-  returns and payments are still command line only.
+- **There is no authentication.** Anyone who can reach the port can read every
+  figure and change every record, through the pages or the API. The server
+  listens on `127.0.0.1` only, which is the whole of the protection at the
+  moment, so do not put it on `0.0.0.0`.
+- **The protection against cross-site writes relies on the browser's labels.**
+  Every current browser sends them, and a page cannot change them, but a token
+  in every form would not depend on them. That is the thing to add alongside
+  authentication.
+- **The API can read and sell, and nothing else.** Every other write is in the
+  web pages and the command line. Write endpoints wait until authentication is
+  decided, rather than adding unauthenticated ways to change the records that
+  nothing yet calls.
+- **An id can be reused.** Deleting the newest product frees its id for the next
+  one added. Products with sales or returns cannot be deleted, so no history is
+  ever misattributed, but a browser tab left open on the deleted product's edit
+  or sell form would post to the new product that inherited its id. This goes
+  away with the move to PostgreSQL, whose ids are never reused.
 - **Two rules live in the application rather than the database.** Available stock
   never going negative, and an intake quantity never being edited below what has
   already sold and returned, both span more than one table. SQLite does not allow
   a subquery inside a `CHECK` constraint, so neither can be expressed as one.
-- **Notes cannot be cleared once set.** In edit mode a blank answer means keep
-  the current value, so there is no way to blank a note that already has text.
+- **Notes cannot be cleared from the command line.** In its edit, a blank answer
+  means keep the current value, so a note that has text cannot be blanked there.
+  The web edit page can clear it.
 - **One prompt in edit does not accept a blank answer.** Every field takes Enter
   to keep the current value, except the question asking whether to change the
   partner share, which requires an explicit yes or no.
@@ -201,8 +261,9 @@ Worth stating plainly rather than leaving to be discovered.
 ## Where this is going
 
 PSells is built one layer at a time as a long-running project rather than a
-finished product. The terminal application is the working core, storing its data
-in SQLite behind a schema that enforces the business rules, covered by an
-automated test suite that runs on every push, and backed up on a schedule.
-Planned on top of it are a web API, a small web interface, containers, and cloud
-deployment, carrying the same data model and business rules through each step.
+finished product. It stores its data in SQLite behind a schema that enforces the
+business rules, is used through server-rendered web pages, a terminal
+application and an HTTP API that all call the same functions, is covered by an
+automated test suite that runs on every push, and is backed up on a schedule.
+Planned next are containers and PostgreSQL, then cloud deployment, carrying the
+same data model and business rules through each step.
