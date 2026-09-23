@@ -47,7 +47,8 @@ templates.env.filters["money"] = psells.format_cents
 
 @router.get("/", response_class=HTMLResponse)
 def inventory_page(request: Request, connection: Connection, q: str = "",
-                   added: str = "", edited: str = "", sold: str = ""):
+                   added: str = "", edited: str = "", sold: str = "",
+                   returned: str = ""):
     """Every product in one table, under the dashboard figures.
 
     The screen that replaces the spreadsheet. The nine figures above the table
@@ -61,8 +62,8 @@ def inventory_page(request: Request, connection: Connection, q: str = "",
     and the whole inventory, which is said here rather than left to the fact
     that an empty string is found inside every string.
 
-    added, edited and sold are the id of a product just added, changed or
-    sold, carried here by the redirect after a form. Each is read as text and matched against
+    added, edited, sold and returned are the id of a product just added,
+    changed, sold or returned, carried here by the redirect after a form. Each is read as text and matched against
     the ids that exist, so a typed ?added=abc or an id that does not exist
     shows nothing rather than an error or a false message.
 
@@ -101,6 +102,7 @@ def inventory_page(request: Request, connection: Connection, q: str = "",
             "added": named(added),
             "edited": named(edited),
             "sold": named(sold),
+            "returned": named(returned),
         },
     )
 
@@ -334,5 +336,73 @@ def sell_product_submit(request: Request, connection: Connection,
     return RedirectResponse(
         request.url_for("inventory_page").include_query_params(
             sold=product_id),
+        status_code=303,
+    )
+
+
+# Recording a return ----------------------------------------------------------
+
+class ReturnForm(BaseModel):
+    """The return form's fields, text and optional, as for a sale."""
+
+    quantity: str = ""
+    date: str = ""
+    notes: str = ""
+
+
+def return_form(request, product, values, problems, status_code=200):
+    return templates.TemplateResponse(
+        request,
+        "return_form.html",
+        {"product": product, "values": values, "errors": problems},
+        status_code=status_code,
+    )
+
+
+@router.get("/products/{product_id:int}/return", response_class=HTMLResponse)
+def return_product_page(request: Request, connection: Connection,
+                        product_id: int):
+    """The return form, starting at one unit, dated today, no notes."""
+    product = find_product(connection, product_id)
+
+    if product is None:
+        return not_found(request, product_id)
+
+    values = {"quantity": "1", "date": datetime.date.today().isoformat(),
+              "notes": ""}
+
+    return return_form(request, product, values, {})
+
+
+@router.post("/products/{product_id:int}/return", response_class=HTMLResponse)
+def return_product_submit(request: Request, connection: Connection,
+                          product_id: int,
+                          form: Annotated[ReturnForm, Form()]):
+    """Record the return, or show the form again saying why not.
+
+    422 for text wrong in itself, 409 when the stock disagrees, 303 on success,
+    as for a sale.
+    """
+    product = find_product(connection, product_id)
+
+    if product is None:
+        return not_found(request, product_id)
+
+    fields = form.model_dump()
+
+    try:
+        psells.create_return_from_text(connection, product_id, fields)
+    except psells.ReturnInputError as refused:
+        return return_form(request, product, fields, refused.problems,
+                           status_code=422)
+    except psells.ProductNotFound:
+        return not_found(request, product_id)
+    except psells.ReturnError as refused:
+        return return_form(request, product, fields,
+                           {"quantity": str(refused)}, status_code=409)
+
+    return RedirectResponse(
+        request.url_for("inventory_page").include_query_params(
+            returned=product_id),
         status_code=303,
     )

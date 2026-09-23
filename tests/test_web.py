@@ -52,7 +52,7 @@ def test_a_product_is_one_row_with_every_column(client, db):
 
     assert rows == [[
         "1", "Jordan 1 Chicago", "Shoes", "Brand New",
-        "10", "$90.00", "$40.00", "", "Sell Edit",
+        "10", "$90.00", "$40.00", "", "Sell Return Edit",
     ]]
 
 
@@ -466,7 +466,7 @@ def test_every_row_links_to_its_edit_page(client, db):
     page = client.get("/").text
 
     assert 'href="http://testserver/products/7/edit"' in page
-    assert table_rows(page)[0][ACTIONS] == "Sell Edit"
+    assert table_rows(page)[0][ACTIONS] == "Sell Return Edit"
 
 
 def test_the_edit_form_opens_filled_with_the_product(client, db):
@@ -649,7 +649,7 @@ def test_only_a_product_with_stock_offers_sell(client, db):
 
     rows = {row[ID]: row for row in table_rows(client.get("/").text)}
 
-    assert rows["1"][ACTIONS] == "Sell Edit"
+    assert rows["1"][ACTIONS] == "Sell Return Edit"
     assert rows["2"][ACTIONS] == "Edit"
 
 
@@ -807,6 +807,129 @@ def test_a_sale_from_another_site_is_refused(client, db):
 
     assert response.status_code == 403
     assert sales_stored(db) == []
+
+
+# Recording a return ----------------------------------------------------------
+
+def return_form_of(client, product_id=1):
+    page = client.get(f"/products/{product_id}/return").text
+    posts = [form for form in forms(page) if form["method"] == "post"]
+
+    return page, (posts[0] if posts else None)
+
+
+def submit_return_form(client, product_id=1, follow_redirects=False,
+                       headers=None, **typed):
+    _, form = return_form_of(client, product_id)
+    data = form_data(form)
+    data.update(typed)
+
+    return client.post(form["action"], data=data, headers=headers or {},
+                       follow_redirects=follow_redirects)
+
+
+def returns_stored(db):
+    return [dict(row) for row in db.execute("SELECT * FROM returns ORDER BY id")]
+
+
+def test_the_return_form_offers_the_fields_the_reader_reads(client, db):
+    add_product(db, 1, quantity_received=5)
+
+    _, form = return_form_of(client)
+
+    assert form["action"].endswith("/products/1/return")
+    assert {f["name"] for f in form["inputs"]} == set(psells.RETURN_FORM_FIELDS)
+    assert set(web.ReturnForm.model_fields) == set(psells.RETURN_FORM_FIELDS)
+    assert form_data(form) == {"quantity": "1",
+                               "date": date.today().isoformat(), "notes": ""}
+
+
+def test_a_return_answers_303_and_is_stored(client, db):
+    add_product(db, 1, quantity_received=5, name="Jordan 1 Chicago")
+
+    response = submit_return_form(client, quantity="2", date="2026-9-3",
+                                  notes="damaged box")
+
+    assert response.status_code == 303
+    assert response.headers["location"].endswith("/?returned=1")
+    assert returns_stored(db) == [{"id": 1, "date": "2026-09-03", "item_id": 1,
+                                   "quantity": 2, "notes": "damaged box"}]
+    assert "Recorded a return of Jordan 1 Chicago, id 1." in client.get(
+        response.headers["location"]).text
+
+
+def test_a_return_moves_stock_and_no_money(client, db):
+    add_product(db, 1, quantity_received=5)
+    add_sale(db, 1, item_id=1, quantity=1, sale_price_cents=9000,
+             partner_share_cents=3500)
+    before = figures(client.get("/").text)
+
+    page = submit_return_form(client, follow_redirects=True, quantity="2").text
+    after = figures(page)
+
+    assert table_rows(page)[0][AVAILABLE] == "2"
+    assert after["Total returned"] == "2"
+    assert after["Total available"] == "2"
+    for label in ("Total revenue", "Total profit", "Total partner share earned",
+                  "Total paid", "Balance owing", "Total received",
+                  "Total sold"):
+        assert after[label] == before[label], label
+
+
+@pytest.mark.parametrize("typed, field_name", [
+    ({"quantity": ""}, "quantity"),
+    ({"quantity": "0"}, "quantity"),
+    ({"quantity": "1.5"}, "quantity"),
+    ({"date": "2026-02-30"}, "date"),
+])
+def test_return_input_wrong_in_itself_is_a_422(client, db, typed, field_name):
+    add_product(db, 1, quantity_received=5)
+
+    response = submit_return_form(client, **typed)
+
+    assert response.status_code == 422
+    assert returns_stored(db) == []
+    assert field(forms(response.text)[-1], field_name)["aria-invalid"] == "true"
+
+
+def test_returning_more_than_is_available_is_a_409(client, db):
+    add_product(db, 1, quantity_received=3)
+
+    response = submit_return_form(client, quantity="5", notes="kept")
+
+    assert response.status_code == 409
+    assert returns_stored(db) == []
+    assert "Only 3 available, so 5 cannot be returned." in response.text
+    assert form_data(forms(response.text)[-1])["notes"] == "kept"
+
+
+def test_a_product_with_no_stock_has_no_return_form(client, db):
+    add_product(db, 1, quantity_received=1)
+    add_sale(db, 1, item_id=1, quantity=1)
+
+    page, form = return_form_of(client)
+
+    assert form is None
+    assert "No stock available to return." in page
+    assert client.post("/products/1/return",
+                       data={"quantity": "1"}).status_code == 409
+
+
+def test_returning_a_product_that_does_not_exist_is_a_404(client, db):
+    for method in ("get", "post"):
+        assert getattr(client, method)("/products/99/return").status_code == 404
+
+    assert client.get("/products/abc/return").status_code == 404
+
+
+def test_a_return_from_another_site_is_refused(client, db):
+    add_product(db, 1, quantity_received=5)
+
+    response = submit_return_form(client,
+                                  headers={"Origin": "https://evil.example"})
+
+    assert response.status_code == 403
+    assert returns_stored(db) == []
 
 
 # The dashboard panel ---------------------------------------------------------
@@ -1022,6 +1145,7 @@ def test_there_are_templates_to_check():
     assert "inventory.html" in names
     assert "product_form.html" in names
     assert "sale_form.html" in names
+    assert "return_form.html" in names
     assert "macros.html" in names
 
 

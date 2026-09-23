@@ -1074,6 +1074,39 @@ class SaleInputError(SaleError):
         super().__init__(" ".join(self.problems.values()))
 
 
+def _read_quantity_text(text, problems):
+    """A quantity of whole units from a form, or None with a sentence added."""
+    if not text:
+        problems["quantity"] = "This field is required."
+        return None
+
+    try:
+        quantity = int(text)
+    except ValueError:
+        quantity = None
+
+    if quantity is None or quantity < 1:
+        problems["quantity"] = "Quantity must be a whole number, at least 1."
+        return None
+
+    return quantity
+
+
+def _read_date_text(text, problems):
+    """A date from a form, read the way the command line's ask_date reads it.
+
+    Blank means today. A date that parses is written back zero-padded, the only
+    form the schema accepts. Otherwise None, with a sentence added.
+    """
+    if not text:
+        return date.today().isoformat()
+
+    try:
+        return datetime.strptime(text, "%Y-%m-%d").strftime("%Y-%m-%d")
+    except ValueError:
+        problems["date"] = "Please enter a valid date in YYYY-MM-DD format."
+        return None
+
 def read_sale_text(fields):
     """Turn a sale form's text into create_sale's values.
 
@@ -1085,19 +1118,7 @@ def read_sale_text(fields):
     text = {key: (fields.get(key) or "").strip() for key in SALE_FORM_FIELDS}
     problems = {}
 
-    quantity = None
-
-    if not text["quantity"]:
-        problems["quantity"] = "This field is required."
-    else:
-        try:
-            quantity = int(text["quantity"])
-        except ValueError:
-            pass
-
-        if quantity is None or quantity < 1:
-            problems["quantity"] = "Quantity must be a whole number, at least 1."
-            quantity = None
+    quantity = _read_quantity_text(text["quantity"], problems)
 
     sale_price_cents = None
 
@@ -1113,16 +1134,7 @@ def read_sale_text(fields):
                 problems["sale_price"] = "Sale price cannot be negative."
                 sale_price_cents = None
 
-    sale_date = None
-
-    if not text["date"]:
-        sale_date = date.today().isoformat()
-    else:
-        try:
-            sale_date = datetime.strptime(text["date"], "%Y-%m-%d").strftime(
-                "%Y-%m-%d")
-        except ValueError:
-            problems["date"] = "Please enter a valid date in YYYY-MM-DD format."
+    sale_date = _read_date_text(text["date"], problems)
 
     values = {"quantity": quantity, "sale_price_cents": sale_price_cents,
               "sale_date": sale_date}
@@ -1144,6 +1156,43 @@ def create_sale_from_text(connection, product_id, fields):
 
     return create_sale(connection, product_id, values["quantity"],
                        values["sale_price_cents"], values["sale_date"])
+
+
+# The fields a return form sends.
+RETURN_FORM_FIELDS = ("quantity", "date", "notes")
+
+
+class ReturnInputError(ReturnError):
+    """A return form whose text is wrong in itself, with a sentence per field.
+
+    A ReturnError, as SaleInputError is a SaleError, and separate from the
+    stock refusals for the same reason: correct what was typed, rather than the
+    stock disagreeing with what was typed.
+    """
+
+    def __init__(self, problems):
+        self.problems = dict(problems)
+        super().__init__(" ".join(self.problems.values()))
+
+
+def create_return_from_text(connection, product_id, fields):
+    """Record a return from a form's text and return the new return's id.
+
+    Quantity and date are read exactly as a sale form's are. Notes are free
+    text and may be empty. Raises ReturnInputError when the text is wrong in
+    itself, and otherwise whatever create_return raises.
+    """
+    text = {key: (fields.get(key) or "").strip() for key in RETURN_FORM_FIELDS}
+    problems = {}
+
+    quantity = _read_quantity_text(text["quantity"], problems)
+    return_date = _read_date_text(text["date"], problems)
+
+    if problems:
+        raise ReturnInputError(problems)
+
+    return create_return(connection, product_id, quantity, return_date,
+                         text["notes"])
 
 def view_dashboard(connection):
     totals = dashboard_totals(connection)

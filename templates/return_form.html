@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+
+{% block title %}Return {{ product.name }} · PSells{% endblock %}
+
+{% from "macros.html" import field with context %}
+
+{% block content %}
+<h1>Record a return</h1>
+<p class="lead">Unsold stock sent back to the partner. It leaves the units
+  available and changes no money figure: revenue, profit and the partner's
+  balance come from sales and payments.</p>
+
+<section class="dashboard" aria-label="Product">
+  <dl>
+    <div><dt>Product</dt><dd>{{ product.name }}, id {{ product.id }}</dd></div>
+    <div><dt>Available</dt><dd class="num">{{ product.quantity_available }}</dd></div>
+    <div><dt>Sold</dt><dd class="num">{{ product.quantity_sold }}</dd></div>
+    <div><dt>Returned so far</dt><dd class="num">{{ product.quantity_returned }}</dd></div>
+  </dl>
+</section>
+
+{% if product.quantity_available > 0 %}
+
+{% if errors %}
+<p class="form-error" role="alert">The return was not recorded. Fix the fields marked below.</p>
+{% endif %}
+
+<form class="product-form" action="{{ url_for('return_product_submit', product_id=product.id) }}" method="post">
+  {{ field("quantity", "Quantity returned", inputmode="numeric", required=true) }}
+  {{ field("date", "Date", hint="Today unless you change it.", type="date") }}
+  {{ field("notes", "Notes", wide=true) }}
+
+  <div class="actions">
+    <button type="submit">Record return</button>
+    <a href="{{ url_for('inventory_page') }}">Cancel</a>
+  </div>
+</form>
+
+{% else %}
+<p class="form-error">No stock available to return.</p>
+{% endif %}
+{% endblock %}
