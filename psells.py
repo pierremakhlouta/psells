@@ -527,8 +527,13 @@ def create_sale(connection, product_id, quantity, sale_price_cents, sale_date):
     # The schema refuses an impossible date too, but a constraint failure is
     # not a sentence anybody can act on, and the API would surface it as a
     # server error rather than as bad input.
+    #
+    # strptime is looser than the schema: it reads 2026-9-3, which the schema's
+    # date check refuses. So the date is written back zero-padded, as ask_date
+    # does, rather than passed through as it arrived.
     try:
-        datetime.strptime(sale_date, "%Y-%m-%d")
+        sale_date = datetime.strptime(sale_date, "%Y-%m-%d").strftime(
+            "%Y-%m-%d")
     except (ValueError, TypeError):
         raise SaleError(f"{sale_date!r} is not a date in YYYY-MM-DD form.")
 

@@ -468,6 +468,18 @@ def test_create_sale_refuses_a_date_that_does_not_exist(db, partner_rate):
     assert sale_count(db) == 0
 
 
+def test_create_sale_stores_a_date_in_the_form_the_schema_requires(
+        db, partner_rate):
+    """strptime reads 2026-9-3, and the schema's date check accepts only
+    2026-09-03. Refusing it with a constraint error would be wrong: it is a
+    real date. It is written back zero-padded, as ask_date does."""
+    add_product(db, 1, quantity_received=5)
+
+    psells.create_sale(db, 1, 1, 9000, "2026-9-3")
+
+    assert db.execute("SELECT date FROM sales").fetchone()[0] == "2026-09-03"
+
+
 def test_create_sale_freezes_the_cut_at_the_moment_of_sale(db, partner_rate,
                                                            monkeypatch):
     add_product(db, 1, quantity_received=10)
