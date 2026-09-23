@@ -739,6 +739,74 @@ def create_product(connection, category, name, quantity_received,
     return cursor.lastrowid
 
 
+def update_product(connection, product_id, category, name, quantity_received,
+                   retail_discontinued, retail_price_cents, listed_price_cents,
+                   condition, notes, partner_share_mode, partner_share_percent,
+                   partner_share_amount_cents):
+    """Replace every field of one product with the values given.
+
+    The whole of editing a product with none of the asking. edit is the same
+    operation driven by a keyboard; the web edit form drives it from a request.
+    Every value is given, not only the ones that changed: the command line's
+    keep-current convention is how edit fills in the ones left alone, and a form
+    arrives with every field anyway.
+
+    The rules are create_product's, through the same _every_product_problem,
+    plus one that only exists once a product has history: the units received
+    cannot fall below the units already sold plus returned, which have both left
+    the original intake. Every problem is raised at once in one ProductError.
+
+    Sales are never touched. Each one froze its own partner cut when it
+    happened, so changing a product's partner share here changes what later
+    sales will take and nothing that has already been sold.
+
+    Raises ProductNotFound for an id that does not exist, the same exception
+    create_sale raises for one, because it is the same fact about the world.
+    """
+    product = connection.execute(
+        "SELECT * FROM products_view WHERE id = ?",
+        (product_id,)
+    ).fetchone()
+
+    if product is None:
+        raise ProductNotFound(f"No product with id {product_id}.")
+
+    problems = _every_product_problem(
+        category, name, quantity_received, retail_discontinued,
+        retail_price_cents, listed_price_cents, condition,
+        partner_share_mode, partner_share_percent, partner_share_amount_cents,
+    )
+
+    gone = product["quantity_sold"] + product["quantity_returned"]
+
+    if ("quantity_received" not in problems
+            and _is_whole_number(quantity_received)
+            and quantity_received < gone):
+        problems["quantity_received"] = (
+            f"Quantity received cannot be less than {gone}, the units already "
+            f"sold or returned."
+        )
+
+    if problems:
+        raise ProductError(problems)
+
+    with connection:
+        connection.execute(
+            "UPDATE products SET "
+            "category = ?, name = ?, quantity_received = ?, "
+            "retail_price_cents = ?, listed_price_cents = ?, "
+            "retail_discontinued = ?, partner_share_mode = ?, "
+            "partner_share_percent = ?, partner_share_amount_cents = ?, "
+            "condition = ?, notes = ? "
+            "WHERE id = ?",
+            (category.strip(), name.strip(), quantity_received,
+             retail_price_cents, listed_price_cents,
+             1 if retail_discontinued else 0,
+             partner_share_mode, partner_share_percent,
+             partner_share_amount_cents, condition.strip(),
+             (notes or "").strip(), product_id)
+        )
+
 # The fields a product form sends, by the names it sends them under. Every value
 # arrives as text, and a field the person left empty arrives as "".
 PRODUCT_FORM_FIELDS = (
@@ -1154,20 +1222,11 @@ def edit(connection):
         if change == "yes":
             mode, percent, amount_cents = ask_partner_share(retail_discontinued)
 
-    with connection:
-        connection.execute(
-            "UPDATE products SET "
-            "category = ?, name = ?, quantity_received = ?, "
-            "retail_price_cents = ?, listed_price_cents = ?, "
-            "retail_discontinued = ?, partner_share_mode = ?, "
-            "partner_share_percent = ?, partner_share_amount_cents = ?, "
-            "condition = ?, notes = ? "
-            "WHERE id = ?",
-            (category, name, quantity_received, retail_price_cents,
-             listed_price_cents, 1 if retail_discontinued else 0,
-             mode, percent, amount_cents, condition, notes,
-             product["id"])
-        )
+    update_product(
+        connection, product["id"], category, name, quantity_received,
+        retail_discontinued, retail_price_cents, listed_price_cents,
+        condition, notes, mode, percent, amount_cents,
+    )
 
     print("Product updated successfully.")
 

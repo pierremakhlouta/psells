@@ -708,6 +708,153 @@ def test_a_field_that_could_not_be_read_is_required(db):
     }) == {}
 
 
+# The whole of editing a product with none of the asking. Every field is
+# given; the rules are create_product's plus the intake floor.
+
+def stored_product(db, product_id=1):
+    return dict(db.execute(
+        "SELECT * FROM products WHERE id = ?", (product_id,)
+    ).fetchone())
+
+
+def edit_refusal(db, product_id=1, **overrides):
+    """The problems update_product raises, having checked nothing changed."""
+    before = stored_product(db, product_id)
+
+    with pytest.raises(psells.ProductError) as refused:
+        psells.update_product(db, product_id, **new_product(**overrides))
+
+    assert stored_product(db, product_id) == before
+
+    return refused.value.problems
+
+
+def test_update_product_replaces_every_field(db):
+    add_product(db, 1, quantity_received=5, name="Old name", notes="old")
+
+    psells.update_product(db, 1, **new_product(
+        category="Hats", name="New name", quantity_received=8,
+        retail_price_cents=5000, listed_price_cents=4500, condition="Used",
+        notes="new", partner_share_mode="custom_percent",
+        partner_share_percent=30.0,
+    ))
+
+    assert stored_product(db) == {
+        "id": 1, "category": "Hats", "name": "New name",
+        "quantity_received": 8, "retail_price_cents": 5000,
+        "listed_price_cents": 4500, "retail_discontinued": 0,
+        "partner_share_mode": "custom_percent", "partner_share_percent": 30.0,
+        "partner_share_amount_cents": None, "condition": "Used",
+        "notes": "new",
+    }
+
+
+def test_update_product_leaves_other_products_alone(db):
+    add_product(db, 1, quantity_received=5)
+    add_product(db, 2, quantity_received=5, name="Untouched")
+    before = stored_product(db, 2)
+
+    psells.update_product(db, 1, **new_product(name="Changed"))
+
+    assert stored_product(db, 2) == before
+
+
+def test_notes_can_be_cleared(db):
+    """Blank means cleared, which is what a form showing the notes means.
+    The command line's edit still cannot do this: open issue I8."""
+    add_product(db, 1, quantity_received=5, notes="boxed")
+
+    psells.update_product(db, 1, **new_product(notes=""))
+
+    assert stored_product(db)["notes"] == ""
+
+
+def test_update_product_is_held_to_the_same_rules_as_create(db):
+    add_product(db, 1, quantity_received=5)
+
+    problems = edit_refusal(db, name="", listed_price_cents=-1,
+                            partner_share_mode="bogus")
+
+    assert set(problems) == {"name", "listed_price", "partner_share_mode"}
+
+
+def test_the_intake_cannot_fall_below_what_has_already_gone(db):
+    """Four sold and one returned: five units have left the intake."""
+    add_product(db, 1, quantity_received=10)
+    add_sale(db, 1, item_id=1, quantity=4)
+    add_return(db, 1, item_id=1, quantity=1)
+
+    assert edit_refusal(db, quantity_received=4) == {
+        "quantity_received": "Quantity received cannot be less than 5, the "
+                             "units already sold or returned.",
+    }
+
+    psells.update_product(db, 1, **new_product(quantity_received=5))
+
+    assert stored_product(db)["quantity_received"] == 5
+
+
+def test_the_intake_floor_is_still_one_when_nothing_has_gone(db):
+    add_product(db, 1, quantity_received=10)
+
+    assert set(edit_refusal(db, quantity_received=0)) == {"quantity_received"}
+
+
+def test_going_discontinued_needs_a_fixed_amount(db):
+    add_product(db, 1, quantity_received=5)
+
+    assert set(edit_refusal(db, retail_discontinued=True,
+                            retail_price_cents=0)) == {"partner_share_mode"}
+
+    psells.update_product(db, 1, **new_product(
+        retail_discontinued=True, retail_price_cents=0,
+        partner_share_mode="custom_amount", partner_share_amount_cents=700,
+    ))
+
+    assert stored_product(db)["retail_discontinued"] == 1
+
+
+def test_coming_back_to_retail_needs_a_retail_price(db):
+    add_product(db, 1, quantity_received=5, retail_price_cents=0,
+                retail_discontinued=1, partner_share_mode="custom_amount",
+                partner_share_amount_cents=700)
+
+    assert set(edit_refusal(db, retail_price_cents=0)) == {"retail_price"}
+
+
+def test_an_edit_never_rewrites_a_sale(db):
+    """The cut frozen onto a sale stays, and so does every dashboard figure
+    built from sales, whatever the product's partner share becomes."""
+    add_product(db, 1, quantity_received=5)
+    add_sale(db, 1, item_id=1, quantity=2, sale_price_cents=9000,
+             partner_share_cents=3500)
+    sale_before = dict(db.execute("SELECT * FROM sales").fetchone())
+    totals_before = psells.dashboard_totals(db)
+
+    psells.update_product(db, 1, **new_product(
+        quantity_received=5, partner_share_mode="custom_amount",
+        partner_share_amount_cents=100, listed_price_cents=1,
+    ))
+
+    assert dict(db.execute("SELECT * FROM sales").fetchone()) == sale_before
+    assert psells.dashboard_totals(db) == totals_before
+
+
+def test_editing_a_product_that_does_not_exist(db):
+    with pytest.raises(psells.ProductNotFound):
+        psells.update_product(db, 99, **new_product())
+
+
+def test_update_product_strips_the_text_it_stores(db):
+    add_product(db, 1, quantity_received=5)
+
+    psells.update_product(db, 1, **new_product(name="  Spaced  ",
+                                                notes=" n "))
+
+    assert stored_product(db)["name"] == "Spaced"
+    assert stored_product(db)["notes"] == "n"
+
+
 # A product from a form's text. Everything arrives as a string, and a field
 # left empty arrives as "". These test the reading; the rules themselves are
 # create_product's, tested above.
