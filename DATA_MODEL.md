@@ -113,6 +113,16 @@ bookkeeping, it does not match the behaviour the application had before, and the
 risk it protects against is largely removed by refusing to delete any product that
 has transactions. This is a decision rather than an inherited default.
 
+**Id reuse since the web pages.** That reasoning covers the records: nothing with
+history is ever deleted, so no sale or return can end up attached to a reused id.
+It does not cover a browser tab. A tab left open on a deleted product's edit or
+sell form posts to that id, which may by then belong to the product added after
+the delete. The terminal cannot do this, because it selects a product and acts on
+it at once. Left as it is, deliberately: the move to PostgreSQL, whose sequences
+never reuse a value, removes the case, and rebuilding this table on live data to
+remove it sooner was judged not worth the risk. The README lists it as a known
+limitation.
+
 ### retail_discontinued
 
 **This describes the retail market, not PSells inventory.** A product marked
