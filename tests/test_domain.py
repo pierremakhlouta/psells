@@ -1,11 +1,12 @@
 import os
-import sqlite3
+from datetime import date
 
+import psycopg
 import pytest
 
 import psells
 
-from helpers import add_product, add_return, add_sale, stock
+from helpers import add_payment, add_product, add_return, add_sale, stock
 
 
 def test_view_counts_down_from_sales(db):
@@ -191,6 +192,20 @@ def test_category_counts_is_alphabetical(db):
     ]
 
 
+def test_category_counts_sorts_by_character_code_as_sqlite_did(db):
+    """Capitals before lowercase, and a hyphen before a letter, whatever the
+    server's locale. Decided at the move to PostgreSQL: its default follows
+    the server's locale, which in the postgres image is English and would put
+    "apples" first and file "T-Shirts" as if the hyphen were not there."""
+    for i, category in enumerate(["apples", "Tops", "T-Shirts", "Bags"],
+                                 start=1):
+        add_product(db, i, quantity_received=1, category=category)
+
+    assert [r["category"] for r in psells.category_counts(db)] == [
+        "Bags", "T-Shirts", "Tops", "apples"
+    ]
+
+
 def test_partner_share_default_mode(monkeypatch):
     monkeypatch.setattr(psells, "default_partner_share_percent", lambda: 40.0)
 
@@ -279,16 +294,24 @@ def test_a_product_with_sales_cannot_be_deleted(db):
     add_product(db, 1, quantity_received=5)
     add_sale(db, 1, item_id=1, quantity=1)
 
-    with pytest.raises(sqlite3.IntegrityError):
-        db.execute("DELETE FROM products WHERE id = 1")
+    # IntegrityError, the parent: PostgreSQL 18 raises RestrictViolation here
+    # and 16 raised ForeignKeyViolation. The savepoint keeps the test's own
+    # transaction usable after the refusal.
+    with pytest.raises(psycopg.errors.IntegrityError):
+        with db.transaction():
+            db.execute("DELETE FROM products WHERE id = 1")
 
 
 def test_a_product_with_returns_cannot_be_deleted(db):
     add_product(db, 1, quantity_received=5)
     add_return(db, 1, item_id=1, quantity=1)
 
-    with pytest.raises(sqlite3.IntegrityError):
-        db.execute("DELETE FROM products WHERE id = 1")
+    # IntegrityError, the parent: PostgreSQL 18 raises RestrictViolation here
+    # and 16 raised ForeignKeyViolation. The savepoint keeps the test's own
+    # transaction usable after the refusal.
+    with pytest.raises(psycopg.errors.IntegrityError):
+        with db.transaction():
+            db.execute("DELETE FROM products WHERE id = 1")
 
 
 def test_a_product_with_no_transactions_can_be_deleted(db):
@@ -301,7 +324,7 @@ def test_a_product_with_no_transactions_can_be_deleted(db):
 
     db.execute("DELETE FROM products WHERE id = 1")
 
-    assert db.execute("SELECT COUNT(*) FROM products").fetchone()[0] == 0
+    assert db.execute("SELECT COUNT(*) AS n FROM products").fetchone()["n"] == 0
 
 
 @pytest.fixture
@@ -333,8 +356,8 @@ def totals(db):
 
     add_return(db, 1, item_id=1, quantity=1)
 
-    db.execute("INSERT INTO payments VALUES (1, '2026-09-01', 10000, '')")
-    db.execute("INSERT INTO payments VALUES (2, '2026-09-02', 5000, '')")
+    add_payment(db, 1, 10000)
+    add_payment(db, 2, 5000)
 
     return psells.dashboard_totals(db)
 
@@ -391,7 +414,7 @@ def test_dashboard_on_an_empty_database(db):
 # first, and those are exactly the ones worth having.
 
 def sale_count(connection):
-    return connection.execute("SELECT COUNT(*) FROM sales").fetchone()[0]
+    return connection.execute("SELECT COUNT(*) AS n FROM sales").fetchone()["n"]
 
 
 def test_create_sale_stores_the_row_and_returns_the_cut(db, partner_rate):
@@ -406,7 +429,7 @@ def test_create_sale_stores_the_row_and_returns_the_cut(db, partner_rate):
     assert sale["quantity"] == 2
     assert sale["sale_price_cents"] == 8999
     assert sale["partner_share_cents"] == 4000
-    assert sale["date"] == "2026-09-14"
+    assert sale["date"] == date(2026, 9, 14)
     assert stock(db, 1)["quantity_available"] == 8
 
 
@@ -468,16 +491,19 @@ def test_create_sale_refuses_a_date_that_does_not_exist(db, partner_rate):
     assert sale_count(db) == 0
 
 
-def test_create_sale_stores_a_date_in_the_form_the_schema_requires(
+def test_create_sale_stores_a_date_written_without_leading_zeros(
         db, partner_rate):
-    """strptime reads 2026-9-3, and the schema's date check accepts only
-    2026-09-03. Refusing it with a constraint error would be wrong: it is a
-    real date. It is written back zero-padded, as ask_date does."""
+    """strptime reads 2026-9-3, and it is a real date, so it is stored as that
+    day. Under SQLite the schema checked text and accepted only 2026-09-03,
+    which is why create_sale writes the date back zero-padded; the DATE column
+    stores a day rather than characters, and this holds either way."""
     add_product(db, 1, quantity_received=5)
 
     psells.create_sale(db, 1, 1, 9000, "2026-9-3")
 
-    assert db.execute("SELECT date FROM sales").fetchone()[0] == "2026-09-03"
+    stored = db.execute("SELECT date FROM sales").fetchone()["date"]
+
+    assert stored == date(2026, 9, 3)
 
 
 def test_create_sale_freezes_the_cut_at_the_moment_of_sale(db, partner_rate,
@@ -489,7 +515,7 @@ def test_create_sale_freezes_the_cut_at_the_moment_of_sale(db, partner_rate,
     monkeypatch.setattr(psells, "default_partner_share_percent", lambda: 10.0)
 
     assert psells.create_sale(db, 1, 1, 8999, "2026-09-15") == 1000
-    # A row is a sqlite3.Row, not a tuple, so read the column out of each.
+    # A row is a dict, not a tuple, so read the column out of each.
     stored = [
         row["partner_share_cents"]
         for row in db.execute(
@@ -529,7 +555,7 @@ def refusal(db, **overrides):
     with pytest.raises(psells.ProductError) as refused:
         psells.create_product(db, **new_product(**overrides))
 
-    assert db.execute("SELECT COUNT(*) FROM products").fetchone()[0] == 0
+    assert db.execute("SELECT COUNT(*) AS n FROM products").fetchone()["n"] == 0
 
     return refused.value.problems
 
@@ -538,7 +564,7 @@ def test_create_product_stores_every_field_and_returns_the_id(db):
     product_id = psells.create_product(db, **new_product())
 
     stored = dict(db.execute(
-        "SELECT * FROM products WHERE id = ?", (product_id,)
+        "SELECT * FROM products WHERE id = %s", (product_id,)
     ).fetchone())
 
     assert stored == {
@@ -557,7 +583,7 @@ def test_create_product_stores_every_field_and_returns_the_id(db):
     }
 
 
-def test_create_product_lets_sqlite_choose_the_id(db):
+def test_create_product_lets_the_database_choose_the_id(db):
     first = psells.create_product(db, **new_product())
     second = psells.create_product(db, **new_product(name="Jordan 4 Bred"))
 
@@ -571,11 +597,11 @@ def test_create_product_strips_the_text_it_stores(db):
     ))
 
     stored = db.execute(
-        "SELECT category, name, condition, notes FROM products WHERE id = ?",
+        "SELECT category, name, condition, notes FROM products WHERE id = %s",
         (product_id,)
     ).fetchone()
 
-    assert tuple(stored) == ("Shoes", "Jordan 1", "Used", "boxed")
+    assert tuple(stored.values()) == ("Shoes", "Jordan 1", "Used", "boxed")
 
 
 def test_create_product_stores_a_custom_percentage(db):
@@ -585,10 +611,10 @@ def test_create_product_stores_a_custom_percentage(db):
 
     stored = db.execute(
         "SELECT partner_share_percent, partner_share_amount_cents "
-        "FROM products WHERE id = ?", (product_id,)
+        "FROM products WHERE id = %s", (product_id,)
     ).fetchone()
 
-    assert tuple(stored) == (35.5, None)
+    assert tuple(stored.values()) == (35.5, None)
 
 
 def test_create_product_stores_a_discontinued_product(db):
@@ -600,10 +626,10 @@ def test_create_product_stores_a_discontinued_product(db):
     stored = db.execute(
         "SELECT retail_discontinued, retail_price_cents, "
         "partner_share_mode, partner_share_amount_cents "
-        "FROM products WHERE id = ?", (product_id,)
+        "FROM products WHERE id = %s", (product_id,)
     ).fetchone()
 
-    assert tuple(stored) == (1, 0, "custom_amount", 1250)
+    assert tuple(stored.values()) == (1, 0, "custom_amount", 1250)
 
 
 def test_create_product_reports_every_problem_at_once(db):
@@ -725,7 +751,7 @@ def test_a_field_that_could_not_be_read_is_required(db):
 
 def stored_product(db, product_id=1):
     return dict(db.execute(
-        "SELECT * FROM products WHERE id = ?", (product_id,)
+        "SELECT * FROM products WHERE id = %s", (product_id,)
     ).fetchone())
 
 
@@ -895,7 +921,7 @@ def text_refusal(db, **overrides):
     with pytest.raises(psells.ProductError) as refused:
         psells.create_product_from_text(db, form_text(**overrides))
 
-    assert db.execute("SELECT COUNT(*) FROM products").fetchone()[0] == 0
+    assert db.execute("SELECT COUNT(*) AS n FROM products").fetchone()["n"] == 0
 
     return refused.value.problems
 
@@ -905,10 +931,10 @@ def test_a_product_is_read_from_text_and_stored_in_cents(db):
 
     stored = db.execute(
         "SELECT quantity_received, retail_price_cents, listed_price_cents "
-        "FROM products WHERE id = ?", (product_id,)
+        "FROM products WHERE id = %s", (product_id,)
     ).fetchone()
 
-    assert tuple(stored) == (10, 10000, 9000)
+    assert tuple(stored.values()) == (10, 10000, 9000)
 
 
 def test_every_field_left_empty_is_reported_at_once(db):
@@ -970,10 +996,10 @@ def test_a_discontinued_product_ignores_the_retail_price_typed(db):
 
     stored = db.execute(
         "SELECT retail_discontinued, retail_price_cents, "
-        "partner_share_amount_cents FROM products WHERE id = ?", (product_id,)
+        "partner_share_amount_cents FROM products WHERE id = %s", (product_id,)
     ).fetchone()
 
-    assert tuple(stored) == (1, 0, 1250)
+    assert tuple(stored.values()) == (1, 0, 1250)
 
 
 def test_a_value_for_a_mode_not_chosen_is_ignored(db):
@@ -983,10 +1009,10 @@ def test_a_value_for_a_mode_not_chosen_is_ignored(db):
 
     stored = db.execute(
         "SELECT partner_share_percent, partner_share_amount_cents "
-        "FROM products WHERE id = ?", (product_id,)
+        "FROM products WHERE id = %s", (product_id,)
     ).fetchone()
 
-    assert tuple(stored) == (None, None)
+    assert tuple(stored.values()) == (None, None)
 
 
 def test_the_chosen_modes_value_is_required(db):
@@ -1067,7 +1093,7 @@ def test_a_sale_is_read_from_text(db, partner_rate):
     stored = db.execute("SELECT quantity, sale_price_cents, date, "
                         "partner_share_cents FROM sales").fetchone()
 
-    assert tuple(stored) == (2, 8550, "2026-09-03", 4000)
+    assert tuple(stored.values()) == (2, 8550, date(2026, 9, 3), 4000)
     assert cut == 4000
 
 
@@ -1162,7 +1188,7 @@ def test_create_return_stores_the_row_and_returns_its_id(db):
 
     return_id = psells.create_return(db, 1, 2, "2026-09-14", " damaged box ")
 
-    assert returns_stored(db) == [{"id": return_id, "date": "2026-09-14",
+    assert returns_stored(db) == [{"id": return_id, "date": date(2026, 9, 14),
                                    "item_id": 1, "quantity": 2,
                                    "notes": "damaged box"}]
 
@@ -1174,8 +1200,8 @@ def test_create_return_reduces_stock_and_leaves_the_intake(db):
 
     psells.create_return(db, 1, 2, "2026-09-14", "")
 
-    assert tuple(stock(db, 1)) == (3, 2, 5)
-    assert db.execute("SELECT quantity_received FROM products").fetchone()[0] == 10
+    assert tuple(stock(db, 1).values()) == (3, 2, 5)
+    assert db.execute("SELECT quantity_received FROM products").fetchone()["quantity_received"] == 10
 
 
 def test_create_return_moves_only_the_stock_figures(db):
@@ -1199,7 +1225,7 @@ def test_create_return_stores_the_date_zero_padded(db):
 
     psells.create_return(db, 1, 1, "2026-9-3", "")
 
-    assert returns_stored(db)[0]["date"] == "2026-09-03"
+    assert returns_stored(db)[0]["date"] == date(2026, 9, 3)
 
 
 @pytest.mark.parametrize("quantity, date_text, message", [
@@ -1243,7 +1269,7 @@ def payments_stored(db):
 def test_create_payment_stores_the_row_and_returns_its_id(db):
     payment_id = psells.create_payment(db, 15000, "2026-9-14", " e-transfer ")
 
-    assert payments_stored(db) == [{"id": payment_id, "date": "2026-09-14",
+    assert payments_stored(db) == [{"id": payment_id, "date": date(2026, 9, 14),
                                     "amount_cents": 15000,
                                     "notes": "e-transfer"}]
 
@@ -1309,7 +1335,7 @@ def test_all_payments_are_listed_oldest_first(db):
 # Deleting a product with none of the asking.
 
 def products_left(db):
-    return [row[0] for row in db.execute("SELECT id FROM products ORDER BY id")]
+    return [row["id"] for row in db.execute("SELECT id FROM products ORDER BY id")]
 
 
 def test_a_product_with_no_history_has_no_blocker_and_is_deleted(db):
@@ -1321,6 +1347,20 @@ def test_a_product_with_no_history_has_no_blocker_and_is_deleted(db):
     psells.delete_product(db, 1)
 
     assert products_left(db) == [2]
+
+
+def test_a_deleted_products_id_is_never_given_to_the_next_one(db):
+    """The id-reuse limitation recorded in Phase 03b, closed by the move to
+    PostgreSQL. Under SQLite, deleting the newest product freed its id, and a
+    browser tab left open on its edit form would post to whichever product was
+    added next. A sequence never hands out the same id twice."""
+    deleted = psells.create_product(db, **new_product(name="Added by mistake"))
+    psells.delete_product(db, deleted)
+
+    added_next = psells.create_product(db, **new_product(name="Added next"))
+
+    assert added_next != deleted
+    assert added_next > deleted
 
 
 @pytest.mark.parametrize("sales, returns, sentence", [
@@ -1356,17 +1396,17 @@ def test_when_the_database_still_refuses_it_is_a_sentence(db):
     about: here, a table added for the test. The database refuses, and that
     arrives as DeleteRefused, not as an IntegrityError.
 
-    The setup is committed first. A refused write inside `with connection:`
-    rolls back everything uncommitted on the connection, and the helpers do
-    not commit, so without this the refusal would also remove the product the
-    test just inserted. The application commits every write it makes, so this
-    matches the state it is really in.
+    Nothing is committed. Under SQLite it had to be: a refused write inside
+    `with connection:` rolled back everything uncommitted, the product this
+    test had just inserted included. The application's write is now a
+    connection.transaction() block, which on the test's connection is a
+    savepoint, so the refusal undoes only the delete it refused. A commit here
+    would leave the product and the table behind for every test after it.
     """
     add_product(db, 1, quantity_received=5)
     db.execute("CREATE TABLE notes_elsewhere (item_id INTEGER NOT NULL "
                "REFERENCES products(id) ON DELETE RESTRICT)")
     db.execute("INSERT INTO notes_elsewhere VALUES (1)")
-    db.commit()
 
     assert psells.deletion_blocker(db, 1) is None
 
@@ -1381,30 +1421,30 @@ def test_when_the_database_still_refuses_it_is_a_sentence(db):
 
 def test_the_default_paths_sit_beside_psells_not_beside_the_shell(monkeypatch):
     """An absolute path under the project, whatever directory anybody is in."""
-    monkeypatch.delenv("PSELLS_DB", raising=False)
+    monkeypatch.delenv("PSELLS_CONFIG", raising=False)
 
-    path = psells.path_from_environment("PSELLS_DB", "data", "psells.db")
+    path = psells.path_from_environment("PSELLS_CONFIG", "data", "config.json")
 
     assert os.path.isabs(path)
-    assert path == os.path.join(psells.PROJECT_DIR, "data", "psells.db")
+    assert path == os.path.join(psells.PROJECT_DIR, "data", "config.json")
 
 
 def test_the_environment_overrides_the_default(monkeypatch):
-    monkeypatch.setenv("PSELLS_DB", "/tmp/somewhere-else.db")
+    monkeypatch.setenv("PSELLS_CONFIG", "/config/config.json")
 
     assert psells.path_from_environment(
-        "PSELLS_DB", "data", "psells.db"
-    ) == "/tmp/somewhere-else.db"
+        "PSELLS_CONFIG", "data", "config.json"
+    ) == "/config/config.json"
 
 
 def test_an_empty_variable_counts_as_unset(monkeypatch):
-    """PSELLS_DB= means use the default, not open the file named "".
+    """PSELLS_CONFIG= means use the default, not open the file named "".
 
     Exporting a variable as empty is a normal way to say "never mind", and
     os.environ.get would otherwise hand back the empty string as a real answer.
     """
-    monkeypatch.setenv("PSELLS_DB", "")
+    monkeypatch.setenv("PSELLS_CONFIG", "")
 
     assert psells.path_from_environment(
-        "PSELLS_DB", "data", "psells.db"
-    ) == os.path.join(psells.PROJECT_DIR, "data", "psells.db")
+        "PSELLS_CONFIG", "data", "config.json"
+    ) == os.path.join(psells.PROJECT_DIR, "data", "config.json")

@@ -241,18 +241,20 @@ def record_sale(new_sale: NewSale, connection: Connection):
     except psells.SaleError as error:
         raise HTTPException(status_code=409, detail=str(error))
 
-    # last_insert_rowid is per connection, and this request has its own, so it
-    # cannot pick up a row inserted by anybody else.
+    # lastval() is the id the sales sequence last handed to this connection,
+    # and this request has its own connection, so it cannot pick up a row
+    # inserted by anybody else. create_sale's insert is the last thing on this
+    # connection to draw from any sequence.
     stored = connection.execute(
-        "SELECT * FROM sales WHERE id = last_insert_rowid()"
+        "SELECT * FROM sales WHERE id = lastval()"
     ).fetchone()
 
     return Sale(
         **dict(stored),
         quantity_available=connection.execute(
-            "SELECT quantity_available FROM products_view WHERE id = ?",
+            "SELECT quantity_available FROM products_view WHERE id = %s",
             (new_sale.item_id,)
-        ).fetchone()[0],
+        ).fetchone()["quantity_available"],
     )
 
 

@@ -34,47 +34,47 @@ GOOD_PRODUCT = {
 }
 
 
-def insert_product(pg, **changes):
+def insert_product(db, **changes):
     row = GOOD_PRODUCT | changes
     columns = ", ".join(row)
     placeholders = ", ".join(["%s"] * len(row))
-    return pg.execute(
+    return db.execute(
         f"INSERT INTO products ({columns}) VALUES ({placeholders}) RETURNING id",
         list(row.values()),
     ).fetchone()["id"]
 
 
-def insert_sale(pg, item_id, quantity=1, date="2026-05-14",
+def insert_sale(db, item_id, quantity=1, date="2026-05-14",
                 sale_price_cents=15000, partner_share_cents=6000):
-    return pg.execute(
+    return db.execute(
         "INSERT INTO sales (date, item_id, quantity, sale_price_cents, "
         "partner_share_cents) VALUES (%s, %s, %s, %s, %s) RETURNING id",
         (date, item_id, quantity, sale_price_cents, partner_share_cents),
     ).fetchone()["id"]
 
 
-def insert_return(pg, item_id, quantity=1, date="2026-06-30"):
-    return pg.execute(
+def insert_return(db, item_id, quantity=1, date="2026-06-30"):
+    return db.execute(
         "INSERT INTO returns (date, item_id, quantity, notes) "
         "VALUES (%s, %s, %s, '') RETURNING id",
         (date, item_id, quantity),
     ).fetchone()["id"]
 
 
-def refused(pg, statement, parameters=()):
+def refused(db, statement, parameters=()):
     """Run a statement that must fail, and hand back the error it raised."""
     with pytest.raises(errors.IntegrityError) as caught:
-        with pg.transaction():
-            pg.execute(statement, parameters)
+        with db.transaction():
+            db.execute(statement, parameters)
     return caught.value
 
 
 # Products --------------------------------------------------------------------
 
-def test_the_good_product_is_accepted(pg):
-    product_id = insert_product(pg)
+def test_the_good_product_is_accepted(db):
+    product_id = insert_product(db)
 
-    row = pg.execute("SELECT * FROM products WHERE id = %s",
+    row = db.execute("SELECT * FROM products WHERE id = %s",
                      (product_id,)).fetchone()
     assert row["name"] == "Field Watch"
 
@@ -120,11 +120,11 @@ def test_the_good_product_is_accepted(pg):
      "retail_discontinued_rules"),
 ])
 def test_a_product_breaking_one_rule_is_refused_by_that_rule(
-        pg, changes, constraint):
+        db, changes, constraint):
     row = GOOD_PRODUCT | changes
 
     error = refused(
-        pg,
+        db,
         f"INSERT INTO products ({', '.join(row)}) "
         f"VALUES ({', '.join(['%s'] * len(row))})",
         list(row.values()),
@@ -133,13 +133,13 @@ def test_a_product_breaking_one_rule_is_refused_by_that_rule(
     assert error.diag.constraint_name == constraint
 
 
-def test_an_unknown_partner_share_mode_is_refused(pg):
+def test_an_unknown_partner_share_mode_is_refused(db):
     # No row can pass partner_share_matrix with an unknown mode, so which of
     # the two constraints reports it is PostgreSQL's choice. Either is right.
     row = GOOD_PRODUCT | {"partner_share_mode": "sometimes"}
 
     error = refused(
-        pg,
+        db,
         f"INSERT INTO products ({', '.join(row)}) "
         f"VALUES ({', '.join(['%s'] * len(row))})",
         list(row.values()),
@@ -154,47 +154,47 @@ def test_an_unknown_partner_share_mode_is_refused(pg):
     "listed_price_cents", "retail_discontinued", "partner_share_mode",
     "condition", "notes",
 ])
-def test_a_required_product_column_cannot_be_null(pg, column):
+def test_a_required_product_column_cannot_be_null(db, column):
     row = GOOD_PRODUCT | {column: None}
 
     with pytest.raises(errors.NotNullViolation):
-        with pg.transaction():
-            insert_product(pg, **row)
+        with db.transaction():
+            insert_product(db, **row)
 
 
-def test_a_discontinued_product_with_a_fixed_amount_is_accepted(pg):
+def test_a_discontinued_product_with_a_fixed_amount_is_accepted(db):
     product_id = insert_product(
-        pg, retail_discontinued=1, retail_price_cents=0,
+        db, retail_discontinued=1, retail_price_cents=0,
         partner_share_mode="custom_amount", partner_share_amount_cents=9000)
 
     assert product_id > 0
 
 
-def test_money_beyond_an_integer_is_refused_rather_than_wrapped(pg):
+def test_money_beyond_an_integer_is_refused_rather_than_wrapped(db):
     with pytest.raises(errors.NumericValueOutOfRange):
-        with pg.transaction():
-            insert_product(pg, retail_price_cents=2**31)
+        with db.transaction():
+            insert_product(db, retail_price_cents=2**31)
 
 
 # Ids -------------------------------------------------------------------------
 
-def test_an_insert_cannot_choose_its_own_id(pg):
+def test_an_insert_cannot_choose_its_own_id(db):
     row = GOOD_PRODUCT | {"id": 999}
 
     with pytest.raises(errors.GeneratedAlways):
-        with pg.transaction():
-            pg.execute(
+        with db.transaction():
+            db.execute(
                 f"INSERT INTO products ({', '.join(row)}) "
                 f"VALUES ({', '.join(['%s'] * len(row))})",
                 list(row.values()),
             )
 
 
-def test_an_id_is_never_reused_after_the_newest_product_is_deleted(pg):
-    deleted = insert_product(pg, name="Deleted")
-    pg.execute("DELETE FROM products WHERE id = %s", (deleted,))
+def test_an_id_is_never_reused_after_the_newest_product_is_deleted(db):
+    deleted = insert_product(db, name="Deleted")
+    db.execute("DELETE FROM products WHERE id = %s", (deleted,))
 
-    added_after = insert_product(pg, name="Added after")
+    added_after = insert_product(db, name="Added after")
 
     assert added_after > deleted
 
@@ -207,29 +207,29 @@ def test_an_id_is_never_reused_after_the_newest_product_is_deleted(pg):
     ({"partner_share_cents": -1}, "sales_partner_share_cents_check"),
 ])
 def test_a_sale_breaking_one_rule_is_refused_by_that_rule(
-        pg, changes, constraint):
-    product_id = insert_product(pg)
+        db, changes, constraint):
+    product_id = insert_product(db)
 
     with pytest.raises(errors.CheckViolation) as caught:
-        with pg.transaction():
-            insert_sale(pg, product_id, **changes)
+        with db.transaction():
+            insert_sale(db, product_id, **changes)
 
     assert caught.value.diag.constraint_name == constraint
 
 
-def test_a_return_of_no_units_is_refused(pg):
-    product_id = insert_product(pg)
+def test_a_return_of_no_units_is_refused(db):
+    product_id = insert_product(db)
 
     with pytest.raises(errors.CheckViolation) as caught:
-        with pg.transaction():
-            insert_return(pg, product_id, quantity=0)
+        with db.transaction():
+            insert_return(db, product_id, quantity=0)
 
     assert caught.value.diag.constraint_name == "returns_quantity_check"
 
 
-def test_a_negative_payment_is_refused(pg):
+def test_a_negative_payment_is_refused(db):
     error = refused(
-        pg,
+        db,
         "INSERT INTO payments (date, amount_cents, notes) "
         "VALUES ('2026-06-05', -1, '')",
     )
@@ -246,11 +246,11 @@ def test_a_negative_payment_is_refused(pg):
      "VALUES ('2026-05-14', %s, 1, '')"),
 ])
 def test_a_row_for_a_product_that_does_not_exist_is_refused(
-        pg, table, statement):
-    missing = insert_product(pg)
-    pg.execute("DELETE FROM products WHERE id = %s", (missing,))
+        db, table, statement):
+    missing = insert_product(db)
+    db.execute("DELETE FROM products WHERE id = %s", (missing,))
 
-    error = refused(pg, statement, (missing,))
+    error = refused(db, statement, (missing,))
 
     assert isinstance(error, errors.ForeignKeyViolation)
     assert error.diag.constraint_name == f"{table}_item_id_fkey"
@@ -260,11 +260,11 @@ def test_a_row_for_a_product_that_does_not_exist_is_refused(
     (insert_sale, "sales"),
     (insert_return, "returns"),
 ])
-def test_a_product_with_history_cannot_be_deleted(pg, record, table):
-    product_id = insert_product(pg)
-    record(pg, product_id)
+def test_a_product_with_history_cannot_be_deleted(db, record, table):
+    product_id = insert_product(db)
+    record(db, product_id)
 
-    error = refused(pg, "DELETE FROM products WHERE id = %s", (product_id,))
+    error = refused(db, "DELETE FROM products WHERE id = %s", (product_id,))
 
     # The class of error depends on the version: PostgreSQL 18 reports ON
     # DELETE RESTRICT as RestrictViolation, 16 as ForeignKeyViolation. Both
@@ -274,22 +274,22 @@ def test_a_product_with_history_cannot_be_deleted(pg, record, table):
 
 
 @pytest.mark.parametrize("text", ["2026-02-30", "2026-13-01", "not a date"])
-def test_an_impossible_date_is_refused_by_the_type(pg, text):
-    product_id = insert_product(pg)
+def test_an_impossible_date_is_refused_by_the_type(db, text):
+    product_id = insert_product(db)
 
     with pytest.raises(errors.DataError):
-        with pg.transaction():
-            insert_sale(pg, product_id, date=text)
+        with db.transaction():
+            insert_sale(db, product_id, date=text)
 
 
-def test_a_date_is_stored_as_a_date_whatever_its_padding(pg):
+def test_a_date_is_stored_as_a_date_whatever_its_padding(db):
     # SQLite checked text, so 2026-9-3 was refused and create_sale had to pad
     # it (31.4). The DATE type stores a day, not the characters it was
     # written with.
-    product_id = insert_product(pg)
-    sale_id = insert_sale(pg, product_id, date="2026-9-3")
+    product_id = insert_product(db)
+    sale_id = insert_sale(db, product_id, date="2026-9-3")
 
-    stored = pg.execute("SELECT date FROM sales WHERE id = %s",
+    stored = db.execute("SELECT date FROM sales WHERE id = %s",
                         (sale_id,)).fetchone()["date"]
 
     assert stored == datetime.date(2026, 9, 3)
@@ -297,17 +297,17 @@ def test_a_date_is_stored_as_a_date_whatever_its_padding(pg):
 
 # The view and the types Python receives --------------------------------------
 
-def test_the_view_derives_stock_without_multiplying_sales_by_returns(pg):
+def test_the_view_derives_stock_without_multiplying_sales_by_returns(db):
     # Two sales and three returns: joined naively they would make six rows
     # and every sum would be wrong.
-    product_id = insert_product(pg, quantity_received=10)
-    insert_sale(pg, product_id, quantity=2)
-    insert_sale(pg, product_id, quantity=1)
-    insert_return(pg, product_id, quantity=1)
-    insert_return(pg, product_id, quantity=1)
-    insert_return(pg, product_id, quantity=2)
+    product_id = insert_product(db, quantity_received=10)
+    insert_sale(db, product_id, quantity=2)
+    insert_sale(db, product_id, quantity=1)
+    insert_return(db, product_id, quantity=1)
+    insert_return(db, product_id, quantity=1)
+    insert_return(db, product_id, quantity=2)
 
-    rows = pg.execute("SELECT * FROM products_view WHERE id = %s",
+    rows = db.execute("SELECT * FROM products_view WHERE id = %s",
                       (product_id,)).fetchall()
 
     assert len(rows) == 1
@@ -317,29 +317,29 @@ def test_the_view_derives_stock_without_multiplying_sales_by_returns(pg):
     assert row["quantity_available"] == 3
 
 
-def test_a_product_with_no_history_shows_zero_not_null(pg):
-    product_id = insert_product(pg)
+def test_a_product_with_no_history_shows_zero_not_null(db):
+    product_id = insert_product(db)
 
-    row = pg.execute("SELECT * FROM products_view WHERE id = %s",
+    row = db.execute("SELECT * FROM products_view WHERE id = %s",
                      (product_id,)).fetchone()
 
     assert (row["quantity_sold"], row["quantity_returned"],
             row["quantity_available"]) == (0, 0, 3)
 
 
-def test_python_receives_the_types_the_application_expects(pg):
+def test_python_receives_the_types_the_application_expects(db):
     # A third: a percentage whose float needs all of its digits.
     percent = 100 / 3
-    product_id = insert_product(pg, partner_share_mode="custom_percent",
+    product_id = insert_product(db, partner_share_mode="custom_percent",
                                 partner_share_percent=percent)
-    insert_sale(pg, product_id)
+    insert_sale(db, product_id)
 
-    product = pg.execute("SELECT * FROM products_view WHERE id = %s",
+    product = db.execute("SELECT * FROM products_view WHERE id = %s",
                          (product_id,)).fetchone()
-    revenue = pg.execute(
+    revenue = db.execute(
         "SELECT COALESCE(SUM(quantity * sale_price_cents), 0) AS total "
         "FROM sales").fetchone()["total"]
-    sale_date = pg.execute("SELECT date FROM sales").fetchone()["date"]
+    sale_date = db.execute("SELECT date FROM sales").fetchone()["date"]
 
     # A percentage reads back as exactly the float that went in, as SQLite's
     # REAL did. PostgreSQL's four-byte real keeps about seven significant
@@ -358,13 +358,13 @@ def test_python_receives_the_types_the_application_expects(pg):
 
 # Isolation -------------------------------------------------------------------
 
-def test_a_transaction_block_in_a_test_does_not_commit(pg):
-    # pg.transaction() commits when it opens a transaction of its own, and is
+def test_a_transaction_block_in_a_test_does_not_commit(db):
+    # db.transaction() commits when it opens a transaction of its own, and is
     # a savepoint only inside one that is already open. The fixture opens one
     # first so that a block like this, even as a test's first statement, can
     # never commit. A second connection sees only what was committed.
-    with pg.transaction():
-        pg.execute("INSERT INTO payments (date, amount_cents, notes) "
+    with db.transaction():
+        db.execute("INSERT INTO payments (date, amount_cents, notes) "
                    "VALUES ('2026-06-05', 100, 'must not be committed')")
 
     with psycopg.connect(TEST_DATABASE_URL) as other:
@@ -375,10 +375,10 @@ def test_a_transaction_block_in_a_test_does_not_commit(pg):
     assert seen == 0
 
 
-def test_every_test_starts_with_empty_tables(pg):
+def test_every_test_starts_with_empty_tables(db):
     # Last in the file on purpose: every test above has written rows, and each
     # one's rollback is what leaves these tables empty. If the fixture ever
     # committed instead, this is the test that would say so.
     for table in ("products", "sales", "returns", "payments"):
-        count = pg.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()
+        count = db.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()
         assert count["n"] == 0, table

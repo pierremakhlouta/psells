@@ -138,7 +138,7 @@ def test_inventory_prints_every_field_of_a_product(db, capsys, partner_rate):
 def test_inventory_lists_every_product_in_id_order(db, capsys, partner_rate):
     """all_products orders by id deliberately, so the order is worth holding.
 
-    Without ORDER BY, SQLite makes no promise at all. It would happen to come
+    Without ORDER BY, the database makes no promise at all. It would happen to come
     back in id order today and change the day a query plan changes.
     """
     add_product(db, 1, quantity_received=1, name="First")
@@ -309,7 +309,7 @@ def test_a_payment_is_stored_and_confirmed(db, capsys, answers):
 
     payment = only_payment(db)
 
-    assert payment["date"] == "2026-09-14"
+    assert payment["date"] == date(2026, 9, 14)
     assert payment["amount_cents"] == 15000
     assert payment["notes"] == "e-transfer"
     assert "Payment recorded." in capsys.readouterr().out
@@ -319,7 +319,7 @@ def test_a_blank_date_means_today(db, capsys, answers):
     answers("", "50", "")
     psells.record_payment(db)
 
-    assert only_payment(db)["date"] == date.today().isoformat()
+    assert only_payment(db)["date"] == date.today()
 
 
 def test_an_amount_that_is_not_a_number_is_refused(db, capsys, answers):
@@ -370,7 +370,7 @@ def test_a_date_that_does_not_exist_is_refused(db, capsys, answers):
     answers("2026-13-01", "2026-09-14", "10", "")
     psells.record_payment(db)
 
-    assert only_payment(db)["date"] == "2026-09-14"
+    assert only_payment(db)["date"] == date(2026, 9, 14)
     assert "Please enter a valid date in YYYY-MM-DD format." in capsys.readouterr().out
 
 
@@ -385,9 +385,9 @@ def only_sale(connection):
 
 def available(connection, product_id):
     return connection.execute(
-        "SELECT quantity_available FROM products_view WHERE id = ?",
+        "SELECT quantity_available FROM products_view WHERE id = %s",
         (product_id,)
-    ).fetchone()[0]
+    ).fetchone()["quantity_available"]
 
 
 def test_a_sale_is_stored_and_reduces_stock(db, capsys, answers, partner_rate):
@@ -401,7 +401,7 @@ def test_a_sale_is_stored_and_reduces_stock(db, capsys, answers, partner_rate):
     assert sale["item_id"] == 1
     assert sale["quantity"] == 2
     assert sale["sale_price_cents"] == 8999
-    assert sale["date"] == "2026-09-14"
+    assert sale["date"] == date(2026, 9, 14)
     assert available(db, 1) == 8
     assert "Sale recorded." in capsys.readouterr().out
 
@@ -463,7 +463,7 @@ def test_a_sold_out_product_cannot_be_sold_again(db, capsys, answers,
     psells.record_sale(db)
 
     assert "No stock available to sell." in capsys.readouterr().out
-    assert db.execute("SELECT COUNT(*) FROM sales").fetchone()[0] == 1
+    assert db.execute("SELECT COUNT(*) AS n FROM sales").fetchone()["n"] == 1
 
 
 def test_selling_from_an_empty_inventory(db, capsys, answers, partner_rate):
@@ -486,7 +486,7 @@ def test_selling_a_product_that_does_not_match(db, capsys, answers,
     psells.record_sale(db)
 
     assert "No products found." in capsys.readouterr().out
-    assert db.execute("SELECT COUNT(*) FROM sales").fetchone()[0] == 0
+    assert db.execute("SELECT COUNT(*) AS n FROM sales").fetchone()["n"] == 0
 
 
 def test_choosing_between_two_matches_by_id(db, capsys, answers, partner_rate):
@@ -515,9 +515,9 @@ def only_return(connection):
 
 def received(connection, product_id):
     return connection.execute(
-        "SELECT quantity_received FROM products WHERE id = ?",
+        "SELECT quantity_received FROM products WHERE id = %s",
         (product_id,)
-    ).fetchone()[0]
+    ).fetchone()["quantity_received"]
 
 
 def test_a_return_is_stored_and_reduces_stock(db, capsys, answers,
@@ -533,7 +533,7 @@ def test_a_return_is_stored_and_reduces_stock(db, capsys, answers,
 
     assert returned["item_id"] == 1
     assert returned["quantity"] == 2
-    assert returned["date"] == "2026-09-14"
+    assert returned["date"] == date(2026, 9, 14)
     assert returned["notes"] == "damaged box"
     assert available(db, 1) == 5
     assert "Return recorded." in capsys.readouterr().out
@@ -588,7 +588,7 @@ def test_a_product_with_no_stock_left_cannot_be_returned(db, capsys, answers,
     psells.record_return(db)
 
     assert "No stock available to return." in capsys.readouterr().out
-    assert db.execute("SELECT COUNT(*) FROM returns").fetchone()[0] == 1
+    assert db.execute("SELECT COUNT(*) AS n FROM returns").fetchone()["n"] == 1
 
 
 def test_returning_from_an_empty_inventory(db, capsys, answers, partner_rate):
@@ -601,7 +601,7 @@ def test_returning_from_an_empty_inventory(db, capsys, answers, partner_rate):
 # Delete a product ------------------------------------------------------------
 
 def product_count(connection):
-    return connection.execute("SELECT COUNT(*) FROM products").fetchone()[0]
+    return connection.execute("SELECT COUNT(*) AS n FROM products").fetchone()["n"]
 
 
 def test_a_product_with_no_history_is_deleted(db, capsys, answers,
@@ -861,7 +861,7 @@ def test_ask_float_refuses_every_non_finite_number(capsys, answers):
 
 def product_row(connection, product_id=1):
     row = connection.execute(
-        "SELECT * FROM products WHERE id = ?", (product_id,)
+        "SELECT * FROM products WHERE id = %s", (product_id,)
     ).fetchone()
 
     return dict(row)
@@ -948,7 +948,7 @@ def test_notes_cannot_be_cleared(db, answers, partner_rate):
 def test_the_intake_cannot_drop_below_what_has_already_gone(db, capsys,
                                                             answers,
                                                             partner_rate):
-    """One of the two rules SQLite cannot enforce, so the prompt has to.
+    """One of the two rules the schema cannot enforce, so the prompt has to.
 
     Three sold and one returned have both left the original intake, so the
     intake cannot be corrected to fewer than four. A CHECK constraint cannot

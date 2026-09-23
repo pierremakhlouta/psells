@@ -85,6 +85,22 @@ def test_the_image_never_copies_the_whole_folder_or_the_data():
         assert name.split("/")[0] != "data", source
 
 
+def test_every_copied_file_is_made_readable_before_the_server_user_takes_over():
+    # COPY keeps the builder's file permissions and makes root the owner, so a
+    # file saved readable only by its owner cannot be read by psells. The chmod
+    # must come after the last COPY, which it has to cover, and before USER,
+    # because psells is not allowed to change files root owns.
+    names = [instruction for instruction, _ in instructions()]
+    steps = [" ".join([instruction] + arguments)
+             for instruction, arguments in instructions()]
+
+    chmod = steps.index("RUN chmod -R a+rX /app")
+    last_copy = max(i for i, name in enumerate(names) if name == "COPY")
+    user = names.index("USER")
+
+    assert last_copy < chmod < user
+
+
 def test_the_image_is_built_with_copy_not_add():
     # ADD also downloads URLs and unpacks archives, which a build that names
     # its files one by one has no use for.
@@ -159,18 +175,36 @@ def test_the_database_lives_on_a_named_volume():
     document = compose()
     mounts = document["services"]["db"]["volumes"]
 
-    named = [mount.split(":")[0] for mount in mounts]
-    assert named == ["pgdata"]
+    assert "pgdata:/var/lib/postgresql" in mounts
     assert "pgdata" in document["volumes"]
 
 
-def test_the_app_is_never_given_a_default_data_folder():
-    # A default would be ./data, which is the real SQLite file.
-    for mount in compose()["services"]["app"].get("volumes", []):
-        source = mount.split(":/")[0]
-        assert not source.startswith(("./", "data", "/")), mount
-        if source.startswith("${"):
-            assert ":?" in source and ":-" not in source, mount
+def test_the_database_builds_its_tables_from_the_schema_read_only():
+    mounts = compose()["services"]["db"]["volumes"]
+
+    assert ("./schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro"
+            in mounts)
+
+
+def test_the_app_mounts_only_the_config_file_read_only_and_never_a_default():
+    mounts = compose()["services"]["app"]["volumes"]
+
+    assert len(mounts) == 1
+    source, target, mode = mounts[0].rsplit(":", 2)
+    assert (target, mode) == ("/config/config.json", "ro")
+    # Required from .env, never defaulted, so the rate in use is a choice.
+    assert source.startswith("${PSELLS_CONFIG_FILE:?"), source
+    assert ":-" not in source, source
+
+
+def test_the_database_address_is_built_from_the_environment():
+    environment = compose()["services"]["app"]["environment"]
+    address = environment["PSELLS_DATABASE_URL"]
+
+    # No password in the file, and the host is the database service itself.
+    assert "${POSTGRES_PASSWORD:?" in address
+    assert "@db:5432/" in address
+    assert environment["PSELLS_CONFIG"] == "/config/config.json"
 
 
 def test_the_test_database_starts_only_when_asked_for_and_keeps_nothing():

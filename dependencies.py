@@ -8,9 +8,9 @@ have finished loading first, and which one won would depend on which was
 imported first. A third module both can import has no such order.
 """
 
-import sqlite3
 from typing import Annotated
 
+import psycopg
 from fastapi import Depends
 
 import psells
@@ -19,16 +19,16 @@ import psells
 def get_connection():
     """One connection per request, closed when the request finishes.
 
-    A connection cannot be shared between requests. Python's sqlite3 refuses
-    to use a connection from any thread other than the one that opened it, and
-    every route that asks for one is a plain def, which FastAPI runs in a thread
-    pool. A module-level connection would work in testing and fail under a
-    second caller.
+    A connection is not shared between requests. Every route that asks for one
+    is a plain def, which FastAPI runs in a thread pool, so two requests can be
+    in flight at once, and one connection carries one conversation with the
+    server at a time: a shared one would make the second request wait for the
+    first, or interleave their transactions.
 
-    psells.connect is used rather than sqlite3.connect directly, so the foreign
-    key pragma and the row factory are applied exactly once, in one place.
+    psells.connect is used rather than psycopg.connect directly, so autocommit
+    and the row factory are set exactly once, in one place.
     """
-    connection = psells.connect(check_same_thread=False)
+    connection = psells.connect()
 
     try:
         yield connection
@@ -36,4 +36,4 @@ def get_connection():
         connection.close()
 
 
-Connection = Annotated[sqlite3.Connection, Depends(get_connection)]
+Connection = Annotated[psycopg.Connection, Depends(get_connection)]

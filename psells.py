@@ -1,27 +1,30 @@
 import os
 import json
 import math
-import sqlite3
 import sys
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
+import psycopg
+from psycopg.rows import dict_row
+
 
 # Where the data lives.
 #
-# Both default to the data folder beside this file rather than beside the shell
-# that started the process. Relative paths cost this project three separate
-# surprises: the CI tests failed four frames below the line under test because a
-# checkout has no data folder, the API served nothing unless uvicorn happened to
-# be started from the right directory, and a sandbox worked only as a side
-# effect of changing directory.
+# The configuration file defaults to the data folder beside this file rather
+# than beside the shell that started the process. Relative paths cost this
+# project three separate surprises: the CI tests failed four frames below the
+# line under test because a checkout has no data folder, the API served nothing
+# unless uvicorn happened to be started from the right directory, and a sandbox
+# worked only as a side effect of changing directory. PSELLS_CONFIG overrides
+# it, which is how the container is given its one mounted file.
 #
-# The environment variables make that last one deliberate rather than
-# accidental, and are how a container will be pointed at a mounted volume:
+# The database is a PostgreSQL server named by PSELLS_DATABASE_URL, and has no
+# default: the only place the application runs against the real one is inside
+# the Compose stack, which sets it. A default would have to name a host and a
+# password, and a wrong guess connecting somewhere is worse than a sentence.
 #
-#     PSELLS_DB=/somewhere/else.db uvicorn api:app
-#
-# They are read once, when this module is imported, because a process does not
+# Both are read once, when this module is imported, because a process does not
 # change its mind about which database it is using halfway through.
 
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -38,36 +41,44 @@ def path_from_environment(variable, *parts):
 
 
 CONFIG_FILE = path_from_environment("PSELLS_CONFIG", "data", "config.json")
-DB_FILE = path_from_environment("PSELLS_DB", "data", "psells.db")
+DATABASE_URL = os.environ.get("PSELLS_DATABASE_URL", "")
 
 
-def connect(check_same_thread=True):
+class DatabaseUnavailable(RuntimeError):
+    """The database cannot be reached, with a sentence saying what to do."""
+
+
+def connect():
     """Open the database and hand back a connection that is ready to use.
 
-    Both settings below are per connection, not per database, so every
-    connection the application opens has to apply them again.
+    autocommit is on, and that is not a shortcut. With it off, psycopg opens a
+    transaction at the first statement and keeps it open until something
+    commits. Every write here is wrapped in connection.transaction(), and inside
+    a transaction that is already open that block is only a savepoint: the
+    write would look done, be visible to this connection, and vanish when the
+    connection closed. With autocommit on, a read is its own statement and each
+    transaction() block is a real transaction that commits when it ends.
 
-    PRAGMA foreign_keys goes first, before anything can open a transaction,
-    because SQLite ignores the pragma inside one and reports no error. Without
-    it the foreign keys in the schema enforce nothing.
+    dict_row makes a row readable by column name, so product["name"] keeps
+    working, as sqlite3.Row did. Unlike sqlite3.Row it cannot be read by
+    position, so a query read by position names its column instead.
 
-    row_factory makes a row readable by column name, so product["name"] keeps
-    working. Without it a row is a plain tuple and the same code would have to
-    say product[2].
-
-    check_same_thread defaults to on, which is right for the command line
-    application: it is single threaded, so the check never fires and costs
-    nothing to keep. The API turns it off deliberately, because a web server
-    runs a synchronous endpoint and its dependencies on a thread pool and can
-    hand two steps of one request to two different threads. That is safe only
-    because each request there opens its own connection and closes it again, so
-    no connection is ever used by two requests at once.
+    Raises DatabaseUnavailable with a sentence when PSELLS_DATABASE_URL is not
+    set or the server does not answer.
     """
-    connection = sqlite3.connect(DB_FILE, check_same_thread=check_same_thread)
-    connection.execute("PRAGMA foreign_keys = ON")
-    connection.row_factory = sqlite3.Row
+    if not DATABASE_URL:
+        raise DatabaseUnavailable(
+            "PSELLS_DATABASE_URL is not set. PSells runs against the database "
+            "in its Compose stack: docker compose exec app python psells.py"
+        )
 
-    return connection
+    try:
+        return psycopg.connect(
+            DATABASE_URL, autocommit=True, row_factory=dict_row)
+    except psycopg.OperationalError as error:
+        raise DatabaseUnavailable(
+            f"Could not reach the database: {error}".strip()
+        ) from error
 
 
 def all_products(connection):
@@ -76,8 +87,8 @@ def all_products(connection):
     Always read through products_view rather than the products table, because
     quantity_sold, quantity_returned and quantity_available only exist there.
 
-    ORDER BY is not decoration. Without it SQLite makes no promise about the
-    order rows come back in. It happens to match id order today, which is
+    ORDER BY is not decoration. Without it the database makes no promise about
+    the order rows come back in. It happens to match id order today, which is
     exactly the kind of accident that changes silently later.
     """
     return connection.execute(
@@ -443,25 +454,27 @@ def dashboard_totals(connection):
     None and raise.
     """
     def total(sql):
-        return connection.execute(sql).fetchone()[0]
+        return connection.execute(sql).fetchone()["total"]
 
     total_received = total(
-        "SELECT COALESCE(SUM(quantity_received), 0) FROM products"
+        "SELECT COALESCE(SUM(quantity_received), 0) AS total FROM products"
     )
     total_sold = total(
-        "SELECT COALESCE(SUM(quantity), 0) FROM sales"
+        "SELECT COALESCE(SUM(quantity), 0) AS total FROM sales"
     )
     total_returned = total(
-        "SELECT COALESCE(SUM(quantity), 0) FROM returns"
+        "SELECT COALESCE(SUM(quantity), 0) AS total FROM returns"
     )
     total_revenue = total(
-        "SELECT COALESCE(SUM(quantity * sale_price_cents), 0) FROM sales"
+        "SELECT COALESCE(SUM(quantity * sale_price_cents), 0) AS total "
+        "FROM sales"
     )
     total_partner_share = total(
-        "SELECT COALESCE(SUM(quantity * partner_share_cents), 0) FROM sales"
+        "SELECT COALESCE(SUM(quantity * partner_share_cents), 0) AS total "
+        "FROM sales"
     )
     total_paid = total(
-        "SELECT COALESCE(SUM(amount_cents), 0) FROM payments"
+        "SELECT COALESCE(SUM(amount_cents), 0) AS total FROM payments"
     )
 
     return {
@@ -506,7 +519,7 @@ def create_sale(connection, product_id, quantity, sale_price_cents, sale_date):
     A caller that is not a prompt has guaranteed nothing.
     """
     product = connection.execute(
-        "SELECT * FROM products_view WHERE id = ?",
+        "SELECT * FROM products_view WHERE id = %s",
         (product_id,)
     ).fetchone()
 
@@ -533,9 +546,9 @@ def create_sale(connection, product_id, quantity, sale_price_cents, sale_date):
     # not a sentence anybody can act on, and the API would surface it as a
     # server error rather than as bad input.
     #
-    # strptime is looser than the schema: it reads 2026-9-3, which the schema's
-    # date check refuses. So the date is written back zero-padded, as ask_date
-    # does, rather than passed through as it arrived.
+    # strptime reads 2026-9-3 as well as 2026-09-03. The date is written back
+    # zero-padded, as ask_date does, so every caller hands the database the one
+    # form, whatever the column would have accepted.
     try:
         sale_date = datetime.strptime(sale_date, "%Y-%m-%d").strftime(
             "%Y-%m-%d")
@@ -546,12 +559,12 @@ def create_sale(connection, product_id, quantity, sale_price_cents, sale_date):
 
     # One insert. The product is not touched at all: units sold is derived from
     # this table, so there is no second value that could fall out of step.
-    # The id is left out so SQLite assigns it.
-    with connection:
+    # The id is left out so the database's sequence assigns it.
+    with connection.transaction():
         connection.execute(
             "INSERT INTO sales "
             "(date, item_id, quantity, sale_price_cents, partner_share_cents) "
-            "VALUES (?, ?, ?, ?, ?)",
+            "VALUES (%s, %s, %s, %s, %s)",
             (sale_date, product_id, quantity, sale_price_cents, partner_cut)
         )
 
@@ -584,7 +597,7 @@ def create_return(connection, product_id, quantity, return_date, notes):
     create_sale and update_product raise, and ReturnError for the rest.
     """
     product = connection.execute(
-        "SELECT * FROM products_view WHERE id = ?",
+        "SELECT * FROM products_view WHERE id = %s",
         (product_id,)
     ).fetchone()
 
@@ -612,14 +625,12 @@ def create_return(connection, product_id, quantity, return_date, notes):
     except (ValueError, TypeError):
         raise ReturnError(f"{return_date!r} is not a date in YYYY-MM-DD form.")
 
-    with connection:
-        cursor = connection.execute(
+    with connection.transaction():
+        return connection.execute(
             "INSERT INTO returns (date, item_id, quantity, notes) "
-            "VALUES (?, ?, ?, ?)",
+            "VALUES (%s, %s, %s, %s) RETURNING id",
             (return_date, product_id, quantity, (notes or "").strip())
-        )
-
-    return cursor.lastrowid
+        ).fetchone()["id"]
 
 class PaymentError(ValueError):
     """A payment that cannot be recorded, with a message safe to show."""
@@ -649,14 +660,12 @@ def create_payment(connection, amount_cents, payment_date, notes):
             f"{payment_date!r} is not a date in YYYY-MM-DD form."
         )
 
-    with connection:
-        cursor = connection.execute(
+    with connection.transaction():
+        return connection.execute(
             "INSERT INTO payments (date, amount_cents, notes) "
-            "VALUES (?, ?, ?)",
+            "VALUES (%s, %s, %s) RETURNING id",
             (payment_date, amount_cents, (notes or "").strip())
-        )
-
-    return cursor.lastrowid
+        ).fetchone()["id"]
 
 class DeleteRefused(ValueError):
     """A product that cannot be deleted, with the sentence saying why."""
@@ -671,14 +680,14 @@ def deletion_blocker(connection, product_id):
     asked to confirm something that is then refused.
     """
     sale_count = connection.execute(
-        "SELECT COUNT(*) FROM sales WHERE item_id = ?",
+        "SELECT COUNT(*) AS n FROM sales WHERE item_id = %s",
         (product_id,)
-    ).fetchone()[0]
+    ).fetchone()["n"]
 
     return_count = connection.execute(
-        "SELECT COUNT(*) FROM returns WHERE item_id = ?",
+        "SELECT COUNT(*) AS n FROM returns WHERE item_id = %s",
         (product_id,)
-    ).fetchone()[0]
+    ).fetchone()["n"]
 
     blocking = []
 
@@ -708,7 +717,7 @@ def delete_product(connection, product_id):
     Raises ProductNotFound for an id that does not exist, and DeleteRefused
     otherwise.
     """
-    if connection.execute("SELECT 1 FROM products WHERE id = ?",
+    if connection.execute("SELECT 1 FROM products WHERE id = %s",
                           (product_id,)).fetchone() is None:
         raise ProductNotFound(f"No product with id {product_id}.")
 
@@ -717,11 +726,14 @@ def delete_product(connection, product_id):
     if blocker is not None:
         raise DeleteRefused(blocker)
 
+    # IntegrityError, the parent, not the particular refusal: PostgreSQL 18
+    # reports ON DELETE RESTRICT as RestrictViolation where 16 reported
+    # ForeignKeyViolation, and the sentence is the same whichever it was.
     try:
-        with connection:
-            connection.execute("DELETE FROM products WHERE id = ?",
+        with connection.transaction():
+            connection.execute("DELETE FROM products WHERE id = %s",
                                (product_id,))
-    except sqlite3.IntegrityError:
+    except psycopg.errors.IntegrityError:
         raise DeleteRefused(
             "The database refused the deletion. Something still refers to "
             "this product, so nothing was removed."
@@ -881,7 +893,7 @@ def create_product(connection, category, name, quantity_received,
                    retail_discontinued, retail_price_cents, listed_price_cents,
                    condition, notes, partner_share_mode, partner_share_percent,
                    partner_share_amount_cents):
-    """Store one new product and return the id SQLite gave it.
+    """Store one new product and return the id the database gave it.
 
     The whole of adding a product with none of the asking. add is the same
     operation driven by a keyboard; the web form drives it from a request. Both
@@ -902,25 +914,25 @@ def create_product(connection, category, name, quantity_received,
     if problems:
         raise ProductError(problems)
 
-    # The id is left out so SQLite assigns it, the same way it did during the
-    # migration.
-    with connection:
-        cursor = connection.execute(
+    # The id is left out: the database's sequence assigns it, and refuses one
+    # supplied here. A sequence never hands out the same id twice, so a deleted
+    # product's id is never given to the next one.
+    with connection.transaction():
+        return connection.execute(
             "INSERT INTO products "
             "(category, name, quantity_received, retail_price_cents, "
             "listed_price_cents, retail_discontinued, partner_share_mode, "
             "partner_share_percent, partner_share_amount_cents, "
             "condition, notes) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            "RETURNING id",
             (category.strip(), name.strip(), quantity_received,
              retail_price_cents, listed_price_cents,
              1 if retail_discontinued else 0,
              partner_share_mode, partner_share_percent,
              partner_share_amount_cents, condition.strip(),
              (notes or "").strip())
-        )
-
-    return cursor.lastrowid
+        ).fetchone()["id"]
 
 
 def _intake_floor_problem(connection, product_id, quantity_received):
@@ -932,7 +944,7 @@ def _intake_floor_problem(connection, product_id, quantity_received):
     means anything without the product.
     """
     product = connection.execute(
-        "SELECT * FROM products_view WHERE id = ?",
+        "SELECT * FROM products_view WHERE id = %s",
         (product_id,)
     ).fetchone()
 
@@ -987,15 +999,15 @@ def update_product(connection, product_id, category, name, quantity_received,
     if problems:
         raise ProductError(problems)
 
-    with connection:
+    with connection.transaction():
         connection.execute(
             "UPDATE products SET "
-            "category = ?, name = ?, quantity_received = ?, "
-            "retail_price_cents = ?, listed_price_cents = ?, "
-            "retail_discontinued = ?, partner_share_mode = ?, "
-            "partner_share_percent = ?, partner_share_amount_cents = ?, "
-            "condition = ?, notes = ? "
-            "WHERE id = ?",
+            "category = %s, name = %s, quantity_received = %s, "
+            "retail_price_cents = %s, listed_price_cents = %s, "
+            "retail_discontinued = %s, partner_share_mode = %s, "
+            "partner_share_percent = %s, partner_share_amount_cents = %s, "
+            "condition = %s, notes = %s "
+            "WHERE id = %s",
             (category.strip(), name.strip(), quantity_received,
              retail_price_cents, listed_price_cents,
              1 if retail_discontinued else 0,
@@ -1434,12 +1446,17 @@ def category_counts(connection):
 
     Alphabetical rather than largest first, because this list exists to be
     scanned for a name you half remember.
+
+    COLLATE "C" sorts by character code, as SQLite did: capitals before
+    lowercase, the same on every server. PostgreSQL's default follows the
+    server's locale, which can ignore case and punctuation and can differ
+    between a laptop and CI. Decided at the move to PostgreSQL.
     """
     return connection.execute(
         "SELECT category, COUNT(*) AS products "
         "FROM products "
         "GROUP BY category "
-        "ORDER BY category"
+        'ORDER BY category COLLATE "C"'
     ).fetchall()
 
 
@@ -1834,14 +1851,11 @@ def main():
         print(f"Configuration error: {error}")
         sys.exit(1)
 
-    if not os.path.exists(DB_FILE):
-        print(
-            f"Database error: {DB_FILE} not found. "
-            f"Run migrate_to_sqlite.py first."
-        )
+    try:
+        connection = connect()
+    except DatabaseUnavailable as error:
+        print(f"Database error: {error}")
         sys.exit(1)
-
-    connection = connect()
 
     while True:
         choice = input(

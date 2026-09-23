@@ -1,14 +1,11 @@
 # PSells in a container: the web pages and the HTTP API, served by uvicorn.
 #
-# The image holds code only. The database and the configuration file are
-# mounted at /data when the container starts and are never copied in, so an
-# image can be shared or pushed without carrying a single record.
+# The image holds code only. The records live in the PostgreSQL service beside
+# it and the configuration file is mounted at /config when the container
+# starts; neither is ever copied in, so an image can be shared or pushed
+# without carrying a single record. compose.yaml supplies both:
 #
-# Build and run against sample data, from this folder (the README has the steps
-# that build the sample data first):
-#
-#     docker build -t psells .
-#     docker run --rm -p 127.0.0.1:8000:8000 -v /tmp/psells-sample:/data psells
+#     docker compose up --build -d --wait
 
 # Python 3.14 to match CI. slim is Debian without compilers or documentation:
 # smaller, and less installed software to carry vulnerabilities.
@@ -38,11 +35,20 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY psells.py api.py web.py dependencies.py cross_site.py ./
 COPY templates/ templates/
 
+# COPY keeps each file's permissions from the machine that built the image and
+# makes root its owner. A file that was readable only by its owner there is
+# then readable only by root here, and the server, running as psells, cannot
+# open it: it stops at startup with "Permission denied". This happened in
+# Phase 04. Everyone may read every file, and enter every folder, so the image
+# no longer depends on how the files were saved. Nothing here is writable by
+# psells, which it never needs.
+RUN chmod -R a+rX /app
+
 USER psells
 
-# The same two variables the README uses to point the application at a copy.
-ENV PSELLS_DB=/data/psells.db \
-    PSELLS_CONFIG=/data/config.json
+# Where compose.yaml mounts the configuration file. PSELLS_DATABASE_URL has no
+# default here or anywhere: it names a host and a password, and Compose sets it.
+ENV PSELLS_CONFIG=/config/config.json
 
 EXPOSE 8000
 

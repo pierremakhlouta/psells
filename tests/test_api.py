@@ -51,7 +51,8 @@ def test_money_is_sent_as_whole_cents(client, db):
 
 
 def test_the_discontinued_flag_is_sent_as_a_boolean(client, db):
-    """SQLite stores it as 0 or 1. JSON has a boolean, so the API sends one."""
+    """The database stores it as 0 or 1. JSON has a boolean, so the API sends
+    one."""
     add_product(db, 1, quantity_received=1)
     add_product(
         db, 2, quantity_received=1,
@@ -231,8 +232,11 @@ def test_a_sale_is_recorded_and_returned(client, db):
     assert response.status_code == 201
 
     sale = response.json()
+    # The sequence chose the id. The response must name the row that was
+    # stored, which is what reading it back with lastval() is for.
+    stored_id = db.execute("SELECT id FROM sales").fetchone()["id"]
 
-    assert sale["id"] == 1
+    assert sale["id"] == stored_id
     assert sale["item_id"] == 1
     assert sale["quantity"] == 2
     assert sale["sale_price_cents"] == 8999
@@ -301,7 +305,7 @@ def test_selling_more_than_is_available_is_a_409(client, db):
 
     assert response.status_code == 409
     assert "Only 3 available" in response.json()["detail"]
-    assert db.execute("SELECT COUNT(*) FROM sales").fetchone()[0] == 0
+    assert db.execute("SELECT COUNT(*) AS n FROM sales").fetchone()["n"] == 0
 
 
 def test_a_sold_out_product_is_a_409(client, db):
@@ -325,7 +329,7 @@ def test_a_quantity_of_zero_is_a_422(client, db):
     })
 
     assert response.status_code == 422
-    assert db.execute("SELECT COUNT(*) FROM sales").fetchone()[0] == 0
+    assert db.execute("SELECT COUNT(*) AS n FROM sales").fetchone()["n"] == 0
 
 
 def test_a_negative_price_is_a_422(client, db):
@@ -365,7 +369,7 @@ def test_a_date_that_does_not_exist_is_a_422(client, db):
     })
 
     assert response.status_code == 422
-    assert db.execute("SELECT COUNT(*) FROM sales").fetchone()[0] == 0
+    assert db.execute("SELECT COUNT(*) AS n FROM sales").fetchone()["n"] == 0
 
 
 def test_the_partner_cut_is_frozen_by_the_endpoint_too(client, db, monkeypatch):

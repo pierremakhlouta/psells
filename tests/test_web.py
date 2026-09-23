@@ -273,7 +273,7 @@ def field(form, name):
 
 
 def products_stored(db):
-    return db.execute("SELECT COUNT(*) FROM products").fetchone()[0]
+    return db.execute("SELECT COUNT(*) AS n FROM products").fetchone()["n"]
 
 
 def test_the_add_form_offers_every_field_the_reader_reads(client):
@@ -298,9 +298,11 @@ def test_a_blank_form_starts_empty_on_the_default_share(client):
 def test_adding_a_product_answers_303_to_the_inventory(client, db):
     """303, not 307: a 307 would make the browser post the form again."""
     response = submit_add_form(client, **GOOD)
+    # The database's sequence chose the id, so read it rather than assume it.
+    new_id = db.execute("SELECT id FROM products").fetchone()["id"]
 
     assert response.status_code == 303
-    assert response.headers["location"].endswith("/?added=1")
+    assert response.headers["location"].endswith(f"/?added={new_id}")
     assert products_stored(db) == 1
 
 
@@ -319,9 +321,10 @@ def test_the_product_is_stored_as_typed_and_in_cents(client, db):
 
 def test_after_adding_the_inventory_shows_it_and_says_so(client, db):
     page = submit_add_form(client, follow_redirects=True, **GOOD).text
+    new_id = db.execute("SELECT id FROM products").fetchone()["id"]
 
     assert [row[NAME] for row in table_rows(page)] == ["Jordan 1 Chicago"]
-    assert "Added Jordan 1 Chicago, id 1." in page
+    assert f"Added Jordan 1 Chicago, id {new_id}." in page
 
 
 @pytest.mark.parametrize("typed, expected", [
@@ -340,7 +343,7 @@ def test_each_partner_share_is_stored(client, db, typed, expected):
     assert tuple(db.execute(
         "SELECT partner_share_mode, partner_share_percent, "
         "partner_share_amount_cents, retail_discontinued FROM products"
-    ).fetchone()) == expected
+    ).fetchone().values()) == expected
 
 
 def test_the_form_stores_what_create_product_would(client, db):
@@ -456,7 +459,7 @@ def submit_edit_form(client, product_id=1, follow_redirects=False,
 
 
 def stored(db, product_id=1):
-    return dict(db.execute("SELECT * FROM products WHERE id = ?",
+    return dict(db.execute("SELECT * FROM products WHERE id = %s",
                            (product_id,)).fetchone())
 
 
@@ -590,7 +593,7 @@ def test_an_edit_never_rewrites_a_sale_from_the_page(client, db):
     submit_edit_form(client, partner_share_mode="custom_amount",
                      partner_share_amount="1.00")
 
-    assert db.execute("SELECT partner_share_cents FROM sales").fetchone()[0] == 3500
+    assert db.execute("SELECT partner_share_cents FROM sales").fetchone()["partner_share_cents"] == 3500
     assert figures(client.get("/").text) == before
 
 
@@ -687,9 +690,10 @@ def test_a_sale_answers_303_and_is_stored_with_its_frozen_cut(client, db):
 
     assert response.status_code == 303
     assert response.headers["location"].endswith("/?sold=1")
-    assert sales_stored(db) == [{
-        "id": 1, "date": "2026-09-20", "item_id": 1, "quantity": 2,
-        "sale_price_cents": 8550, "partner_share_cents": 4000,
+    stored = sales_stored(db)
+    assert stored == [{
+        "id": stored[0]["id"], "date": date(2026, 9, 20), "item_id": 1,
+        "quantity": 2, "sale_price_cents": 8550, "partner_share_cents": 4000,
     }]
 
 
@@ -726,18 +730,18 @@ def test_a_blank_date_means_today(client, db):
 
     submit_sale_form(client, sale_price="90.00", date="")
 
-    assert sales_stored(db)[0]["date"] == date.today().isoformat()
+    assert sales_stored(db)[0]["date"] == date.today()
 
 
-def test_a_date_without_leading_zeros_is_stored_padded(client, db):
-    """The schema accepts only 2026-09-03; the command line writes that form
-    from whatever parsed, and so does the page."""
+def test_a_date_without_leading_zeros_is_stored_as_that_day(client, db):
+    """2026-9-3 is a real date, and the page stores it as that day, as the
+    command line does."""
     add_product(db, 1, quantity_received=5)
 
     response = submit_sale_form(client, sale_price="90.00", date="2026-9-3")
 
     assert response.status_code == 303
-    assert sales_stored(db)[0]["date"] == "2026-09-03"
+    assert sales_stored(db)[0]["date"] == date(2026, 9, 3)
 
 
 @pytest.mark.parametrize("typed, field_name", [
@@ -852,8 +856,9 @@ def test_a_return_answers_303_and_is_stored(client, db):
 
     assert response.status_code == 303
     assert response.headers["location"].endswith("/?returned=1")
-    assert returns_stored(db) == [{"id": 1, "date": "2026-09-03", "item_id": 1,
-                                   "quantity": 2, "notes": "damaged box"}]
+    stored = returns_stored(db)
+    assert stored == [{"id": stored[0]["id"], "date": date(2026, 9, 3),
+                       "item_id": 1, "quantity": 2, "notes": "damaged box"}]
     assert "Recorded a return of Jordan 1 Chicago, id 1." in client.get(
         response.headers["location"]).text
 
@@ -992,11 +997,13 @@ def test_a_payment_answers_303_and_is_stored(client, db):
     response = submit_payment_form(client, amount="150.00", date="2026-9-14",
                                    notes="e-transfer")
 
+    stored = payments_stored(db)
+    payment_id = stored[0]["id"]
+
     assert response.status_code == 303
-    assert response.headers["location"].endswith("/?paid=1")
-    assert payments_stored(db) == [{"id": 1, "date": "2026-09-14",
-                                    "amount_cents": 15000,
-                                    "notes": "e-transfer"}]
+    assert response.headers["location"].endswith(f"/?paid={payment_id}")
+    assert stored == [{"id": payment_id, "date": date(2026, 9, 14),
+                       "amount_cents": 15000, "notes": "e-transfer"}]
     assert "Recorded a payment of $150.00 dated 2026-09-14." in client.get(
         response.headers["location"]).text
 
@@ -1141,14 +1148,13 @@ def test_posting_a_delete_for_a_product_with_history_is_a_409(client, db):
     the same sentence, and the product and its sale remain."""
     add_product(db, 1, quantity_received=5)
     add_sale(db, 1, item_id=1, quantity=1)
-    db.commit()
 
     response = client.post("/products/1/delete")
 
     assert response.status_code == 409
     assert "This product has 1 sale recorded against it." in response.text
-    assert db.execute("SELECT COUNT(*) FROM products").fetchone()[0] == 1
-    assert db.execute("SELECT COUNT(*) FROM sales").fetchone()[0] == 1
+    assert db.execute("SELECT COUNT(*) AS n FROM products").fetchone()["n"] == 1
+    assert db.execute("SELECT COUNT(*) AS n FROM sales").fetchone()["n"] == 1
 
 
 def test_deleting_a_product_that_does_not_exist_is_a_404(client, db):
@@ -1165,7 +1171,7 @@ def test_a_delete_from_another_site_is_refused(client, db):
                            headers={"Origin": "https://evil.example"})
 
     assert response.status_code == 403
-    assert db.execute("SELECT COUNT(*) FROM products").fetchone()[0] == 1
+    assert db.execute("SELECT COUNT(*) AS n FROM products").fetchone()["n"] == 1
 
 
 def test_a_delete_link_alone_deletes_nothing(client, db):
@@ -1175,7 +1181,7 @@ def test_a_delete_link_alone_deletes_nothing(client, db):
 
     client.get("/products/1/delete")
 
-    assert db.execute("SELECT COUNT(*) FROM products").fetchone()[0] == 1
+    assert db.execute("SELECT COUNT(*) AS n FROM products").fetchone()["n"] == 1
 
 
 # The dashboard panel ---------------------------------------------------------

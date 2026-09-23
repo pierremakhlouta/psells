@@ -20,6 +20,32 @@ TEST_DATABASE_URL = (
 )
 
 
+def _insert_with_id(connection, table, values):
+    """Insert one row with the id the test chose, then keep the sequence past it.
+
+    Ids are GENERATED ALWAYS, so an INSERT that names its own id must say
+    OVERRIDING SYSTEM VALUE. A test names ids so its rows can refer to each
+    other and its assertions can name them.
+
+    The sequence is then set to the highest id in the table, so a product the
+    application adds next gets the id after it, as it would have under SQLite.
+    Setting it lower than a previous test left it is safe here and nowhere
+    else: every test's rows are rolled back, so no id below it is in use.
+    """
+    columns = ", ".join(values)
+    placeholders = ", ".join("%s" for _ in values)
+
+    connection.execute(
+        f"INSERT INTO {table} ({columns}) OVERRIDING SYSTEM VALUE "
+        f"VALUES ({placeholders})",
+        tuple(values.values())
+    )
+    connection.execute(
+        f"SELECT setval(pg_get_serial_sequence('{table}', 'id'), "
+        f"(SELECT max(id) FROM {table}))"
+    )
+
+
 def add_product(connection, product_id, quantity_received, **overrides):
     """Insert one product, so a test only has to state what it cares about."""
     values = {
@@ -38,45 +64,39 @@ def add_product(connection, product_id, quantity_received, **overrides):
     }
     values.update(overrides)
 
-    columns = ", ".join(values)
-    placeholders = ", ".join("?" for _ in values)
-
-    connection.execute(
-        f"INSERT INTO products ({columns}) VALUES ({placeholders})",
-        tuple(values.values())
-    )
+    _insert_with_id(connection, "products", values)
 
 
 def add_sale(connection, sale_id, item_id, quantity, sale_price_cents=9000,
              partner_share_cents=3500):
-    connection.execute(
-        "INSERT INTO sales VALUES (?, ?, ?, ?, ?, ?)",
-        (sale_id, "2026-09-01", item_id, quantity,
-         sale_price_cents, partner_share_cents)
-    )
+    _insert_with_id(connection, "sales", {
+        "id": sale_id, "date": "2026-09-01", "item_id": item_id,
+        "quantity": quantity, "sale_price_cents": sale_price_cents,
+        "partner_share_cents": partner_share_cents,
+    })
 
 
 def add_return(connection, return_id, item_id, quantity):
-    connection.execute(
-        "INSERT INTO returns VALUES (?, ?, ?, ?, ?)",
-        (return_id, "2026-09-01", item_id, quantity, "")
-    )
+    _insert_with_id(connection, "returns", {
+        "id": return_id, "date": "2026-09-01", "item_id": item_id,
+        "quantity": quantity, "notes": "",
+    })
 
 
 def stock(connection, product_id):
     """The three derived quantities for one product, from the view."""
     return connection.execute(
         "SELECT quantity_sold, quantity_returned, quantity_available "
-        "FROM products_view WHERE id = ?",
+        "FROM products_view WHERE id = %s",
         (product_id,)
     ).fetchone()
 
 
 def add_payment(connection, payment_id, amount_cents, note=""):
-    connection.execute(
-        "INSERT INTO payments VALUES (?, ?, ?, ?)",
-        (payment_id, "2026-09-01", amount_cents, note)
-    )
+    _insert_with_id(connection, "payments", {
+        "id": payment_id, "date": "2026-09-01", "amount_cents": amount_cents,
+        "notes": note,
+    })
 
 
 class _TableBody(HTMLParser):

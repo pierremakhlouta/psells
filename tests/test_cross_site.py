@@ -19,7 +19,7 @@ THIS_SITE = "http://testserver"
 
 
 def sales_count(db):
-    return db.execute("SELECT COUNT(*) FROM sales").fetchone()[0]
+    return db.execute("SELECT COUNT(*) AS n FROM sales").fetchone()["n"]
 
 
 def sell(client, headers):

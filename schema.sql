@@ -1,43 +1,63 @@
--- PSells database schema.
+-- PSells database schema, PostgreSQL.
 --
--- Applied once to create an empty database:
---     sqlite3 data/psells.db < schema.sql
+-- Applied once, to an empty database. The Compose stack mounts this file into
+-- the database container's /docker-entrypoint-initdb.d, so PostgreSQL runs it
+-- the first time the pgdata volume is created and never again. The tests apply
+-- it to their own database at the start of every run.
 --
--- Every table is STRICT, so a declared type is enforced rather than advisory.
+-- It was translated from the SQLite schema PSells used until Phase 04, which is
+-- in the git history. Every rule is the same rule; what changed is only how
+-- each one is written. The differences, and why:
 --
--- Foreign keys are connection-specific in SQLite, and off by default. The line
--- below enables them only for the connection that applies this file. The
--- application must issue PRAGMA foreign_keys = ON on every connection it opens,
--- as the first statement, because the pragma is silently ignored if a
--- transaction is already open.
-
-PRAGMA foreign_keys = ON;
+--   No STRICT and no PRAGMA foreign_keys. PostgreSQL enforces declared types
+--   and foreign keys always, on every connection, with nothing to switch on.
+--
+--   Ids are GENERATED ALWAYS AS IDENTITY. A sequence hands them out and never
+--   hands out the same one twice, so deleting the newest product no longer
+--   frees its id for the next one. ALWAYS means an INSERT cannot supply its own
+--   id unless it says OVERRIDING SYSTEM VALUE; only loading existing records
+--   (the migration, the sample data, the test helpers) does that, and each then
+--   moves the sequence past the highest id.
+--
+--   Dates are the DATE type rather than text with a CHECK. The type itself
+--   refuses 2026-02-30, so the three *_date_valid constraints are gone.
+--
+--   partner_share_percent is double precision, the same eight-byte number
+--   SQLite's REAL is, so a stored percentage reads back exactly as before.
+--   PostgreSQL's own "real" is four bytes and would not.
+--
+--   Money stays integer, not bigint. SUM over an integer column returns bigint,
+--   which Python reads as int. SUM over bigint returns numeric, which Python
+--   reads as Decimal, and integer cents would quietly stop being integers.
 
 
 -- Products ------------------------------------------------------------------
 --
 -- quantity_received is the original intake. It is never changed by recording a
 -- sale or a return. Units sold, units returned and units available are derived
--- from the sales and returns tables; see the products_view at the end.
+-- from the sales and returns tables; see products_view at the end.
 
 CREATE TABLE products (
-    id                          INTEGER PRIMARY KEY,
-    category                    TEXT    NOT NULL CHECK (length(trim(category)) > 0),
-    name                        TEXT    NOT NULL CHECK (length(trim(name)) > 0),
-    quantity_received           INTEGER NOT NULL CHECK (quantity_received >= 1),
-    retail_price_cents          INTEGER NOT NULL CHECK (retail_price_cents >= 0),
-    listed_price_cents          INTEGER NOT NULL CHECK (listed_price_cents >= 0),
-    retail_discontinued         INTEGER NOT NULL CHECK (retail_discontinued IN (0, 1)),
-    partner_share_mode          TEXT    NOT NULL
+    id                          integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    category                    text    NOT NULL CHECK (length(trim(category)) > 0),
+    name                        text    NOT NULL CHECK (length(trim(name)) > 0),
+    quantity_received           integer NOT NULL CHECK (quantity_received >= 1),
+    retail_price_cents          integer NOT NULL CHECK (retail_price_cents >= 0),
+    listed_price_cents          integer NOT NULL CHECK (listed_price_cents >= 0),
+    retail_discontinued         integer NOT NULL CHECK (retail_discontinued IN (0, 1)),
+    partner_share_mode          text    NOT NULL
                                 CONSTRAINT partner_share_mode_valid CHECK (
                                     partner_share_mode IN (
                                         'default',
                                         'custom_percent',
                                         'custom_amount')),
-    partner_share_percent       REAL             CHECK (partner_share_percent BETWEEN 0 AND 100),
-    partner_share_amount_cents  INTEGER          CHECK (partner_share_amount_cents >= 0),
-    condition                   TEXT    NOT NULL CHECK (length(trim(condition)) > 0),
-    notes                       TEXT    NOT NULL,
+    -- PostgreSQL sorts NaN above every number, so BETWEEN refuses it here.
+    -- SQLite stored NaN as NULL instead; the application refuses it first in
+    -- both cases.
+    partner_share_percent       double precision CHECK (partner_share_percent BETWEEN 0 AND 100),
+    partner_share_amount_cents  integer          CHECK (partner_share_amount_cents >= 0),
+    condition                   text    NOT NULL CHECK (length(trim(condition)) > 0),
+    notes                       text    NOT NULL,
 
     -- Each mode allows exactly one shape. Without this, a default-mode product
     -- could carry a stale percentage that nothing would ever read.
@@ -64,7 +84,7 @@ CREATE TABLE products (
                 AND retail_price_cents = 0
                 AND partner_share_mode = 'custom_amount')
     )
-) STRICT;
+);
 
 
 -- Sales ---------------------------------------------------------------------
@@ -73,14 +93,13 @@ CREATE TABLE products (
 -- later changes to the product never rewrite the profit on past sales.
 
 CREATE TABLE sales (
-    id                   INTEGER PRIMARY KEY,
-    date                 TEXT    NOT NULL
-                         CONSTRAINT sales_date_valid CHECK ("date" IS date("date")),
-    item_id              INTEGER NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
-    quantity             INTEGER NOT NULL CHECK (quantity >= 1),
-    sale_price_cents     INTEGER NOT NULL CHECK (sale_price_cents >= 0),
-    partner_share_cents  INTEGER NOT NULL CHECK (partner_share_cents >= 0)
-) STRICT;
+    id                   integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    date                 date    NOT NULL,
+    item_id              integer NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+    quantity             integer NOT NULL CHECK (quantity >= 1),
+    sale_price_cents     integer NOT NULL CHECK (sale_price_cents >= 0),
+    partner_share_cents  integer NOT NULL CHECK (partner_share_cents >= 0)
+);
 
 
 -- Returns -------------------------------------------------------------------
@@ -89,13 +108,12 @@ CREATE TABLE sales (
 -- be returned; that rule is enforced in the application, not here.
 
 CREATE TABLE returns (
-    id        INTEGER PRIMARY KEY,
-    date      TEXT    NOT NULL
-              CONSTRAINT returns_date_valid CHECK ("date" IS date("date")),
-    item_id   INTEGER NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
-    quantity  INTEGER NOT NULL CHECK (quantity >= 1),
-    notes     TEXT    NOT NULL
-) STRICT;
+    id        integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    date      date    NOT NULL,
+    item_id   integer NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+    quantity  integer NOT NULL CHECK (quantity >= 1),
+    notes     text    NOT NULL
+);
 
 
 -- Payments ------------------------------------------------------------------
@@ -104,20 +122,19 @@ CREATE TABLE returns (
 -- deliberately do not reference a product or a sale.
 
 CREATE TABLE payments (
-    id            INTEGER PRIMARY KEY,
-    date          TEXT    NOT NULL
-                  CONSTRAINT payments_date_valid CHECK ("date" IS date("date")),
-    amount_cents  INTEGER NOT NULL CHECK (amount_cents >= 0),
-    notes         TEXT    NOT NULL
-) STRICT;
+    id            integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    date          date    NOT NULL,
+    amount_cents  integer NOT NULL CHECK (amount_cents >= 0),
+    notes         text    NOT NULL
+);
 
 
 -- Indexes -------------------------------------------------------------------
 --
--- SQLite indexes a primary key automatically but never the child side of a
--- foreign key. Without these, every attempt to delete a product scans the whole
--- sales table and the whole returns table to decide whether to allow it, and so
--- does every lookup of one product's transactions.
+-- PostgreSQL, like SQLite, indexes a primary key automatically but never the
+-- child side of a foreign key. Without these, every attempt to delete a product
+-- scans the whole sales table and the whole returns table to decide whether to
+-- allow it, and so does every lookup of one product's transactions.
 
 CREATE INDEX idx_sales_item_id   ON sales(item_id);
 CREATE INDEX idx_returns_item_id ON returns(item_id);
@@ -133,6 +150,10 @@ CREATE INDEX idx_returns_item_id ON returns(item_id);
 -- sales and returns directly would multiply them together: a product with two
 -- sales and three returns would produce six rows, and the sums would be wrong
 -- in both directions.
+--
+-- PostgreSQL expands p.* into a fixed list of columns when the view is
+-- created. A column added to products later does not appear here until the
+-- view is dropped and created again.
 
 CREATE VIEW products_view AS
 SELECT

@@ -6,7 +6,6 @@ to import and nothing to remember.
 """
 
 import os
-import sqlite3
 
 import psycopg
 import pytest
@@ -46,8 +45,7 @@ def postgres_schema():
             returncode=pytest.ExitCode.USAGE_ERROR,
         )
 
-    schema_path = os.path.join(
-        os.path.dirname(psells.__file__), "schema_postgres.sql")
+    schema_path = os.path.join(os.path.dirname(psells.__file__), "schema.sql")
 
     try:
         connection = psycopg.connect(
@@ -67,65 +65,39 @@ def postgres_schema():
 
 
 @pytest.fixture
-def pg():
-    """A PostgreSQL connection whose every change is undone after the test.
+def db():
+    """A database connection whose every change is undone after the test.
 
     The test runs inside one transaction that is rolled back at the end, so
     tests never see each other's rows and nothing has to be deleted. A
     statement the database refuses aborts the transaction it is in, so a test
-    that expects a refusal wraps the statement in pg.transaction(), which
+    that expects a refusal wraps the statement in db.transaction(), which
     inside an open transaction is a savepoint: the refusal rolls back to it and
     the test carries on.
 
-    Rows come back as dicts, so row["name"] reads a column by name.
+    The application's own writes behave the same way here. Each is wrapped in
+    connection.transaction(), which on this connection is a savepoint inside
+    the test's transaction, so it is undone with everything else. On a
+    connection from psells.connect, which is in autocommit, the same block is
+    a real transaction that commits; test_connect.py proves that separately,
+    because nothing here can.
+
+    Rows come back as dicts, so row["name"] reads a column by name, as
+    psells.connect sets up for the application.
 
     Sequences are the one thing a rollback does not undo. Ids a test used are
     gone for good, which is exactly the behaviour that ends id reuse.
     """
     connection = psycopg.connect(TEST_DATABASE_URL, row_factory=dict_row)
 
-    # Opens the transaction now, so that a pg.transaction() block in the test
-    # becomes a savepoint inside it rather than a transaction of its own that
-    # would commit.
+    # Opens the transaction now, so that a transaction() block, the test's or
+    # the application's, becomes a savepoint inside it rather than a
+    # transaction of its own that would commit.
     connection.execute("SELECT 1")
 
     yield connection
 
     connection.rollback()
-    connection.close()
-
-
-# SQLite ---------------------------------------------------------------------
-
-@pytest.fixture
-def db():
-    """An empty database built from the real schema, held in memory.
-
-    It reads schema.sql itself rather than a copy, so a constraint added there
-    is exercised here automatically. Nothing touches the disk and no data files
-    are needed, which keeps the suite runnable on a fresh clone and on CI.
-    """
-    schema_path = os.path.join(os.path.dirname(psells.__file__), "schema.sql")
-
-    # check_same_thread is off for the same reason the API turns it off: the
-    # API tests drive endpoints through a thread pool, and this one connection
-    # is then touched from a thread other than the one that made it. Every test
-    # here is single threaded and uses the connection one call at a time, so
-    # nothing is shared concurrently.
-    connection = sqlite3.connect(":memory:", check_same_thread=False)
-    connection.execute("PRAGMA foreign_keys = ON")
-
-    with open(schema_path) as schema:
-        connection.executescript(schema.read())
-
-    connection.row_factory = sqlite3.Row
-
-    yield connection
-
-    # Closed rather than left to the garbage collector. From Python 3.13 an
-    # unclosed sqlite3 connection raises ResourceWarning when it is collected,
-    # and with warnings as errors that fails whichever test happens to be
-    # running at the time, not the one that leaked.
     connection.close()
 
 
