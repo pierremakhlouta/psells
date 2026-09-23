@@ -19,7 +19,7 @@ import psells
 import web
 
 from helpers import (add_payment, add_product, add_return, add_sale,
-                     figures, table_rows)
+                     figures, forms, table_rows)
 
 
 # Column positions in the inventory table, so a test says which figure it
@@ -92,6 +92,141 @@ def test_products_are_listed_in_id_order(client, db):
     ids = [row[ID] for row in table_rows(client.get("/").text)]
 
     assert ids == ["1", "2", "3"]
+
+
+# Search ----------------------------------------------------------------------
+
+def add_catalogue(db):
+    """Five products across three categories, chosen so that a name search and
+    a category search give different answers."""
+    add_product(db, 1, quantity_received=1, name="Jordan 1 Chicago")
+    add_product(db, 2, quantity_received=1, name="Jordan 4 Bred")
+    add_product(db, 3, quantity_received=1, name="Box Logo Hoodie",
+                category="Hoodies")
+    add_product(db, 4, quantity_received=1, name="Air Max 90")
+    add_product(db, 5, quantity_received=1, name="Chicago Bulls Cap",
+                category="Hats")
+
+
+def ids_shown(client, **params):
+    """The ids of the product rows on the page, in the order shown.
+
+    A product row has a cell for every column. The one-cell row that says
+    nothing matched is not a product, so a search with no match gives [].
+    """
+    rows = table_rows(client.get("/", params=params).text)
+
+    return [row[ID] for row in rows if len(row) == RETAIL + 1]
+
+
+def search_box(page):
+    """The one input of the page's GET form."""
+    (form,) = [form for form in forms(page) if form["method"] == "get"]
+    (box,) = form["inputs"]
+
+    return form, box
+
+
+def test_a_search_narrows_the_table_by_name(client, db):
+    add_catalogue(db)
+
+    assert ids_shown(client, q="chicago") == ["1", "5"]
+
+
+def test_a_search_matches_a_category(client, db):
+    add_catalogue(db)
+
+    assert ids_shown(client, q="hoodies") == ["3"]
+
+
+def test_a_search_ignores_case(client, db):
+    add_catalogue(db)
+
+    assert ids_shown(client, q="SHOES") == ["1", "2", "4"]
+
+
+def test_the_page_searches_with_the_command_lines_search(client, db):
+    """Same function, so the same answer, for every term tried."""
+    add_catalogue(db)
+    everything = psells.all_products(db)
+
+    for term in ["jordan", "o", "CHICAGO", "hats", "zzz"]:
+        expected = [
+            str(product["id"])
+            for product in psells.find_items_by_name_or_category(everything,
+                                                                 term)
+        ]
+
+        assert ids_shown(client, q=term) == expected, term
+
+
+def test_no_search_term_shows_everything(client, db):
+    add_catalogue(db)
+
+    assert ids_shown(client) == ["1", "2", "3", "4", "5"]
+    assert ids_shown(client, q="") == ["1", "2", "3", "4", "5"]
+    assert ids_shown(client, q="   ") == ["1", "2", "3", "4", "5"]
+
+
+def test_spaces_around_a_term_are_ignored(client, db):
+    """The command line strips what it reads, and so does the page."""
+    add_catalogue(db)
+
+    assert ids_shown(client, q="  bred ") == ["2"]
+
+
+def test_a_search_with_no_match_says_so(client, db):
+    add_catalogue(db)
+
+    rows = table_rows(client.get("/", params={"q": "zzz"}).text)
+
+    assert rows == [['No products match "zzz".']]
+
+
+def test_the_search_goes_through_the_form_the_page_serves(client, db):
+    """Read the form's own action and field name, then submit through them.
+
+    A test that built ?q= by hand would pass with the input misnamed, and the
+    real search box would do nothing.
+    """
+    add_catalogue(db)
+
+    form, box = search_box(client.get("/").text)
+    response = client.get(form["action"], params={box["name"]: "chicago"})
+
+    assert box["type"] == "search"
+    assert [row[ID] for row in table_rows(response.text)] == ["1", "5"]
+
+
+def test_the_term_is_put_back_in_the_box(client, db):
+    add_catalogue(db)
+
+    _, box = search_box(client.get("/", params={"q": " bred "}).text)
+
+    assert box["value"] == "bred"
+
+
+def test_a_quote_in_the_search_stays_inside_the_value(client, db):
+    """Unescaped, the quote would close value early and add an attribute."""
+    term = '" autofocus onfocus="alert(1)'
+
+    page = client.get("/", params={"q": term}).text
+    _, box = search_box(page)
+
+    assert box["value"] == term
+    assert "onfocus" not in box
+    assert 'onfocus="alert(1)"' not in page
+
+
+def test_a_search_does_not_change_the_dashboard(client, db):
+    """The panel describes the business, not the rows that happen to show."""
+    add_catalogue(db)
+    add_sale(db, 1, item_id=3, quantity=1)
+
+    everything = figures(client.get("/").text)
+    searched = figures(client.get("/", params={"q": "chicago"}).text)
+
+    assert searched == everything
 
 
 # The dashboard panel ---------------------------------------------------------

@@ -43,21 +43,38 @@ templates.env.filters["money"] = psells.format_cents
 
 
 @router.get("/", response_class=HTMLResponse)
-def inventory_page(request: Request, connection: Connection):
+def inventory_page(request: Request, connection: Connection, q: str = ""):
     """Every product in one table, under the dashboard figures.
 
     The screen that replaces the spreadsheet. The nine figures above the table
     are dashboard_totals, the function the command line's dashboard and the
     API's /dashboard call, handed to the template as they come back.
 
+    q is the search box, arriving as ?q= in the URL. A term narrows the table
+    through find_items_by_name_or_category, the command line's own search, so
+    the two cannot disagree about what matches. The term is stripped, as the
+    command line strips what it reads. No term, or only spaces, means no search
+    and the whole inventory, which is said here rather than left to the fact
+    that an empty string is found inside every string.
+
+    The dashboard is never narrowed by a search. It describes the business,
+    and totals for whichever rows happen to be showing would mean adding them
+    up here, outside psells.
+
     The partner cut is not a column of products_view, so it is worked out here
     for each product by partner_share_for, the same function the API's
     to_product and the command line's print_product call. The template is
     handed the figure and never works it out.
     """
+    term = q.strip()
+    products = psells.all_products(connection)
+
+    if term:
+        products = psells.find_items_by_name_or_category(products, term)
+
     inventory = [
         (product, psells.partner_share_for(product))
-        for product in psells.all_products(connection)
+        for product in products
     ]
 
     return templates.TemplateResponse(
@@ -66,5 +83,6 @@ def inventory_page(request: Request, connection: Connection):
         {
             "totals": psells.dashboard_totals(connection),
             "inventory": inventory,
+            "q": term,
         },
     )

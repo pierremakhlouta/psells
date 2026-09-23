@@ -157,3 +157,43 @@ def figures(html):
     parser.close()
 
     return parser.figures
+
+
+class _Forms(HTMLParser):
+    """Collects every <form> and the attributes of each <input> inside it."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.forms = []
+        self._form = None
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "form":
+            attributes = dict(attrs)
+            self._form = {
+                "action": attributes.get("action", ""),
+                "method": attributes.get("method", "get").lower(),
+                "inputs": [],
+            }
+        elif tag == "input" and self._form is not None:
+            self._form["inputs"].append(dict(attrs))
+
+    def handle_endtag(self, tag):
+        if tag == "form" and self._form is not None:
+            self.forms.append(self._form)
+            self._form = None
+
+
+def forms(html):
+    """Every form in a page: its action, its method, and its inputs.
+
+    Each input is the full dictionary of its attributes, exactly as a browser
+    would read them, so a test can see which name a form will send, what value
+    it holds, and whether anything unexpected has been added to it. Only
+    <input> elements are collected for now; nothing here uses another kind.
+    """
+    parser = _Forms()
+    parser.feed(html)
+    parser.close()
+
+    return parser.forms

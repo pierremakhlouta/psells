@@ -24,6 +24,19 @@
   </dl>
 </section>
 
+{#- A GET form: pressing Search loads /?q=what+was+typed. The input's name must
+    be q, the name of the route's parameter, or the search is silently never
+    sent. value puts the term back in the box after the page reloads, and
+    autoescaping is what keeps a quote typed into the search inside the
+    attribute. -#}
+<form class="search" action="{{ url_for('inventory_page') }}" method="get" role="search">
+  <input type="search" name="q" value="{{ q }}"
+         placeholder="Search by name or category"
+         aria-label="Search by name or category">
+  <button type="submit">Search</button>
+  {% if q %}<a href="{{ url_for('inventory_page') }}">Clear</a>{% endif %}
+</form>
+
 {#- Every figure arrives worked out. This file formats and never computes: the
     partner cut comes from partner_share_for in web.py, and the money filter is
     psells.format_cents. Neither money column can be None, which matters
@@ -56,7 +69,9 @@
     </tr>
     {% else %}
     <tr>
-      <td colspan="8" class="empty">No products yet.</td>
+      <td colspan="8" class="empty">
+        {%- if q %}No products match "{{ q }}".{% else %}No products yet.{% endif -%}
+      </td>
     </tr>
     {% endfor %}
   </tbody>
