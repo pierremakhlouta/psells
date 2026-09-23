@@ -1,5 +1,6 @@
 import os
 import json
+import math
 import sqlite3
 import sys
 from datetime import date, datetime
@@ -172,6 +173,13 @@ def ask_float(prompt, min_value=None, max_value=None):
     while True:
         try:
             value = float(input(prompt))
+
+            # float() reads "nan" and "inf" as numbers, and neither is an
+            # amount of anything. nan would also pass every range check below,
+            # because it compares false with every number. Refused the same way
+            # as text that is not a number at all.
+            if not math.isfinite(value):
+                raise ValueError(f"{value} is not a finite number")
 
             if min_value is not None and value < min_value:
                 print(f"Value must be at least {min_value}.")

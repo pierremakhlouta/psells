@@ -832,6 +832,27 @@ def test_a_partner_percentage_above_one_hundred_is_refused(db, capsys, answers):
     assert "Value must be at most 100." in capsys.readouterr().out
 
 
+def test_a_partner_percentage_of_nan_is_refused(db, capsys, answers):
+    """float() reads "nan" as a number, and nan passes the 0 to 100 check
+    because it compares false with everything. Stored, it became NULL and add
+    died on the schema's matrix constraint."""
+    answers("Shoes", "Jordan 1 Chicago", "10", "no",
+            "100.00", "90.00", "Brand New", "", "custom_percent", "nan", "35")
+    psells.add(db)
+
+    assert only_product(db)["partner_share_percent"] == 35
+    assert "Please enter a valid number." in capsys.readouterr().out
+
+
+def test_ask_float_refuses_every_non_finite_number(capsys, answers):
+    """The one float prompt, used by add and by edit through
+    ask_partner_share. Five refusals, then a number."""
+    answers("nan", "NaN", "inf", "-inf", "infinity", "12.5")
+
+    assert psells.ask_float("Percent: ", min_value=0, max_value=100) == 12.5
+    assert capsys.readouterr().out.count("Please enter a valid number.") == 5
+
+
 # Edit a product, part one: the keep-current convention ------------------------
 #
 # Every field in edit offers the current value in brackets and takes Enter to
