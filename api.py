@@ -29,8 +29,10 @@ at a copy rather than at the real records:
 import datetime
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
+import cross_site
 import psells
 import web
 from dependencies import Connection
@@ -44,6 +46,33 @@ app = FastAPI(
     ),
     version="0.1.0",
 )
+
+
+# Cross-site writes -------------------------------------------------------------
+#
+# Checked once, here, for every route the application has or will have, so a new
+# form cannot be added without it. The reasoning is in cross_site.py.
+#
+# This is async where every endpoint is a plain def, and that is not a
+# contradiction: middleware wraps every request and must be async, and nothing
+# here waits on the database. It reads two headers and either answers at once or
+# hands the request on.
+
+@app.middleware("http")
+async def refuse_cross_site_writes(request, call_next):
+    reason = cross_site.refusal(
+        request.method,
+        request.headers,
+        request.url.scheme,
+        request.headers.get("host", ""),
+    )
+
+    if reason is not None:
+        return PlainTextResponse(
+            f"Refused: a write from another site. {reason}", status_code=403
+        )
+
+    return await call_next(request)
 
 
 # What the API sends back -----------------------------------------------------
