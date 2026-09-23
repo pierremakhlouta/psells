@@ -25,7 +25,8 @@ from helpers import (add_payment, add_product, add_return, add_sale,
 
 # Column positions in the inventory table, so a test says which figure it
 # means rather than which number it is.
-ID, NAME, CATEGORY, CONDITION, AVAILABLE, LISTED, PARTNER_CUT, RETAIL = range(8)
+ID, NAME, CATEGORY, CONDITION, AVAILABLE, LISTED, PARTNER_CUT, RETAIL, ACTIONS = (
+    range(9))
 
 
 # The inventory page ----------------------------------------------------------
@@ -50,7 +51,7 @@ def test_a_product_is_one_row_with_every_column(client, db):
 
     assert rows == [[
         "1", "Jordan 1 Chicago", "Shoes", "Brand New",
-        "10", "$90.00", "$40.00", "",
+        "10", "$90.00", "$40.00", "", "Edit",
     ]]
 
 
@@ -117,7 +118,7 @@ def ids_shown(client, **params):
     """
     rows = table_rows(client.get("/", params=params).text)
 
-    return [row[ID] for row in rows if len(row) == RETAIL + 1]
+    return [row[ID] for row in rows if len(row) == ACTIONS + 1]
 
 
 def search_box(page):
@@ -431,6 +432,190 @@ def test_an_add_from_another_site_is_refused(client, db):
 
     assert response.status_code == 403
     assert products_stored(db) == 0
+
+
+# Editing a product -----------------------------------------------------------
+
+def edit_form(client, product_id=1):
+    response = client.get(f"/products/{product_id}/edit")
+    (form,) = [form for form in forms(response.text) if form["method"] == "post"]
+
+    return form
+
+
+def submit_edit_form(client, product_id=1, follow_redirects=False,
+                     headers=None, **typed):
+    """Submit the edit form as served, with what the test types on top."""
+    form = edit_form(client, product_id)
+    data = form_data(form)
+    data.update(typed)
+
+    return client.post(form["action"], data=data, headers=headers or {},
+                       follow_redirects=follow_redirects)
+
+
+def stored(db, product_id=1):
+    return dict(db.execute("SELECT * FROM products WHERE id = ?",
+                           (product_id,)).fetchone())
+
+
+def test_every_row_links_to_its_edit_page(client, db):
+    add_product(db, 7, quantity_received=1)
+
+    page = client.get("/").text
+
+    assert 'href="http://testserver/products/7/edit"' in page
+    assert table_rows(page)[0][ACTIONS] == "Edit"
+
+
+def test_the_edit_form_opens_filled_with_the_product(client, db):
+    add_product(db, 1, quantity_received=10, notes="boxed",
+                partner_share_mode="custom_percent",
+                partner_share_percent=33.333333)
+
+    data = form_data(edit_form(client))
+
+    assert data == {
+        "category": "Shoes", "name": "Product 1", "condition": "Brand New",
+        "quantity_received": "10", "retail_price": "100.00",
+        "listed_price": "90.00", "partner_share_mode": "custom_percent",
+        "partner_share_percent": "33.333333", "partner_share_amount": "",
+        "notes": "boxed",
+    }
+
+
+@pytest.mark.parametrize("overrides", [
+    {},
+    {"partner_share_mode": "custom_percent", "partner_share_percent": 33.333333},
+    {"partner_share_mode": "custom_amount", "partner_share_amount_cents": 1234},
+    {"retail_discontinued": 1, "retail_price_cents": 0,
+     "partner_share_mode": "custom_amount", "partner_share_amount_cents": 700},
+    {"notes": ""},
+])
+def test_saving_the_form_untouched_changes_nothing(client, db, overrides):
+    """What the form shows must read back as exactly what is stored,
+    including a percentage no short form would survive."""
+    add_product(db, 1, quantity_received=10, **overrides)
+    before = stored(db)
+
+    response = submit_edit_form(client)
+
+    assert response.status_code == 303
+    assert stored(db) == before
+
+
+def test_an_edit_answers_303_and_says_so(client, db):
+    add_product(db, 1, quantity_received=10)
+
+    response = submit_edit_form(client, name="Renamed")
+
+    assert response.status_code == 303
+    assert response.headers["location"].endswith("/?edited=1")
+    assert "Saved changes to Renamed, id 1." in client.get(
+        response.headers["location"]).text
+
+
+def test_an_edit_stores_every_field_typed(client, db):
+    add_product(db, 1, quantity_received=10)
+
+    submit_edit_form(client, category="Hats", quantity_received="12",
+                     retail_price="80.00", listed_price="75.50",
+                     partner_share_mode="custom_amount",
+                     partner_share_amount="20.00", notes="new")
+
+    row = stored(db)
+
+    assert (row["category"], row["quantity_received"],
+            row["retail_price_cents"], row["listed_price_cents"],
+            row["partner_share_mode"], row["partner_share_amount_cents"],
+            row["notes"]) == ("Hats", 12, 8000, 7550, "custom_amount",
+                              2000, "new")
+
+
+def test_emptied_notes_are_cleared(client, db):
+    """Decided: on a form that opens filled in, empty means cleared."""
+    add_product(db, 1, quantity_received=10, notes="boxed")
+
+    submit_edit_form(client, notes="")
+
+    assert stored(db)["notes"] == ""
+
+
+def test_an_emptied_name_is_refused_not_kept(client, db):
+    add_product(db, 1, quantity_received=10, name="Keep me")
+
+    response = submit_edit_form(client, name="")
+
+    assert response.status_code == 422
+    assert stored(db)["name"] == "Keep me"
+    assert "Name cannot be blank." in response.text
+    assert field(forms(response.text)[-1], "name")["value"] == ""
+
+
+def test_the_intake_floor_is_enforced_from_the_page(client, db):
+    add_product(db, 1, quantity_received=10)
+    add_sale(db, 1, item_id=1, quantity=4)
+    add_return(db, 1, item_id=1, quantity=1)
+
+    response = submit_edit_form(client, quantity_received="4",
+                                listed_price="abc")
+
+    assert response.status_code == 422
+    assert stored(db)["quantity_received"] == 10
+    assert "cannot be less than 5" in response.text
+    assert psells.MONEY_TEXT_PROBLEM in response.text
+
+
+def test_a_refused_edit_keeps_what_was_typed(client, db):
+    add_product(db, 1, quantity_received=10)
+
+    response = submit_edit_form(client, name="New name", listed_price="9O",
+                                partner_share_mode="custom_amount",
+                                partner_share_amount="5.00")
+    data = form_data(forms(response.text)[-1])
+
+    assert response.status_code == 422
+    assert (data["name"], data["listed_price"], data["partner_share_mode"],
+            data["partner_share_amount"]) == ("New name", "9O",
+                                              "custom_amount", "5.00")
+
+
+def test_an_edit_never_rewrites_a_sale_from_the_page(client, db):
+    add_product(db, 1, quantity_received=10)
+    add_sale(db, 1, item_id=1, quantity=2, sale_price_cents=9000,
+             partner_share_cents=3500)
+    before = figures(client.get("/").text)
+
+    submit_edit_form(client, partner_share_mode="custom_amount",
+                     partner_share_amount="1.00")
+
+    assert db.execute("SELECT partner_share_cents FROM sales").fetchone()[0] == 3500
+    assert figures(client.get("/").text) == before
+
+
+def test_editing_a_product_that_does_not_exist_is_a_404_page(client, db):
+    for method in ("get", "post"):
+        response = getattr(client, method)("/products/99/edit")
+
+        assert response.status_code == 404
+        assert "No product 99" in response.text
+
+
+def test_an_id_that_is_not_a_number_does_not_match_the_route(client):
+    """{product_id:int} in the path: "abc" matches no route and is a 404.
+    Written as {product_id}, it would match and fail validation with a 422."""
+    for method in ("get", "post"):
+        assert getattr(client, method)("/products/abc/edit").status_code == 404
+
+
+def test_an_edit_from_another_site_is_refused(client, db):
+    add_product(db, 1, quantity_received=10, name="Keep me")
+
+    response = submit_edit_form(client, name="Changed",
+                                headers={"Origin": "https://evil.example"})
+
+    assert response.status_code == 403
+    assert stored(db)["name"] == "Keep me"
 
 
 # The dashboard panel ---------------------------------------------------------

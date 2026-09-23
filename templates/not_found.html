@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+
+{% block title %}Not found · PSells{% endblock %}
+
+{% block content %}
+<h1>No product {{ product_id }}</h1>
+<p>There is no product with that id. It may have been deleted.
+  <a href="{{ url_for('inventory_page') }}">Back to the inventory</a></p>
+{% endblock %}

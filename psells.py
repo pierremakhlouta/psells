@@ -85,8 +85,12 @@ def all_products(connection):
     ).fetchall()
 
 
-def format_cents(cents):
+def format_cents(cents, *, symbol=True):
     """Format a whole number of cents as money, for display only.
+
+    symbol=False leaves out the dollar sign, giving text parse_money reads back
+    as the same number of cents. That is what an edit form puts in a box to be
+    typed over, so the two conversions stay the only two.
 
     The dollar sign is part of what comes back, so a negative figure reads
     -$3.00 and not $-3.00. It used to be left to the caller, and every caller
@@ -101,7 +105,9 @@ def format_cents(cents):
     sign = "-" if cents < 0 else ""
     cents = abs(cents)
 
-    return f"{sign}${cents // 100}.{cents % 100:02d}"
+    dollar = "$" if symbol else ""
+
+    return f"{sign}{dollar}{cents // 100}.{cents % 100:02d}"
 
 
 def parse_money(text):
@@ -739,6 +745,33 @@ def create_product(connection, category, name, quantity_received,
     return cursor.lastrowid
 
 
+def _intake_floor_problem(connection, product_id, quantity_received):
+    """The one rule an edit adds: received cannot fall below what has gone.
+
+    Units sold and units returned have both left the original intake. Returns
+    {} or {"quantity_received": sentence}. Raises ProductNotFound for an id that
+    does not exist, which is checked first because nothing else about an edit
+    means anything without the product.
+    """
+    product = connection.execute(
+        "SELECT * FROM products_view WHERE id = ?",
+        (product_id,)
+    ).fetchone()
+
+    if product is None:
+        raise ProductNotFound(f"No product with id {product_id}.")
+
+    gone = product["quantity_sold"] + product["quantity_returned"]
+
+    if (_is_whole_number(quantity_received)
+            and 1 <= quantity_received < gone):
+        return {"quantity_received": (
+            f"Quantity received cannot be less than {gone}, the units already "
+            f"sold or returned."
+        )}
+
+    return {}
+
 def update_product(connection, product_id, category, name, quantity_received,
                    retail_discontinued, retail_price_cents, listed_price_cents,
                    condition, notes, partner_share_mode, partner_share_percent,
@@ -763,29 +796,15 @@ def update_product(connection, product_id, category, name, quantity_received,
     Raises ProductNotFound for an id that does not exist, the same exception
     create_sale raises for one, because it is the same fact about the world.
     """
-    product = connection.execute(
-        "SELECT * FROM products_view WHERE id = ?",
-        (product_id,)
-    ).fetchone()
-
-    if product is None:
-        raise ProductNotFound(f"No product with id {product_id}.")
-
-    problems = _every_product_problem(
-        category, name, quantity_received, retail_discontinued,
-        retail_price_cents, listed_price_cents, condition,
-        partner_share_mode, partner_share_percent, partner_share_amount_cents,
-    )
-
-    gone = product["quantity_sold"] + product["quantity_returned"]
-
-    if ("quantity_received" not in problems
-            and _is_whole_number(quantity_received)
-            and quantity_received < gone):
-        problems["quantity_received"] = (
-            f"Quantity received cannot be less than {gone}, the units already "
-            f"sold or returned."
-        )
+    problems = {
+        **_intake_floor_problem(connection, product_id, quantity_received),
+        **_every_product_problem(
+            category, name, quantity_received, retail_discontinued,
+            retail_price_cents, listed_price_cents, condition,
+            partner_share_mode, partner_share_percent,
+            partner_share_amount_cents,
+        ),
+    }
 
     if problems:
         raise ProductError(problems)
@@ -914,6 +933,60 @@ def create_product_from_text(connection, fields):
                             **problems})
 
     return create_product(connection, **values)
+
+
+def product_form_text(product):
+    """One stored product as the text an edit form starts from.
+
+    The inverse of read_product_text: reading this text back gives the product's
+    own values, so opening the edit form and saving it unchanged changes
+    nothing. Money is written without the dollar sign, because that is what
+    parse_money reads. A percentage is written with str(), which Python
+    guarantees reads back as the identical float; a shortened form such as
+    "33.3" for 33.333333 would quietly change it on the first save.
+    """
+    percent = product["partner_share_percent"]
+    amount = product["partner_share_amount_cents"]
+    discontinued = bool(product["retail_discontinued"])
+
+    return {
+        "category": product["category"],
+        "name": product["name"],
+        "quantity_received": str(product["quantity_received"]),
+        "retail_discontinued": "yes" if discontinued else "",
+        "retail_price": "" if discontinued else format_cents(
+            product["retail_price_cents"], symbol=False),
+        "listed_price": format_cents(product["listed_price_cents"],
+                                     symbol=False),
+        "condition": product["condition"],
+        "notes": product["notes"],
+        "partner_share_mode": product["partner_share_mode"],
+        "partner_share_percent": "" if percent is None else str(percent),
+        "partner_share_amount": "" if amount is None else format_cents(
+            amount, symbol=False),
+    }
+
+
+def update_product_from_text(connection, product_id, fields):
+    """Change a product from an edit form's text.
+
+    As create_product_from_text, every problem at once: what could not be read,
+    every rule the readable fields break, and the intake floor. Raises
+    ProductNotFound for an id that does not exist.
+    """
+    values, problems = read_product_text(fields)
+
+    if problems:
+        rule_values = {key: value for key, value in values.items()
+                       if key != "notes"}
+        raise ProductError({
+            **_intake_floor_problem(connection, product_id,
+                                    values["quantity_received"]),
+            **_every_product_problem(**rule_values),
+            **problems,
+        })
+
+    update_product(connection, product_id, **values)
 
 def view_dashboard(connection):
     totals = dashboard_totals(connection)

@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Add a product · PSells{% endblock %}
+{% block title %}{% if product %}Edit {{ product.name }}{% else %}Add a product{% endif %} · PSells{% endblock %}
 
 {#- One field: its label, its input holding what was typed, and its problem.
     A macro, so the eight text fields are written once. values and errors are
@@ -19,18 +19,30 @@
 {% endmacro %}
 
 {% block content %}
+{% if product %}
+<h1>Edit product {{ product.id }}</h1>
+<p class="lead">Sold {{ product.quantity_sold }}, returned {{ product.quantity_returned }}.
+  Quantity received cannot go below the units that have left.
+  Changing the partner share affects later sales only.</p>
+{% else %}
 <h1>Add a product</h1>
-
-{% if errors %}
-<p class="form-error" role="alert">The product was not added. Fix the fields marked below.</p>
 {% endif %}
 
-{#- method="post": the values travel in the body, not the URL. The server
+{% if errors %}
+<p class="form-error" role="alert">
+  {%- if product %}Nothing was saved.{% else %}The product was not added.{% endif %} Fix the fields marked below.</p>
+{% endif %}
+
+{#- One form for adding and editing. When editing, product is the product as
+    stored and values starts as its text; a field emptied here arrives empty
+    and means cleared, unlike the command line, where Enter keeps the value.
+
+    method="post": the values travel in the body, not the URL. The server
     answers a success with a 303 back to the inventory, so refreshing that page
     cannot add the product twice. Money fields are plain text with a decimal
     keypad rather than type="number", so every rule about amounts stays in
     parse_money. required is a convenience only; the server checks everything. -#}
-<form class="product-form" action="{{ url_for('add_product_submit') }}" method="post">
+<form class="product-form" action="{{ action }}" method="post">
   {{ field("category", "Category", required=true) }}
   {{ field("name", "Name", required=true) }}
   {{ field("condition", "Condition", required=true) }}
@@ -64,7 +76,7 @@
   {{ field("notes", "Notes", wide=true) }}
 
   <div class="actions">
-    <button type="submit">Add product</button>
+    <button type="submit">{% if product %}Save changes{% else %}Add product{% endif %}</button>
     <a href="{{ url_for('inventory_page') }}">Cancel</a>
   </div>
 </form>

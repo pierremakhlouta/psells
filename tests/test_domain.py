@@ -999,6 +999,51 @@ def test_a_fixed_amount_is_read_as_money(db):
         "partner_share_amount": psells.MONEY_TEXT_PROBLEM}
 
 
+# An edit form's text, both ways.
+
+@pytest.mark.parametrize("overrides", [
+    {},
+    {"partner_share_mode": "custom_percent", "partner_share_percent": 33.333333},
+    {"partner_share_mode": "custom_percent", "partner_share_percent": 0.1},
+    {"partner_share_mode": "custom_amount", "partner_share_amount_cents": 1},
+    {"retail_discontinued": 1, "retail_price_cents": 0,
+     "partner_share_mode": "custom_amount", "partner_share_amount_cents": 0},
+    {"listed_price_cents": 0, "notes": ""},
+])
+def test_a_products_form_text_reads_back_as_the_product(db, overrides):
+    """Opening the edit form and saving it unchanged must change nothing."""
+    add_product(db, 1, quantity_received=10, **overrides)
+    product = psells.all_products(db)[0]
+
+    values, problems = psells.read_product_text(
+        psells.product_form_text(product))
+
+    assert problems == {}
+    assert values == {
+        key: bool(product[key]) if key == "retail_discontinued" else product[key]
+        for key in values
+    }
+
+
+def test_update_product_from_text_reports_the_floor_with_the_rest(db):
+    """A price that cannot be read, a blank name and a quantity below what
+    has gone: all three in one refusal."""
+    add_product(db, 1, quantity_received=10)
+    add_sale(db, 1, item_id=1, quantity=6)
+
+    with pytest.raises(psells.ProductError) as refused:
+        psells.update_product_from_text(db, 1, form_text(
+            name="", listed_price="abc", quantity_received="3"))
+
+    assert set(refused.value.problems) == {"name", "listed_price",
+                                           "quantity_received"}
+
+
+def test_update_product_from_text_for_a_missing_product(db):
+    with pytest.raises(psells.ProductNotFound):
+        psells.update_product_from_text(db, 99, form_text(listed_price="x"))
+
+
 # Formatting money -------------------------------------------------------------
 #
 # format_cents had no test of its own until Phase 03b. It was covered only
@@ -1026,6 +1071,13 @@ def test_format_cents_puts_the_minus_outside_the_dollar_sign():
 
 def test_format_cents_handles_a_negative_part_of_a_dollar():
     assert psells.format_cents(-9) == "-$0.09"
+
+
+def test_format_cents_can_leave_out_the_dollar_sign():
+    """For an edit form: text parse_money reads back as the same cents."""
+    assert psells.format_cents(1234, symbol=False) == "12.34"
+    assert psells.format_cents(-9, symbol=False) == "-0.09"
+    assert psells.parse_money(psells.format_cents(1234, symbol=False)) == 1234
 
 
 def test_format_cents_does_not_go_through_a_float():

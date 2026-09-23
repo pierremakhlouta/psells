@@ -46,7 +46,7 @@ templates.env.filters["money"] = psells.format_cents
 
 @router.get("/", response_class=HTMLResponse)
 def inventory_page(request: Request, connection: Connection, q: str = "",
-                   added: str = ""):
+                   added: str = "", edited: str = ""):
     """Every product in one table, under the dashboard figures.
 
     The screen that replaces the spreadsheet. The nine figures above the table
@@ -60,10 +60,10 @@ def inventory_page(request: Request, connection: Connection, q: str = "",
     and the whole inventory, which is said here rather than left to the fact
     that an empty string is found inside every string.
 
-    added is the id of a product just added, carried here by the redirect
-    after the add form. It is read as text and matched against the ids that
-    exist, so a typed ?added=abc or an id that does not exist shows nothing
-    rather than an error or a false message.
+    added and edited are the id of a product just added or changed, carried
+    here by the redirect after a form. Each is read as text and matched against
+    the ids that exist, so a typed ?added=abc or an id that does not exist
+    shows nothing rather than an error or a false message.
 
     The dashboard is never narrowed by a search. It describes the business,
     and totals for whichever rows happen to be showing would mean adding them
@@ -81,10 +81,9 @@ def inventory_page(request: Request, connection: Connection, q: str = "",
     if term:
         products = psells.find_items_by_name_or_category(everything, term)
 
-    added_product = next(
-        (product for product in everything if str(product["id"]) == added),
-        None,
-    )
+    def named(product_id):
+        return next((product for product in everything
+                     if str(product["id"]) == product_id), None)
 
     inventory = [
         (product, psells.partner_share_for(product))
@@ -98,7 +97,8 @@ def inventory_page(request: Request, connection: Connection, q: str = "",
             "totals": psells.dashboard_totals(connection),
             "inventory": inventory,
             "q": term,
-            "added": added_product,
+            "added": named(added),
+            "edited": named(edited),
         },
     )
 
@@ -131,16 +131,32 @@ class ProductForm(BaseModel):
 BLANK_PRODUCT = ProductForm(partner_share_mode="default").model_dump()
 
 
-def product_form(request, values, problems, status_code=200):
-    """The add form, empty or as it was typed, with a sentence per problem.
+def product_form(request, values, problems, status_code=200, product=None):
+    """The product form, for adding or for editing one product.
 
-    One template for both, so there is one copy of the form.
+    Empty, filled from the stored product, or as it was typed, with a sentence
+    per problem. One template for adding and editing and for both the first
+    showing and a refusal, so there is one copy of the form.
     """
+    if product is None:
+        action = request.url_for("add_product_submit")
+    else:
+        action = request.url_for("edit_product_submit",
+                                 product_id=product["id"])
+
     return templates.TemplateResponse(
         request,
         "product_form.html",
-        {"values": values, "errors": problems},
+        {"values": values, "errors": problems, "product": product,
+         "action": action},
         status_code=status_code,
+    )
+
+
+def not_found(request, product_id):
+    return templates.TemplateResponse(
+        request, "not_found.html", {"product_id": product_id},
+        status_code=404,
     )
 
 
@@ -170,5 +186,66 @@ def add_product_submit(request: Request, connection: Connection,
 
     return RedirectResponse(
         request.url_for("inventory_page").include_query_params(added=product_id),
+        status_code=303,
+    )
+
+
+# Editing a product -----------------------------------------------------------
+#
+# {product_id:int} in the path means a URL whose id is not a whole number does
+# not match this route at all and is a plain 404, rather than matching it and
+# failing validation with a JSON 422.
+
+def find_product(connection, product_id):
+    """The product with this id from products_view, or None."""
+    return next((product for product in psells.all_products(connection)
+                 if product["id"] == product_id), None)
+
+
+@router.get("/products/{product_id:int}/edit", response_class=HTMLResponse)
+def edit_product_page(request: Request, connection: Connection,
+                      product_id: int):
+    """The product form, filled with the product as it is stored.
+
+    The text comes from product_form_text, which reads back as exactly the
+    stored values, so saving without touching anything changes nothing.
+    """
+    product = find_product(connection, product_id)
+
+    if product is None:
+        return not_found(request, product_id)
+
+    return product_form(request, psells.product_form_text(product), {},
+                        product=product)
+
+
+@router.post("/products/{product_id:int}/edit", response_class=HTMLResponse)
+def edit_product_submit(request: Request, connection: Connection,
+                        product_id: int,
+                        form: Annotated[ProductForm, Form()]):
+    """Save every field, or show the form again with every problem.
+
+    A field that arrives empty was emptied on purpose, because the form opened
+    filled in: emptied notes are cleared, and an emptied required field is
+    refused. That is the opposite of the command line, where Enter keeps the
+    current value, and it was decided that way. Success redirects with 303,
+    as adding does.
+    """
+    product = find_product(connection, product_id)
+
+    if product is None:
+        return not_found(request, product_id)
+
+    fields = form.model_dump()
+
+    try:
+        psells.update_product_from_text(connection, product_id, fields)
+    except psells.ProductError as refused:
+        return product_form(request, fields, refused.problems,
+                            status_code=422, product=product)
+
+    return RedirectResponse(
+        request.url_for("inventory_page").include_query_params(
+            edited=product_id),
         status_code=303,
     )
