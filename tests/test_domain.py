@@ -1136,6 +1136,89 @@ def test_format_cents_does_not_go_through_a_float():
     assert psells.format_cents(102030405060708090) == "$1020304050607080.90"
 
 
+# The whole of recording a return with none of the asking.
+
+def returns_stored(db):
+    return [dict(row) for row in db.execute("SELECT * FROM returns ORDER BY id")]
+
+
+def test_create_return_stores_the_row_and_returns_its_id(db):
+    add_product(db, 1, quantity_received=10)
+
+    return_id = psells.create_return(db, 1, 2, "2026-09-14", " damaged box ")
+
+    assert returns_stored(db) == [{"id": return_id, "date": "2026-09-14",
+                                   "item_id": 1, "quantity": 2,
+                                   "notes": "damaged box"}]
+
+
+def test_create_return_reduces_stock_and_leaves_the_intake(db):
+    """Received 10, sold 3, returned 2: 5 remain, and 10 is still 10."""
+    add_product(db, 1, quantity_received=10)
+    add_sale(db, 1, item_id=1, quantity=3)
+
+    psells.create_return(db, 1, 2, "2026-09-14", "")
+
+    assert tuple(stock(db, 1)) == (3, 2, 5)
+    assert db.execute("SELECT quantity_received FROM products").fetchone()[0] == 10
+
+
+def test_create_return_moves_only_the_stock_figures(db):
+    """Money is from sales and payments; a return changes neither."""
+    add_product(db, 1, quantity_received=10)
+    add_sale(db, 1, item_id=1, quantity=3)
+    before = psells.dashboard_totals(db)
+
+    psells.create_return(db, 1, 2, "2026-09-14", "")
+    after = psells.dashboard_totals(db)
+
+    assert after["total_returned"] == before["total_returned"] + 2
+    assert after["total_available"] == before["total_available"] - 2
+    for key in ("total_received", "total_sold", "total_revenue", "total_profit",
+                "total_partner_share", "total_paid", "balance_owing"):
+        assert after[key] == before[key], key
+
+
+def test_create_return_stores_the_date_zero_padded(db):
+    add_product(db, 1, quantity_received=10)
+
+    psells.create_return(db, 1, 1, "2026-9-3", "")
+
+    assert returns_stored(db)[0]["date"] == "2026-09-03"
+
+
+@pytest.mark.parametrize("quantity, date_text, message", [
+    (0, "2026-09-14", "Quantity must be at least 1."),
+    (True, "2026-09-14", "Quantity must be at least 1."),
+    (4, "2026-09-14", "Only 3 available, so 4 cannot be returned."),
+    (1, "2026-02-30", "'2026-02-30' is not a date in YYYY-MM-DD form."),
+])
+def test_create_return_refuses_with_a_sentence(db, quantity, date_text,
+                                               message):
+    add_product(db, 1, quantity_received=3)
+
+    with pytest.raises(psells.ReturnError) as refused:
+        psells.create_return(db, 1, quantity, date_text, "")
+
+    assert str(refused.value) == message
+    assert returns_stored(db) == []
+
+
+def test_create_return_refuses_a_product_with_no_stock(db):
+    add_product(db, 1, quantity_received=2, name="Retired Diver")
+    add_sale(db, 1, item_id=1, quantity=2)
+
+    with pytest.raises(psells.ReturnError) as refused:
+        psells.create_return(db, 1, 1, "2026-09-14", "")
+
+    assert str(refused.value) == "Retired Diver has no stock available to return."
+
+
+def test_create_return_for_a_product_that_does_not_exist(db):
+    with pytest.raises(psells.ProductNotFound):
+        psells.create_return(db, 99, 1, "2026-09-14", "")
+
+
 # Where the data lives --------------------------------------------------------
 
 def test_the_default_paths_sit_beside_psells_not_beside_the_shell(monkeypatch):

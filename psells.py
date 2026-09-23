@@ -554,6 +554,68 @@ def create_sale(connection, product_id, quantity, sale_price_cents, sale_date):
 
 
 
+class ReturnError(ValueError):
+    """A return that cannot be recorded, with a message safe to show a caller.
+
+    Raised by create_return when the stock disagrees with a return that was
+    otherwise well formed, as SaleError is by create_sale.
+    """
+
+
+def create_return(connection, product_id, quantity, return_date, notes):
+    """Record units going back out of stock, and return the new return's id.
+
+    The whole of recording a return with none of the asking. record_return is
+    the same operation driven by a keyboard; the web form drives it from a
+    request. The checks repeat what the prompts guarantee, for the reason
+    create_sale gives: a caller that is not a prompt has guaranteed nothing.
+
+    A return is its own row. The product is not touched: quantity_received
+    means the units originally taken in, and units available is derived from
+    received minus sold minus returned, so there is no second figure that could
+    fall out of step. The date is written back zero-padded, as create_sale's is.
+
+    Raises ProductNotFound for an id that does not exist, the same exception
+    create_sale and update_product raise, and ReturnError for the rest.
+    """
+    product = connection.execute(
+        "SELECT * FROM products_view WHERE id = ?",
+        (product_id,)
+    ).fetchone()
+
+    if product is None:
+        raise ProductNotFound(f"No product with id {product_id}.")
+
+    available = product["quantity_available"]
+
+    if available <= 0:
+        raise ReturnError(
+            f"{product['name']} has no stock available to return."
+        )
+
+    if not _is_whole_number(quantity) or quantity < 1:
+        raise ReturnError("Quantity must be at least 1.")
+
+    if quantity > available:
+        raise ReturnError(
+            f"Only {available} available, so {quantity} cannot be returned."
+        )
+
+    try:
+        return_date = datetime.strptime(return_date, "%Y-%m-%d").strftime(
+            "%Y-%m-%d")
+    except (ValueError, TypeError):
+        raise ReturnError(f"{return_date!r} is not a date in YYYY-MM-DD form.")
+
+    with connection:
+        cursor = connection.execute(
+            "INSERT INTO returns (date, item_id, quantity, notes) "
+            "VALUES (?, ?, ?, ?)",
+            (return_date, product_id, quantity, (notes or "").strip())
+        )
+
+    return cursor.lastrowid
+
 PARTNER_SHARE_MODES = ("default", "custom_percent", "custom_amount")
 
 
@@ -1555,13 +1617,8 @@ def record_return(connection):
     notes = ask_optional_text("Notes: ")
 
     # The intake quantity is no longer reduced. It means units originally
-    # received, and this return is recorded as its own fact.
-    with connection:
-        connection.execute(
-            "INSERT INTO returns (date, item_id, quantity, notes) "
-            "VALUES (?, ?, ?, ?)",
-            (return_date, product["id"], quantity, notes)
-        )
+    # received, and this return is recorded as its own fact, by create_return.
+    create_return(connection, product["id"], quantity, return_date, notes)
 
     print("Return recorded.")
 
