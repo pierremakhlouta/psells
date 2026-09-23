@@ -5,7 +5,19 @@ rather than fixtures, so a test file imports them by name. pytest puts this
 folder on the import path, which is what makes `from helpers import ...` work.
 """
 
+import os
 from html.parser import HTMLParser
+
+
+# The throwaway PostgreSQL the suite runs against: the db-test service in
+# compose.yaml, or the service of the same name in CI. PSELLS_TEST_DATABASE_URL
+# overrides it. Here rather than in conftest.py so a test file can import it;
+# "from conftest import" could find the empty conftest.py at the project root
+# first.
+TEST_DATABASE_URL = (
+    os.environ.get("PSELLS_TEST_DATABASE_URL")
+    or "postgresql://psells_test:psells_test@127.0.0.1:5433/psells_test"
+)
 
 
 def add_product(connection, product_id, quantity_received, **overrides):

@@ -66,6 +66,33 @@ services:
       timeout: 5s
       retries: 15
 
+  db-test:
+    # The database the test suite runs against. It holds invented rows only
+    # and forgets them when it stops, so its password is written here in the
+    # open and means nothing. It shares nothing with db: not its data, not its
+    # password, not its network port. Started only when asked for:
+    #     docker compose --profile test up -d --wait db-test
+    profiles: ["test"]
+    image: postgres:18
+    environment:
+      POSTGRES_USER: psells_test
+      POSTGRES_PASSWORD: psells_test
+      POSTGRES_DB: psells_test
+    # Memory rather than disk: nothing a test writes survives the container,
+    # and nothing waits on a disk.
+    tmpfs:
+      - /var/lib/postgresql
+    ports:
+      # pytest runs on the Mac, outside the stack, so this one port is
+      # published, to this machine only. 5433 so it cannot be mistaken for, or
+      # collide with, a PostgreSQL on its usual 5432.
+      - "127.0.0.1:5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U psells_test -d psells_test"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
 volumes:
   # The database lives here, inside Docker Desktop's disk, not in this folder.
   # "docker compose down -v" deletes it, and so does resetting Docker Desktop.

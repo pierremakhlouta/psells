@@ -36,7 +36,8 @@ The web pages and the HTTP API run in one process and need FastAPI, uvicorn,
 Jinja2 for the templates, and python-multipart to read form posts. Development
 also needs pytest, httpx2 for the test client, PyYAML so a test can read
 `compose.yaml`, and openpyxl for `import_excel.py`, the one-time script that
-read the original spreadsheet:
+read the original spreadsheet. psycopg, the PostgreSQL driver, is a runtime
+requirement; the tests use it today and the application moves onto it next:
 
     pip install -r requirements.txt        # to run
     pip install -r requirements-dev.txt    # to work on it
@@ -246,10 +247,25 @@ the machine is reliably awake matters more than the exact hour.
 
 ## Running the tests
 
-    pip install -r requirements-dev.txt
-    pytest
+The suite needs a PostgreSQL to run against: `db-test` in `compose.yaml`, a
+throwaway database that holds invented rows in memory, shares nothing with the
+real one, and is published on `127.0.0.1:5433`. Start it once, then run pytest
+as often as you like:
 
-Six files, and the split is deliberate, so a red run says what kind of thing
+    pip install -r requirements-dev.txt
+    docker compose --profile test up -d --wait db-test
+    pytest
+    docker compose --profile test stop db-test
+
+Without it, pytest stops at once with one line saying how to start it, rather
+than skipping the database tests and reporting a pass. The suite wipes the
+database it is pointed at, so it refuses any whose name does not end in
+`_test`. `PSELLS_TEST_DATABASE_URL` points it somewhere else.
+
+Every warning is an error (`pytest.ini`), apart from one known deprecation in
+Starlette's test client on Python 3.14, matched on its exact message.
+
+Seven files, and the split is deliberate, so a red run says what kind of thing
 broke before you read a line of it.
 
 `test_domain.py` covers everything in `psells.py` that has no input or output:
@@ -276,15 +292,23 @@ pages show with what the API serves.
 
 `test_cross_site.py` covers the refusal of writes from another site.
 
+`test_schema.py` runs `schema_postgres.sql` on the real engine: every rule
+tried with a row that breaks exactly that rule and refused by that rule's own
+constraint, ids never reused, the view's derived stock, and the Python types
+each column comes back as. Each test runs in a transaction that is rolled back
+at the end, so nothing has to be cleaned up.
+
 `test_container.py` reads the `Dockerfile`, `.dockerignore` and `compose.yaml`
 and fails if the image could ever be built from the whole folder or from
 `data/`, if it leaves out a module the server imports, if any port is published
 beyond this machine, if the database publishes a port at all, or if a password
 is written into `compose.yaml`.
 
-No test needs a data file. They build databases in memory from `schema.sql`
-itself, so a constraint added to the schema is exercised by the existing tests
-automatically. Everything runs on every push through GitHub Actions, alongside a
+No test needs a data file. The SQLite tests build databases in memory from
+`schema.sql`, and the PostgreSQL tests build theirs from `schema_postgres.sql`,
+so a constraint added to either is exercised automatically. On GitHub Actions
+the test database is a service container of the same image, on the same
+port. Everything runs on every push through GitHub Actions, alongside a
 dependency vulnerability audit and a shellcheck pass over the shell scripts.
 Dependabot checks every pinned version weekly and opens a pull request when one
 has a newer release.

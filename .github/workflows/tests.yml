@@ -7,6 +7,25 @@ jobs:
   test:
     runs-on: ubuntu-latest
 
+    # The throwaway PostgreSQL the suite runs against, the same image and the
+    # same invented credentials as the db-test service in compose.yaml, on the
+    # same port, so the tests find it at the address they use on a laptop.
+    # The runner waits for the health check before the first step.
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: psells_test
+          POSTGRES_PASSWORD: psells_test
+          POSTGRES_DB: psells_test
+        ports:
+          - "5433:5432"
+        options: >-
+          --health-cmd "pg_isready -U psells_test -d psells_test"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+
     steps:
       - name: Check out the repository
         uses: actions/checkout@v7

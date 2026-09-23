@@ -171,3 +171,16 @@ def test_the_app_is_never_given_a_default_data_folder():
         assert not source.startswith(("./", "data", "/")), mount
         if source.startswith("${"):
             assert ":?" in source and ":-" not in source, mount
+
+
+def test_the_test_database_starts_only_when_asked_for_and_keeps_nothing():
+    test_db = compose()["services"]["db-test"]
+
+    # Behind a profile, so "docker compose up" never starts it beside the real
+    # database; in memory, so nothing it holds reaches a disk or a volume.
+    assert test_db["profiles"] == ["test"]
+    assert test_db["tmpfs"] == ["/var/lib/postgresql"]
+    assert "volumes" not in test_db
+    # The suite wipes whatever it is pointed at and refuses a name without
+    # this ending; the service has to be called what the suite expects.
+    assert test_db["environment"]["POSTGRES_DB"].endswith("_test")
