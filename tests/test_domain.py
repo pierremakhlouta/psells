@@ -1131,9 +1131,24 @@ def test_format_cents_can_leave_out_the_dollar_sign():
     assert psells.parse_money(psells.format_cents(1234, symbol=False)) == 1234
 
 
+def test_format_cents_groups_thousands_for_display():
+    """$12,345.67 reads at a glance; $12345.67 has to be counted."""
+    assert psells.format_cents(1234567) == "$12,345.67"
+    assert psells.format_cents(99999) == "$999.99"
+    assert psells.format_cents(100000) == "$1,000.00"
+    assert psells.format_cents(-123456) == "-$1,234.56"
+
+
+def test_format_cents_without_the_symbol_has_no_commas_either():
+    """That text goes into an edit form's box, and parse_money reads neither
+    a dollar sign nor a comma. Grouping it would break the round trip."""
+    assert psells.format_cents(1234567, symbol=False) == "12345.67"
+    assert psells.parse_money(psells.format_cents(1234567, symbol=False)) == 1234567
+
+
 def test_format_cents_does_not_go_through_a_float():
     """A figure a float cannot hold exactly still renders exactly."""
-    assert psells.format_cents(102030405060708090) == "$1020304050607080.90"
+    assert psells.format_cents(102030405060708090) == "$1,020,304,050,607,080.90"
 
 
 # The whole of recording a return with none of the asking.

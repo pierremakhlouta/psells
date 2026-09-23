@@ -88,9 +88,13 @@ def all_products(connection):
 def format_cents(cents, *, symbol=True):
     """Format a whole number of cents as money, for display only.
 
-    symbol=False leaves out the dollar sign, giving text parse_money reads back
-    as the same number of cents. That is what an edit form puts in a box to be
-    typed over, so the two conversions stay the only two.
+    Thousands are grouped with commas, $12,345.67, because a figure has to be
+    read at a glance and not counted.
+
+    symbol=False leaves out the dollar sign and the commas, giving text
+    parse_money reads back as the same number of cents. That is what an edit
+    form puts in a box to be typed over, so the two conversions stay the only
+    two.
 
     The dollar sign is part of what comes back, so a negative figure reads
     -$3.00 and not $-3.00. It used to be left to the caller, and every caller
@@ -105,9 +109,10 @@ def format_cents(cents, *, symbol=True):
     sign = "-" if cents < 0 else ""
     cents = abs(cents)
 
-    dollar = "$" if symbol else ""
+    if symbol:
+        return f"{sign}${cents // 100:,}.{cents % 100:02d}"
 
-    return f"{sign}{dollar}{cents // 100}.{cents % 100:02d}"
+    return f"{sign}{cents // 100}.{cents % 100:02d}"
 
 
 def parse_money(text):
