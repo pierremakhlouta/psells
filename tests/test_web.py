@@ -1084,6 +1084,100 @@ def test_a_payment_from_another_site_is_refused(client, db):
     assert payments_stored(db) == []
 
 
+# Deleting a product ----------------------------------------------------------
+
+def delete_form_of(client, product_id=1):
+    page = client.get(f"/products/{product_id}/delete").text
+    posts = [form for form in forms(page) if form["method"] == "post"]
+
+    return page, (posts[0] if posts else None)
+
+
+def test_delete_is_offered_from_the_edit_page_not_the_inventory(client, db):
+    """Rare and permanent, so one step further away than Sell or Edit."""
+    add_product(db, 1, quantity_received=1)
+
+    assert "/products/1/delete" in client.get("/products/1/edit").text
+    assert "/delete" not in client.get("/").text
+    assert "/delete" not in client.get("/products/new").text
+
+
+def test_a_product_with_no_history_is_offered_a_delete_button(client, db):
+    add_product(db, 1, quantity_received=1)
+
+    page, form = delete_form_of(client)
+
+    assert form["action"].endswith("/products/1/delete")
+    assert "there is no undo" in page
+
+
+def test_deleting_answers_303_and_the_product_is_gone(client, db):
+    add_product(db, 1, quantity_received=1, name="Typo product")
+    add_product(db, 2, quantity_received=1, name="Keeper")
+    _, form = delete_form_of(client)
+
+    response = client.post(form["action"], data=form_data(form),
+                           follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "http://testserver/"
+    assert [row[NAME] for row in table_rows(client.get("/").text)] == ["Keeper"]
+
+
+def test_a_product_with_history_gets_the_reason_and_no_button(client, db):
+    add_product(db, 1, quantity_received=5)
+    add_sale(db, 1, item_id=1, quantity=2)
+    add_return(db, 1, item_id=1, quantity=1)
+
+    page, form = delete_form_of(client)
+
+    assert form is None
+    assert ("This product has 1 sale and 1 return recorded against it."
+            in page)
+
+
+def test_posting_a_delete_for_a_product_with_history_is_a_409(client, db):
+    """No button is offered, but a post can still arrive. It is refused with
+    the same sentence, and the product and its sale remain."""
+    add_product(db, 1, quantity_received=5)
+    add_sale(db, 1, item_id=1, quantity=1)
+    db.commit()
+
+    response = client.post("/products/1/delete")
+
+    assert response.status_code == 409
+    assert "This product has 1 sale recorded against it." in response.text
+    assert db.execute("SELECT COUNT(*) FROM products").fetchone()[0] == 1
+    assert db.execute("SELECT COUNT(*) FROM sales").fetchone()[0] == 1
+
+
+def test_deleting_a_product_that_does_not_exist_is_a_404(client, db):
+    for method in ("get", "post"):
+        assert getattr(client, method)("/products/99/delete").status_code == 404
+
+    assert client.get("/products/abc/delete").status_code == 404
+
+
+def test_a_delete_from_another_site_is_refused(client, db):
+    add_product(db, 1, quantity_received=1)
+
+    response = client.post("/products/1/delete",
+                           headers={"Origin": "https://evil.example"})
+
+    assert response.status_code == 403
+    assert db.execute("SELECT COUNT(*) FROM products").fetchone()[0] == 1
+
+
+def test_a_delete_link_alone_deletes_nothing(client, db):
+    """Visiting the page, which a prefetch or a link preview might, only
+    shows the question."""
+    add_product(db, 1, quantity_received=1)
+
+    client.get("/products/1/delete")
+
+    assert db.execute("SELECT COUNT(*) FROM products").fetchone()[0] == 1
+
+
 # The dashboard panel ---------------------------------------------------------
 
 # The labels the command line prints, paired with the key /dashboard serves
@@ -1299,6 +1393,7 @@ def test_there_are_templates_to_check():
     assert "sale_form.html" in names
     assert "return_form.html" in names
     assert "payment_form.html" in names
+    assert "delete_confirm.html" in names
     assert "macros.html" in names
 
 

@@ -469,3 +469,54 @@ def add_payment_submit(request: Request, connection: Connection,
             paid=payment_id),
         status_code=303,
     )
+
+
+# Deleting a product ----------------------------------------------------------
+
+def delete_page(request, product, blocker, status_code=200):
+    """The confirmation page. It is the confirmation: the delete happens only
+    when its form is posted. A product with history gets the reason instead
+    of a button, so nobody confirms a delete that is then refused."""
+    return templates.TemplateResponse(
+        request,
+        "delete_confirm.html",
+        {"product": product, "blocker": blocker},
+        status_code=status_code,
+    )
+
+
+@router.get("/products/{product_id:int}/delete", response_class=HTMLResponse)
+def delete_product_page(request: Request, connection: Connection,
+                        product_id: int):
+    product = find_product(connection, product_id)
+
+    if product is None:
+        return not_found(request, product_id)
+
+    return delete_page(request, product,
+                       psells.deletion_blocker(connection, product_id))
+
+
+@router.post("/products/{product_id:int}/delete", response_class=HTMLResponse)
+def delete_product_submit(request: Request, connection: Connection,
+                          product_id: int):
+    """Delete, or show why not with a 409.
+
+    Success redirects with 303 to the inventory, with no message: the product
+    no longer exists to be named, and a message built from an id in the address
+    bar could not be checked against anything. The row is simply gone.
+    """
+    product = find_product(connection, product_id)
+
+    if product is None:
+        return not_found(request, product_id)
+
+    try:
+        psells.delete_product(connection, product_id)
+    except psells.ProductNotFound:
+        return not_found(request, product_id)
+    except psells.DeleteRefused as refused:
+        return delete_page(request, product, str(refused), status_code=409)
+
+    return RedirectResponse(request.url_for("inventory_page"),
+                            status_code=303)

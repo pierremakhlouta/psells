@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+
+{% block title %}Delete {{ product.name }} · PSells{% endblock %}
+
+{% block content %}
+<h1>Delete product {{ product.id }}</h1>
+
+<section class="dashboard" aria-label="Product">
+  <dl>
+    <div><dt>Product</dt><dd>{{ product.name }}</dd></div>
+    <div><dt>Category</dt><dd>{{ product.category }}</dd></div>
+    <div><dt>Received</dt><dd class="num">{{ product.quantity_received }}</dd></div>
+    <div><dt>Available</dt><dd class="num">{{ product.quantity_available }}</dd></div>
+  </dl>
+</section>
+
+{% if blocker %}
+{#- The command line's three sentences, the first from deletion_blocker. -#}
+<p class="form-error" role="alert">{{ blocker }}
+  Deleting it would lose that history, so it is refused.
+  If you no longer stock it, leaving it in place costs nothing.</p>
+<p><a href="{{ url_for('edit_product_page', product_id=product.id) }}">Back to the product</a></p>
+{% else %}
+<p class="lead">This product has no sales and no returns. Deleting it removes it
+  permanently; there is no undo.</p>
+
+{#- method="post" and a button, never a link: a delete must not be something a
+    prefetch, a link preview or a refresh can do. -#}
+<form class="actions" action="{{ url_for('delete_product_submit', product_id=product.id) }}" method="post">
+  <button type="submit" class="danger">Delete product</button>
+  <a href="{{ url_for('edit_product_page', product_id=product.id) }}">Cancel</a>
+</form>
+{% endif %}
+{% endblock %}
