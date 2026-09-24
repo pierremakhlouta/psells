@@ -5,16 +5,22 @@ on:
   schedule:
     - cron: "0 9 * * 1"
 
+# Read-only. No job here writes to the repository, so none is given a token
+# that could; if an action were ever compromised, as trivy-action was in March
+# 2026, there would be nothing to steal but read access.
+permissions:
+  contents: read
+
 jobs:
   audit:
     runs-on: ubuntu-latest
 
     steps:
       - name: Check out the repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: "3.14"
 

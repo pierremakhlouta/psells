@@ -8,8 +8,11 @@
 #     docker compose up --build -d --wait
 
 # Python 3.14 to match CI. slim is Debian without compilers or documentation:
-# smaller, and less installed software to carry vulnerabilities.
-FROM python:3.14-slim
+# smaller, and less installed software to carry vulnerabilities. Pinned to an
+# exact version and to the digest of its contents, so every build starts from
+# the same bytes and a republished tag cannot change them. Dependabot proposes
+# the next one, and image.yml scans it before it is merged.
+FROM python:3.14.7-slim@sha256:caaf356f40667c496d405780745b9ac25771c189a51dfcc42430d531ea09f8a2
 
 # No .pyc files written inside the image, and log lines reach `docker logs` as
 # they are printed rather than when a buffer fills.

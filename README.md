@@ -327,11 +327,13 @@ the old shape, including every way it can refuse.
 `test_backup.py` holds the launchd job that runs `backup.sh`: that it parses,
 runs the script daily at 09:00, and carries no personal paths.
 
-`test_container.py` reads the `Dockerfile`, `.dockerignore` and `compose.yaml`
-and fails if the image could ever be built from the whole folder or from
-`data/`, if it leaves out a module the server imports, if any port is published
-beyond this machine, if the database publishes a port at all, or if a password
-is written into `compose.yaml`.
+`test_container.py` reads the `Dockerfile`, `.dockerignore`, `compose.yaml` and
+the workflows, and fails if the image could ever be built from the whole folder
+or from `data/`, if it leaves out a module the server imports, if any port is
+published beyond this machine, if the database publishes a port at all, if a
+password is written into `compose.yaml`, if an action or an image is used by a
+tag rather than pinned to a commit or a digest, or if a workflow can write to
+the repository.
 
 No test needs a data file. The suite builds its tables from `schema.sql` at the
 start of every run, so a constraint added there is exercised automatically, and
@@ -339,9 +341,15 @@ every test runs inside a transaction that is rolled back at the end, so tests
 never see each other's rows and nothing has to be cleaned up. On GitHub Actions
 the test database is a service container of the same image, on the same
 port. Everything runs on every push through GitHub Actions, alongside a
-dependency vulnerability audit and a shellcheck pass over the shell scripts.
-Dependabot checks every pinned version weekly and opens a pull request when one
-has a newer release.
+dependency vulnerability audit, a shellcheck pass over the shell scripts, and a
+scan of the built image with Grype, which fails on a high or critical
+vulnerability that has a fix and lists the rest.
+
+Everything is pinned: Python packages to exact versions, every action in the
+workflows to a commit, and the base images to a version and the digest of
+their contents, so a tag moved after the fact cannot change what runs.
+Dependabot checks every pin weekly and opens a pull request when one has a
+newer release, which the same workflows then test and scan.
 
 ## Known limitations
 

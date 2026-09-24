@@ -1,11 +1,12 @@
 # Dependabot: tells PSells when a pinned version has aged.
 #
 # Every dependency in requirements.txt and requirements-dev.txt is pinned to an
-# exact version, and so is every action in the workflows. Pins make a build
+# exact version, every action in the workflows to a commit, and every base
+# image to a version and digest. Pins make a build
 # repeatable and say nothing when a newer release fixes a bug or a
 # vulnerability. pip-audit, in security.yml, catches known vulnerabilities; this
 # catches age. Once a week Dependabot checks for newer versions and opens a pull
-# request raising the pin, and the three workflows run against that branch like
+# request raising the pin, and the workflows run against that branch like
 # any other push, so a bump that breaks something arrives already red.
 #
 # Grouped, so a week's updates arrive as one pull request per ecosystem rather
@@ -29,4 +30,24 @@ updates:
       interval: "weekly"
     groups:
       actions:
+        patterns: ["*"]
+
+  # The base image in the Dockerfile, and the postgres image in compose.yaml.
+  # Each pull request raises the version and the digest together, and
+  # image.yml scans the result. The postgres service in tests.yml is not
+  # covered by Dependabot; a test keeps it equal to compose.yaml.
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      images:
+        patterns: ["*"]
+
+  - package-ecosystem: "docker-compose"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      compose:
         patterns: ["*"]

@@ -13,7 +13,9 @@ password written into the file, and .env kept out of git and out of images.
 """
 
 import ast
+import glob
 import os
+import re
 
 import yaml
 
@@ -218,3 +220,73 @@ def test_the_test_database_starts_only_when_asked_for_and_keeps_nothing():
     # The suite wipes whatever it is pointed at and refuses a name without
     # this ending; the service has to be called what the suite expects.
     assert test_db["environment"]["POSTGRES_DB"].endswith("_test")
+
+
+# Pins -------------------------------------------------------------------------
+#
+# A tag can be moved to different code or different bytes after it is
+# published; a commit hash or an image digest cannot. In March 2026 the tags of
+# a widely used scanning action were moved to code that stole CI secrets, which
+# is what these hold PSells against.
+
+WORKFLOWS = sorted(glob.glob(
+    os.path.join(PROJECT_DIR, ".github", "workflows", "*.yml")))
+
+PINNED_ACTION = re.compile(r"^[\w.-]+/[\w.-]+@[0-9a-f]{40}$")
+PINNED_IMAGE = re.compile(r"^[\w./-]+:\d+\.\d+(\.\d+)?[\w.-]*@sha256:[0-9a-f]{64}$")
+
+
+def workflow(path):
+    with open(path) as workflow_file:
+        return yaml.safe_load(workflow_file)
+
+
+def test_there_are_workflows_to_check():
+    names = {os.path.basename(path) for path in WORKFLOWS}
+
+    assert {"tests.yml", "lint.yml", "security.yml", "image.yml"} <= names
+
+
+def test_every_action_is_pinned_to_a_commit():
+    for path in WORKFLOWS:
+        for job in workflow(path)["jobs"].values():
+            for step in job["steps"]:
+                if "uses" in step:
+                    assert PINNED_ACTION.match(step["uses"]), (
+                        os.path.basename(path), step["uses"])
+
+
+def test_every_workflow_can_only_read_the_repository():
+    for path in WORKFLOWS:
+        assert workflow(path).get("permissions") == {"contents": "read"}, (
+            os.path.basename(path))
+
+
+def test_the_base_image_is_pinned_to_a_version_and_a_digest():
+    froms = [arguments[0] for instruction, arguments in instructions()
+             if instruction == "FROM"]
+
+    assert len(froms) == 1
+    assert PINNED_IMAGE.match(froms[0]), froms[0]
+
+
+def test_every_postgres_is_the_same_pinned_image():
+    # Dependabot updates the Dockerfile and compose.yaml but not a service
+    # container in a workflow, so the three copies are held equal here.
+    services = compose()["services"]
+    ci = workflow(os.path.join(PROJECT_DIR, ".github", "workflows",
+                               "tests.yml"))["jobs"]["test"]["services"]
+
+    images = {services["db"]["image"], services["db-test"]["image"],
+              ci["postgres"]["image"]}
+
+    assert len(images) == 1, images
+    assert PINNED_IMAGE.match(images.pop())
+
+
+def test_dependabot_watches_every_kind_of_pin():
+    with open(os.path.join(PROJECT_DIR, ".github", "dependabot.yml")) as config:
+        ecosystems = {update["package-ecosystem"]
+                      for update in yaml.safe_load(config)["updates"]}
+
+    assert ecosystems == {"pip", "github-actions", "docker", "docker-compose"}

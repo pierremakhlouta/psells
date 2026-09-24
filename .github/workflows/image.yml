@@ -1,0 +1,60 @@
+name: Image
+
+# Scans the container image for known vulnerabilities: the Debian packages in
+# the base image and the Python packages installed on top. pip-audit in
+# security.yml covers the requirements files; this covers what actually ships.
+#
+# On every push, and weekly, because vulnerabilities are found in packages
+# that have not changed.
+
+on:
+  push:
+  schedule:
+    - cron: "0 9 * * 1"
+
+# Read-only. No job here writes to the repository, so none is given a token
+# that could; if an action were ever compromised, as trivy-action was in March
+# 2026, there would be nothing to steal but read access.
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Build the image
+        run: docker build --tag psells:ci .
+
+      # Two runs of the same scanner, because they answer different questions.
+      # The first lists everything and never fails, so an unfixable
+      # vulnerability in the base image is still seen. The second fails the
+      # build only on a high or critical one that has a fixed version, which
+      # is one PSells can act on.
+      - name: List every known vulnerability
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439  # v7.4.2
+        with:
+          image: psells:ci
+          fail-build: false
+          output-format: table
+          output-file: grype-all.txt
+
+      - name: Show the list
+        run: cat grype-all.txt
+
+      - name: Fail on a high or critical vulnerability that has a fix
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439  # v7.4.2
+        with:
+          image: psells:ci
+          only-fixed: true
+          severity-cutoff: high
+          fail-build: true
+          output-format: table
+          output-file: grype-fixable.txt
+
+      - name: Show what failed the build
+        if: failure()
+        run: cat grype-fixable.txt

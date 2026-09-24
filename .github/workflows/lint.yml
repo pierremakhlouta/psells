@@ -3,13 +3,19 @@ name: Lint
 on:
   push:
 
+# Read-only. No job here writes to the repository, so none is given a token
+# that could; if an action were ever compromised, as trivy-action was in March
+# 2026, there would be nothing to steal but read access.
+permissions:
+  contents: read
+
 jobs:
   shellcheck:
     runs-on: ubuntu-latest
 
     steps:
       - name: Check out the repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       # shellcheck is already installed on the ubuntu runner image, so there is
       # nothing to set up. Every tracked .sh file is checked rather than a named
