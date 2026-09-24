@@ -18,8 +18,14 @@ line's own users are all in that position. Such a request is let through.
 This checks the labels rather than using a token in every form. A token would
 need a secret kept somewhere and a hidden field in every form; it pairs
 naturally with logins and sessions, and is the thing to revisit when
-authentication is decided before deployment. Behind a proxy the scheme and host
-seen here may be the proxy's, which is the other thing to revisit then.
+authentication is decided.
+
+Behind nginx, the scheme and host passed in here are still the browser's.
+nginx passes the Host the browser sent unchanged and sets X-Forwarded-Proto,
+and uvicorn takes the scheme from that header only when the connection comes
+from nginx's own address (FORWARDED_ALLOW_IPS in compose.yaml). A page served
+over https therefore compares its https Origin with an https scheme, and a
+client that reaches uvicorn any other way cannot claim to be https.
 """
 
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}

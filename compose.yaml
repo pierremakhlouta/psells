@@ -31,9 +31,18 @@ services:
     ports:
       # 127.0.0.1 only. There is no authentication, and without this prefix
       # anyone on the same network could read and change every record.
-      - "127.0.0.1:8000:8080"
+      # HTTPS on 443, so the address is https://psells.localhost with no port;
+      # 80 only redirects to it. Inside, nginx listens above 1024 on 8443 and
+      # 8080, because it does not run as root.
+      - "127.0.0.1:443:8443"
+      - "127.0.0.1:80:8080"
     volumes:
       - "./nginx/nginx.conf:/etc/nginx/nginx.conf:ro"
+      # The certificate and its key, from make-certificate.sh. data/ is
+      # ignored by git and by the Docker build, so the key reaches neither.
+      # Run make-certificate.sh before the first "up", or nginx stops at
+      # startup saying it cannot find them.
+      - "./data/tls:/etc/nginx/tls:ro"
     networks:
       default:
         # Fixed, because the app believes X-Forwarded-Proto and

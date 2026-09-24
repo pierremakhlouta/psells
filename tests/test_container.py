@@ -176,7 +176,8 @@ def test_only_nginx_publishes_the_web_port():
     # The app is reached through nginx or not at all; a port of its own would
     # be a way round every rule in nginx.conf.
     assert "ports" not in services["app"]
-    assert published_ports(services["proxy"]) == ["127.0.0.1:8000:8080"]
+    assert published_ports(services["proxy"]) == [
+        "127.0.0.1:443:8443", "127.0.0.1:80:8080"]
 
 
 def test_the_database_publishes_no_port():
@@ -280,10 +281,12 @@ def nginx_directives():
 
 
 def servers():
-    """Each server block's directives, keyed by the address it listens on.
+    """Each server block as (listen words, server names, directives).
 
-    A directive's enclosing blocks are given from inside the server down, as
-    plain opening words, so the catch-all location is (("location", "/"),).
+    Listen words are the words after "listen", such as ["8443", "ssl",
+    "default_server"]. A directive's enclosing blocks are given from inside the
+    server down, as plain opening words, so the catch-all location is
+    (("location", "/"),).
     """
     by_number = {}
     for blocks, words in nginx_directives():
@@ -293,21 +296,35 @@ def servers():
         inner = tuple(name for _, name in blocks[2:])
         by_number.setdefault(blocks[1][0], []).append((inner, words))
 
-    by_listen = {}
+    result = []
     for directives in by_number.values():
-        listens = [words[1] for inner, words in directives
-                   if inner == () and words[0] == "listen"]
+        top = [words for inner, words in directives if inner == ()]
+        listens = [words[1:] for words in top if words[0] == "listen"]
         assert len(listens) == 1, listens
-        by_listen[listens[0]] = directives
-    return by_listen
+        server_names = [name for words in top if words[0] == "server_name"
+                        for name in words[1:]]
+        result.append((listens[0], server_names, directives))
+    return result
+
+
+def server(port, name=None):
+    """The one server listening on port with that server_name, or none."""
+    found = [directives for listen, names, directives in servers()
+             if listen[0] == port and (names == [name] if name else not names)]
+    assert len(found) == 1, (port, name, len(found))
+    return found[0]
+
+
+def top_level(directives):
+    return [words for inner, words in directives if inner == ()]
 
 
 def proxied():
     """The directives of the location that passes requests to the app."""
-    locations = [(blocks, words) for blocks, words in servers()["8080"]
-                 if blocks == (("location", "/"),)]
-    assert locations, "no catch-all location in the server on 8080"
-    return [words for _, words in locations]
+    locations = [words for inner, words in server("8443", "psells.localhost")
+                 if inner == (("location", "/"),)]
+    assert locations, "no catch-all location in the psells.localhost server"
+    return locations
 
 
 DEFAULT = re.compile(r"\$\{(\w+):-([^}]*)\}")
@@ -319,12 +336,52 @@ def with_defaults(value):
 
 
 def test_nginx_listens_where_compose_forwards_and_nowhere_else():
-    container_port = published_ports(compose()["services"]["proxy"])[0].rsplit(":", 1)[1]
+    forwarded = {port.rsplit(":", 1)[1]
+                 for port in published_ports(compose()["services"]["proxy"])}
+    listening = {listen[0] for listen, _, _ in servers()}
 
-    # One server for the world on the forwarded port, and one for the health
-    # check on the container's own loopback, which a published port can never
-    # reach.
-    assert set(servers()) == {container_port, "127.0.0.1:8081"}
+    # The two forwarded ports, and the health check on the container's own
+    # loopback, which a published port can never reach.
+    assert listening == forwarded | {"127.0.0.1:8081"}
+
+
+def test_plain_http_only_redirects_to_the_one_https_address():
+    directives = server("8080")
+
+    assert top_level(directives) == [
+        ["listen", "8080", "default_server"],
+        ["return", "301", "https://psells.localhost$request_uri"],
+    ]
+
+
+def test_https_for_any_other_name_is_refused_and_never_served():
+    # Refused in the handshake when asked for there, and answered 421 when
+    # only the Host header names it, since nginx picks a server per request by
+    # Host. A server with neither would serve nginx's own welcome page.
+    assert top_level(server("8443")) == [
+        ["listen", "8443", "ssl", "default_server"],
+        ["ssl_reject_handshake", "on"],
+        ["return", "421"],
+    ]
+
+
+def test_the_https_server_answers_psells_localhost_alone():
+    top = top_level(server("8443", "psells.localhost"))
+
+    assert ["listen", "8443", "ssl"] in top
+    assert ["server_name", "psells.localhost"] in top
+
+
+def test_https_is_tls_1_3_only_with_the_certificate_from_data_tls():
+    http_level = [words for blocks, words in nginx_directives()
+                  if [name for _, name in blocks] == [("http",)]]
+    top = top_level(server("8443", "psells.localhost"))
+
+    assert ["ssl_protocols", "TLSv1.3"] in http_level
+    assert ["ssl_certificate", "/etc/nginx/tls/psells.localhost.crt"] in top
+    assert ["ssl_certificate_key", "/etc/nginx/tls/psells.localhost.key"] in top
+    assert ("./data/tls:/etc/nginx/tls:ro"
+            in compose()["services"]["proxy"]["volumes"])
 
 
 def test_the_health_check_asks_nginx_on_its_private_port():
@@ -342,12 +399,12 @@ def test_nginx_passes_every_request_to_the_port_uvicorn_listens_on():
     assert ["proxy_pass", f"http://app:{port}"] in proxied()
 
 
-def test_nginx_sends_the_host_with_its_port_and_sets_both_forwarded_headers():
+def test_nginx_sends_the_host_as_sent_and_sets_both_forwarded_headers():
     headers = {words[1]: words[2] for words in proxied()
                if words[0] == "proxy_set_header"}
 
     assert headers == {
-        # The port stays on, or the cross-site check refuses genuine writes.
+        # As the browser sent it, port and all, to match its Origin.
         "Host": "$http_host",
         # Set, so a client's own X-Forwarded-Proto is replaced.
         "X-Forwarded-Proto": "$scheme",
@@ -387,7 +444,8 @@ def test_nginx_runs_as_its_own_user_and_never_as_root():
 def test_the_nginx_config_is_mounted_read_only_and_readable_by_nginx():
     mounts = compose()["services"]["proxy"]["volumes"]
 
-    assert mounts == ["./nginx/nginx.conf:/etc/nginx/nginx.conf:ro"]
+    assert mounts == ["./nginx/nginx.conf:/etc/nginx/nginx.conf:ro",
+                      "./data/tls:/etc/nginx/tls:ro"]
     # nginx reads it as user 101, not as the file's owner. A file readable by
     # its owner only is refused at startup on Linux, the trap of Phase 04 in
     # another form.

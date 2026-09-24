@@ -174,6 +174,7 @@ mv "$WORK/cert.crt" "$CERT"
 printf 'Certificate: %s\n' "$CERT"
 printf 'Key:         %s\n' "$KEY"
 openssl x509 -in "$CERT" -noout -enddate
+printf '\nnginx reads it at startup. If the stack is running: docker compose restart proxy\n'
 
 if [ "$NEW_CA" = 1 ]; then
     cat <<EOF

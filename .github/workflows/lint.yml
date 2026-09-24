@@ -38,13 +38,25 @@ jobs:
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
+      # nginx -t loads the certificate and key it names, so it needs a pair.
+      # This one is made by the same script, in a folder of the runner's own,
+      # and thrown away with the runner. Its key is made readable by everyone
+      # because nginx reads it as user 101, not as the runner's user; the real
+      # key on the Mac stays readable by its owner only.
+      - name: Make a throwaway certificate
+        run: |
+          PSELLS_CA_DIR="$RUNNER_TEMP/ca" PSELLS_TLS_DIR="$RUNNER_TEMP/tls" ./make-certificate.sh
+          chmod a+rx "$RUNNER_TEMP/tls"
+          chmod a+r "$RUNNER_TEMP/tls"/*
+
       # nginx -t reads the whole configuration and stops at the first line it
       # would refuse, without serving anything. It runs as nginx's own user
-      # and with the file mounted read-only, as in the stack. It also looks up
-      # every name in a proxy_pass, and "app" exists only inside the stack, so
-      # --add-host stands it in.
+      # and with every file mounted read-only, as in the stack. It also looks
+      # up every name in a proxy_pass, and "app" exists only inside the stack,
+      # so --add-host stands it in.
       - name: Check the nginx configuration
         run: >-
           docker run --rm --user 101:101 --add-host app:127.0.0.1
           --volume "$PWD/nginx/nginx.conf:/etc/nginx/nginx.conf:ro"
+          --volume "$RUNNER_TEMP/tls:/etc/nginx/tls:ro"
           "$NGINX_IMAGE" nginx -t

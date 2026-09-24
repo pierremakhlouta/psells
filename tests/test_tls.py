@@ -155,6 +155,12 @@ def test_a_new_ca_comes_with_the_command_to_trust_it(made):
     assert str(ca_dir / "ca.crt") in result.stdout
 
 
+def test_every_run_says_how_to_make_nginx_use_the_new_certificate(made):
+    _, _, result = made
+
+    assert "docker compose restart proxy" in result.stdout
+
+
 # What the CA refuses to vouch for ----------------------------------------------
 
 @pytest.mark.parametrize("subject_alt_name", [

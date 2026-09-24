@@ -9,8 +9,12 @@ asserts that nothing was stored.
 """
 
 import pytest
+from fastapi.testclient import TestClient
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
+import api
 import cross_site
+import dependencies
 
 from helpers import add_product
 
@@ -107,3 +111,69 @@ def test_the_origin_must_match_scheme_host_and_port_exactly():
     assert check("http://127.0.0.1:8001")
     assert check("https://127.0.0.1:8000")
     assert check("http://localhost:8000")
+
+
+# Behind nginx ----------------------------------------------------------------
+#
+# In the stack the browser speaks HTTPS to nginx, and nginx speaks plain HTTP
+# to uvicorn, adding X-Forwarded-Proto: https. uvicorn wraps the application
+# in ProxyHeadersMiddleware, which takes the scheme from that header only when
+# the connection comes from an address in FORWARDED_ALLOW_IPS, and otherwise
+# leaves it as http. These wrap the application the same way, with the real
+# middleware, so the check sees exactly what it sees in the stack.
+#
+# The test client connects as "testclient", so trusting "testclient" stands for
+# trusting nginx, and trusting only nginx's address in compose.yaml stands for
+# a request that reached uvicorn some other way.
+
+BEHIND_NGINX = "https://psells.localhost"
+NGINX_ADDRESS = "10.213.47.10"
+
+
+@pytest.fixture
+def through(db, stock, partner_rate):
+    """A test client whose requests arrive from a proxy uvicorn does or does
+    not trust, over plain HTTP, as they do from nginx."""
+    api.app.dependency_overrides[dependencies.get_connection] = lambda: db
+
+    def client(trusted):
+        return TestClient(ProxyHeadersMiddleware(api.app, trusted_hosts=trusted),
+                          base_url="http://psells.localhost")
+
+    yield client
+
+    api.app.dependency_overrides.clear()
+
+
+def test_a_write_over_https_goes_ahead_when_nginx_says_https(through, db):
+    response = sell(through("testclient"), {
+        "X-Forwarded-Proto": "https", "Origin": BEHIND_NGINX})
+
+    assert response.status_code == 201
+    assert sales_count(db) == 1
+
+
+def test_without_the_forwarded_scheme_an_https_origin_looks_foreign(through,
+                                                                    db):
+    # Why nginx must send X-Forwarded-Proto: without it the app sees http,
+    # and every write from a page served over https is refused.
+    response = sell(through("testclient"), {"Origin": BEHIND_NGINX})
+
+    assert response.status_code == 403
+    assert sales_count(db) == 0
+
+
+def test_a_forwarded_scheme_from_anyone_but_nginx_is_ignored(through, db):
+    response = sell(through(NGINX_ADDRESS), {
+        "X-Forwarded-Proto": "https", "Origin": BEHIND_NGINX})
+
+    assert response.status_code == 403
+    assert sales_count(db) == 0
+
+
+def test_an_http_origin_is_another_site_once_the_page_is_https(through, db):
+    response = sell(through("testclient"), {
+        "X-Forwarded-Proto": "https", "Origin": "http://psells.localhost"})
+
+    assert response.status_code == 403
+    assert sales_count(db) == 0

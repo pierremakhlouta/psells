@@ -56,12 +56,17 @@ configuration file holding the default partner percentage:
     cp .env.example .env
     openssl rand -hex 24      # paste the result as POSTGRES_PASSWORD in .env
 
+The first time, make the HTTPS certificate and trust its CA, as described under
+"The certificate" below:
+
+    ./make-certificate.sh
+
 Then:
 
     docker compose up --build -d --wait
 
 The first start creates the database and builds its tables from `schema.sql`.
-Open `http://127.0.0.1:8000/` for the web pages. The terminal application runs
+Open `https://psells.localhost/` for the web pages. The terminal application runs
 inside the same container, against the same database:
 
     docker compose exec app python psells.py
@@ -108,7 +113,7 @@ sample configuration. From the project folder, with `.env` in place:
     PSELLS_NETWORK=10.213.48 PSELLS_CONFIG_FILE=./sample_data/config.json docker compose -p psells-sample up --build -d --wait
     docker compose -p psells-sample exec -T db sh -c 'psql -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" "$POSTGRES_DB"' < sample_data/seed.sql
 
-Then open `http://127.0.0.1:8000/`, or run the terminal application with
+Then open `https://psells.localhost/`, or run the terminal application with
 `docker compose -p psells-sample exec app python psells.py`. When finished,
 remove it and its database:
 
@@ -119,7 +124,8 @@ real stack goes on reading the real configuration. The percentage in
 `sample_data/config.json` is a placeholder, not the real figure.
 `PSELLS_NETWORK` gives the sample stack its own address range, because two
 stacks cannot share one and the real stack keeps its network while it is
-stopped. Only one of the two stacks can hold port 8000 at a time.
+stopped. Only one of the two stacks can hold ports 443 and 80 at a time. Both
+use the same certificate from `data/tls/`.
 
 The sample set is small and invented, but it covers the cases worth seeing: all
 three partner-share modes, a product discontinued at retail, one that has sold
@@ -127,7 +133,7 @@ out, a return, and two partner payments.
 
 ## The web interface
 
-Served at `http://127.0.0.1:8000/`, through nginx, by the `app` container
+Served at `https://psells.localhost/`, through nginx, by the `app` container
 behind it. One process serves the pages and the API.
 
 - **Inventory**, the home page: the nine dashboard figures above a table of
@@ -160,7 +166,7 @@ labels rather than using a token.
 `api.py` serves the same data over HTTP. It is another way in, not another
 application: every figure it returns comes from the functions the command line
 uses, and it works nothing out for itself. It is served by the same uvicorn
-process as the pages; open `http://127.0.0.1:8000/docs`, which is generated from
+process as the pages; open `https://psells.localhost/docs`, which is generated from
 the code and lists every endpoint with its fields and types.
 
     GET  /products    every product, with stock and the partner cut per unit
@@ -208,16 +214,29 @@ application at `/config/config.json`, read-only, so an image never carries a
 record. It names every file it copies rather than copying the folder, and
 `.dockerignore` keeps `data/` and `.env` out of the build altogether.
 
-nginx is the only service that publishes a port, `127.0.0.1:8000`, forwarded to
-port 8080 inside its container. Publishing it on `127.0.0.1` is what keeps it
-to this machine. Leaving out the `127.0.0.1:` publishes it to the whole network,
-which with no authentication means anyone on the same Wi-Fi can change the
-records. nginx runs the Docker Official Image as its own unprivileged user,
-never root, with its whole configuration in `nginx/nginx.conf`, mounted
-read-only. It passes every request to the application over the private network
-Compose creates, with the `Host` the browser sent, port included, and with
+nginx is the only service that publishes ports: 443 for HTTPS and 80, which
+only redirects to it, both on `127.0.0.1`, forwarded to 8443 and 8080 inside
+its container. Publishing them on `127.0.0.1` is what keeps them to this
+machine. Leaving out the `127.0.0.1:` publishes them to the whole network, which
+with no authentication means anyone on the same Wi-Fi can change the records.
+nginx runs the Docker Official Image as its own unprivileged user, never root,
+with its whole configuration in `nginx/nginx.conf`, mounted read-only, and the
+certificate and key mounted read-only from `data/tls/`.
+
+HTTPS ends at nginx, TLS 1.3 only. It answers for `psells.localhost` and no
+other name: an HTTPS handshake for another name is refused, a request that
+names another host only in its `Host` header gets 421, and plain HTTP for any
+name is redirected to `https://psells.localhost` with the path kept. That is
+what stops DNS rebinding, where a hostile site points its own name at
+`127.0.0.1` so the browser reads these pages as if they were that site's. It
+passes every request to the application over the private network Compose
+creates, as plain HTTP, with the `Host` the browser sent and with
 `X-Forwarded-Proto` and `X-Forwarded-For` set to what nginx itself saw, so a
 client cannot supply its own.
+
+`curl` does not use the macOS keychain, so it is told about the CA directly:
+
+    curl --cacert ~/PSells-CA/ca.crt https://psells.localhost/
 
 The application publishes no port. Inside its container uvicorn listens on
 `0.0.0.0`, because traffic from another container arrives on the container's
@@ -243,7 +262,7 @@ values in `.env` the database is created with, so the password is written once.
 
 ## The certificate
 
-PSells is to be served over HTTPS at `https://psells.localhost`, with a
+PSells is served over HTTPS at `https://psells.localhost`, with a
 certificate from a certificate authority of its own rather than a public one,
 because a public one needs a public name. `make-certificate.sh` makes both:
 
@@ -263,7 +282,11 @@ Safari and Chrome use that trust; Firefox keeps its own list.
 Every run signs a new certificate for `psells.localhost` with that CA, into
 `data/tls/`, which git and the Docker build both ignore. It lasts 397 days,
 inside the limit browsers apply to public certificates, so renewing is
-running the script again, with nothing to change in the keychain. The script
+running the script again, with nothing to change in the keychain. nginx reads
+both files when it starts, so after renewing:
+
+    docker compose restart proxy
+ The script
 refuses to sign a certificate that would outlive its CA, and replaces the old
 certificate only once the new one verifies.
 
@@ -358,7 +381,9 @@ or a field in a form rather than finding a string somewhere on the page. Its
 tests submit through the forms the pages actually serve, and compare what the
 pages show with what the API serves.
 
-`test_cross_site.py` covers the refusal of writes from another site.
+`test_cross_site.py` covers the refusal of writes from another site, directly
+and behind nginx, with uvicorn's own proxy-header handling wrapped around the
+application as it is in the stack.
 
 `test_schema.py` runs `schema.sql` on its own: every rule tried with a row that
 breaks exactly that rule and refused by that rule's own constraint, ids never
@@ -416,7 +441,7 @@ Worth stating plainly rather than leaving to be discovered.
   listens on `127.0.0.1` only, which is the whole of the protection at the
   moment, so do not put it on `0.0.0.0`. In a container it has to listen on
   `0.0.0.0`, and the same protection comes from the application publishing no
-  port and nginx publishing its one port as `127.0.0.1:8000`.
+  port and nginx publishing its two as `127.0.0.1:443` and `127.0.0.1:80`.
 - **The protection against cross-site writes relies on the browser's labels.**
   Every current browser sends them, and a page cannot change them, but a token
   in every form would not depend on them. That is the thing to add alongside
