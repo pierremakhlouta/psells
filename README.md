@@ -171,6 +171,30 @@ reach it. That matters, because there is no authentication of any kind yet. To
 try it against invented records rather than the real ones, use the sample stack
 above.
 
+## Moving from SQLite
+
+`migrate_to_postgres.py` moved the records out of the SQLite file PSells used
+before PostgreSQL, once, in Phase 04. It reads a copy of that file read-only,
+refuses a database that already holds records, and refuses a source that fails
+SQLite's own integrity or foreign key checks. It copies every row with its id,
+moves each table's sequence past the highest one, and then checks the result
+against the source before committing anything: every row and column, every
+product's derived stock and partner cut, and all nine dashboard figures, each
+worked out by the same functions on both sides. Money is whole cents on both,
+so the comparison is exact. Any difference rolls everything back.
+
+It runs in a one-off container of the app service, because the database
+publishes no port, with the script and the copy mounted read-only:
+
+    docker compose run --build --rm \
+        -v "$PWD/migrate_to_postgres.py:/app/migrate_to_postgres.py:ro" \
+        -v "/path/to/copy-of-psells.db:/migrate/psells.db:ro" \
+        app python migrate_to_postgres.py /migrate/psells.db
+
+It prints row counts and a verdict, never a figure. `tests/test_migrate.py`
+runs it against a SQLite file built from the old schema, kept in
+`tests/sqlite_schema.sql` for that purpose only.
+
 ## How the containers are built
 
 The `Dockerfile` builds an image holding the code and nothing else. The records
@@ -334,6 +358,7 @@ Worth stating plainly rather than leaving to be discovered.
 - **`migrate_to_sqlite.py` no longer runs.** It is the one-time script that moved
   the data out of JSON files, kept as the record of how that was done. It was
   written against the code as it stood before the move and is not maintained.
+  `migrate_to_postgres.py` is kept, and tested, for the same reason.
 
 ## Where this is going
 
