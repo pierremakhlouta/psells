@@ -1,4 +1,5 @@
-# PSells as a stack: the web server and a PostgreSQL database beside it.
+# PSells as a stack: nginx in front, the web server behind it, and a
+# PostgreSQL database beside that.
 #
 #     docker compose up --build -d --wait
 #
@@ -16,18 +17,62 @@
 name: psells
 
 services:
-  app:
-    build: .
+  proxy:
+    # The only service the outside world can reach. It passes every request to
+    # the app over this stack's network; see nginx/nginx.conf. The Docker
+    # Official Image, stable line, on Alpine, pinned like every other image.
+    # The Lint workflow runs nginx -t with the same image, and a test holds the
+    # two equal, because Dependabot does not update an image in a workflow.
+    image: nginx:1.30.5-alpine@sha256:bf3201ab56f23e5954646379c775d511fc466e9f11376d9725361064ad07ed35
+    # The image's own nginx user and group (101), never root, as the app runs
+    # as psells. nginx/nginx.conf is written for this: port 8080, and its
+    # process id and temporary files in /tmp.
+    user: "101:101"
     ports:
       # 127.0.0.1 only. There is no authentication, and without this prefix
       # anyone on the same network could read and change every record.
-      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:8000:8080"
+    volumes:
+      - "./nginx/nginx.conf:/etc/nginx/nginx.conf:ro"
+    networks:
+      default:
+        # Fixed, because the app believes X-Forwarded-Proto and
+        # X-Forwarded-For from this one address and no other. It must match
+        # FORWARDED_ALLOW_IPS below, and sit outside ip_range at the bottom of
+        # this file, which is where Docker hands out addresses of its own.
+        ipv4_address: "${PSELLS_NETWORK:-10.213.47}.10"
+    depends_on:
+      app:
+        condition: service_healthy
+        # nginx looks up the app's address once, when it starts. Recreating
+        # the app, as "up --build" does after a code change, can give it a new
+        # one; this restarts nginx after it, so nginx never keeps the old.
+        restart: true
+    healthcheck:
+      # nginx's own answer on its private health port, not the app's: see the
+      # first server in nginx/nginx.conf. wget because Alpine ships it and has
+      # no curl.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8081/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      start_interval: 1s
+
+  app:
+    build: .
+    # No ports. Only nginx reaches the app, over this stack's network, so every
+    # request passes through nginx/nginx.conf first.
     environment:
       # Assembled from the same values the database is created with, so the
       # password is written once, in .env. "db" is the database service's
       # name, which Compose's network resolves to its container.
       PSELLS_DATABASE_URL: "postgresql://${POSTGRES_USER:?set POSTGRES_USER in .env}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:?set POSTGRES_DB in .env}"
       PSELLS_CONFIG: /config/config.json
+      # uvicorn reads X-Forwarded-Proto (http or https) and X-Forwarded-For
+      # (the client's address) from these addresses only, and from anyone else
+      # ignores them. nginx's one address, nothing wider: whoever this names
+      # can tell the app a request arrived over HTTPS.
+      FORWARDED_ALLOW_IPS: "${PSELLS_NETWORK:-10.213.47}.10"
     volumes:
       # The one file the application reads from disk, the default partner
       # percentage, mounted read-only: the container can read the rate and
@@ -105,6 +150,21 @@ services:
       interval: 2s
       timeout: 5s
       retries: 15
+
+networks:
+  # The network Compose creates for this stack, with a fixed range so nginx can
+  # have a fixed address. 10.213.47 is private and chosen to be unlikely to
+  # clash with a home network or a VPN; if one ever does, PSELLS_NETWORK in
+  # .env moves the whole stack to another range. The sample stack in the
+  # README sets it on the command line, because two stacks cannot share a
+  # range and the real one keeps its network while it is stopped.
+  default:
+    ipam:
+      config:
+        - subnet: "${PSELLS_NETWORK:-10.213.47}.0/24"
+          # Docker's own choices come from the top half, .128 to .255, so no
+          # container it starts can take the address given to nginx.
+          ip_range: "${PSELLS_NETWORK:-10.213.47}.128/25"
 
 volumes:
   # The database lives here, inside Docker Desktop's disk, not in this folder.

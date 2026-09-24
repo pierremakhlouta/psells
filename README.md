@@ -19,8 +19,8 @@ payouts made to that partner, and computes a live dashboard from all four.
 - Works out each item's partner cut from a rule set per item
 - Computes stock levels, revenue, profit, and the balance owing to the partner
 - Refuses to delete a product that has sales or returns against it
-- Runs as two containers, the application and a PostgreSQL database, with one
-  command
+- Runs as three containers, nginx in front of the application and a PostgreSQL
+  database beside it, with one command
 - Backs itself up daily, on a schedule, and proves each copy restores
 
 Every figure that can be derived is computed on demand rather than stored, so no
@@ -30,10 +30,11 @@ for why it is built this way.
 
 ## Requirements
 
-Docker, with Compose. PSells runs as two containers: the application, which
-serves the web pages and the HTTP API and also holds the terminal application,
-and a PostgreSQL 18 database beside it. Everything the application needs is
-installed inside its image.
+Docker, with Compose. PSells runs as three containers: nginx, which is the only
+one reachable from outside the stack and passes every request on; the
+application behind it, which serves the web pages and the HTTP API and also
+holds the terminal application; and a PostgreSQL 18 database beside that.
+Everything the application needs is installed inside its image.
 
 Working on it also needs Python 3 on the machine, for the tests:
 
@@ -104,7 +105,7 @@ project name, `psells-sample`, so it gets a database volume of its own and can
 never touch the real one, load the invented records into it, and give it the
 sample configuration. From the project folder, with `.env` in place:
 
-    PSELLS_CONFIG_FILE=./sample_data/config.json docker compose -p psells-sample up --build -d --wait
+    PSELLS_NETWORK=10.213.48 PSELLS_CONFIG_FILE=./sample_data/config.json docker compose -p psells-sample up --build -d --wait
     docker compose -p psells-sample exec -T db sh -c 'psql -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" "$POSTGRES_DB"' < sample_data/seed.sql
 
 Then open `http://127.0.0.1:8000/`, or run the terminal application with
@@ -115,8 +116,10 @@ remove it and its database:
 
 `PSELLS_CONFIG_FILE` is set on the command itself rather than in `.env`, so the
 real stack goes on reading the real configuration. The percentage in
-`sample_data/config.json` is a placeholder, not the real figure. Only one of
-the two stacks can hold port 8000 at a time.
+`sample_data/config.json` is a placeholder, not the real figure.
+`PSELLS_NETWORK` gives the sample stack its own address range, because two
+stacks cannot share one and the real stack keeps its network while it is
+stopped. Only one of the two stacks can hold port 8000 at a time.
 
 The sample set is small and invented, but it covers the cases worth seeing: all
 three partner-share modes, a product discontinued at retail, one that has sold
@@ -124,8 +127,8 @@ out, a return, and two partner payments.
 
 ## The web interface
 
-Served by the `app` container at `http://127.0.0.1:8000/`. One process serves
-the pages and the API.
+Served at `http://127.0.0.1:8000/`, through nginx, by the `app` container
+behind it. One process serves the pages and the API.
 
 - **Inventory**, the home page: the nine dashboard figures above a table of
   every product with its stock, listed price, partner cut and retail status, and
@@ -205,15 +208,28 @@ application at `/config/config.json`, read-only, so an image never carries a
 record. It names every file it copies rather than copying the folder, and
 `.dockerignore` keeps `data/` and `.env` out of the build altogether.
 
-Inside the container the server listens on `0.0.0.0`, because Docker forwards a
-published port to the container's network interface and a server on the
-container's own `127.0.0.1` would never receive it. Publishing the port as
-`127.0.0.1:8000:8000` is what keeps it to this machine. Leaving out the
-`127.0.0.1:` publishes it to the whole network, which with no authentication
-means anyone on the same Wi-Fi can change the records.
+nginx is the only service that publishes a port, `127.0.0.1:8000`, forwarded to
+port 8080 inside its container. Publishing it on `127.0.0.1` is what keeps it
+to this machine. Leaving out the `127.0.0.1:` publishes it to the whole network,
+which with no authentication means anyone on the same Wi-Fi can change the
+records. nginx runs the Docker Official Image as its own unprivileged user,
+never root, with its whole configuration in `nginx/nginx.conf`, mounted
+read-only. It passes every request to the application over the private network
+Compose creates, with the `Host` the browser sent, port included, and with
+`X-Forwarded-Proto` and `X-Forwarded-For` set to what nginx itself saw, so a
+client cannot supply its own.
 
-`--wait` returns once both services report healthy: the database when it
-accepts connections, the web server when uvicorn does. Without it, a request
+The application publishes no port. Inside its container uvicorn listens on
+`0.0.0.0`, because traffic from another container arrives on the container's
+network interface, not its loopback. It believes `X-Forwarded-Proto` and
+`X-Forwarded-For` from nginx's address only, set as `FORWARDED_ALLOW_IPS`. That
+is why the stack's network has a fixed range, `10.213.47.0/24`, with nginx at a
+fixed address outside the part Docker hands out. If the range ever clashes
+with a network the Mac is on, `PSELLS_NETWORK` in `.env` moves it.
+
+`--wait` returns once every service reports healthy: the database when it
+accepts connections, the web server when uvicorn does, and nginx when it
+answers its own health check. Without it, a request
 made straight after `up` can get an empty reply, because Docker accepts a
 connection on the published port before the server inside is listening.
 
@@ -329,13 +345,17 @@ the old shape, including every way it can refuse.
 `test_backup.py` holds the launchd job that runs `backup.sh`: that it parses,
 runs the script daily at 09:00, and carries no personal paths.
 
-`test_container.py` reads the `Dockerfile`, `.dockerignore`, `compose.yaml` and
-the workflows, and fails if the image could ever be built from the whole folder
-or from `data/`, if it leaves out a module the server imports, if any port is
-published beyond this machine, if the database publishes a port at all, if a
-password is written into `compose.yaml`, if an action or an image is used by a
-tag rather than pinned to a commit or a digest, or if a workflow can write to
-the repository.
+`test_container.py` reads the `Dockerfile`, `.dockerignore`, `compose.yaml`,
+`nginx/nginx.conf` and the workflows, and fails if the image could ever be
+built from the whole folder or from `data/`, if it leaves out a module the
+server imports, if any port is published beyond this machine, if the
+application or the database publishes a port at all, if a password is written
+into `compose.yaml`, if nginx stops passing the headers the application relies
+on with the values it relies on, if the application would believe forwarded
+headers from anyone but nginx, if nginx would run as root, if an action or an
+image is used by a tag rather than pinned to a commit or a digest, or if a
+workflow can write to the repository. The Lint workflow also runs `nginx -t` on
+the configuration with the image the stack uses.
 
 No test needs a data file. The suite builds its tables from `schema.sql` at the
 start of every run, so a constraint added there is exercised automatically, and
@@ -361,8 +381,8 @@ Worth stating plainly rather than leaving to be discovered.
   figure and change every record, through the pages or the API. The server
   listens on `127.0.0.1` only, which is the whole of the protection at the
   moment, so do not put it on `0.0.0.0`. In a container it has to listen on
-  `0.0.0.0`, and the same protection comes from publishing the port as
-  `127.0.0.1:8000:8000`.
+  `0.0.0.0`, and the same protection comes from the application publishing no
+  port and nginx publishing its one port as `127.0.0.1:8000`.
 - **The protection against cross-site writes relies on the browser's labels.**
   Every current browser sends them, and a page cannot change them, but a token
   in every form would not depend on them. That is the thing to add alongside
