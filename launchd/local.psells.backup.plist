@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The launchd job that runs backup.sh every day at 09:00.
+
+  A template: __PROJECT_DIR__ and __HOME__ are filled in when it is installed
+  into ~/Library/LaunchAgents, because launchd wants absolute paths and this
+  file is in a public repository. The README has the install command.
+
+  launchd rather than cron because of one difference: if the Mac is asleep at
+  09:00, launchd runs the job when it wakes, and several missed days become one
+  run. cron skips them. A Mac that is shut down still misses the day.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>local.psells.backup</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__PROJECT_DIR__/backup.sh</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>9</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <!-- backup.sh writes its own verdict to backup.log. Anything a command
+         prints on the way, such as an error from docker, lands here. -->
+    <key>StandardOutPath</key>
+    <string>__HOME__/PSells-Backups/launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/PSells-Backups/launchd.log</string>
+</dict>
+</plist>

@@ -225,30 +225,46 @@ values in `.env` the database is created with, so the password is written once.
 
 ## Backups
 
-`backup.sh` copies the SQLite file the records were kept in before PostgreSQL.
-It moves to PostgreSQL's own dump tool when the records move, later in Phase
-04; until then, what follows describes that file.
+`backup.sh` takes a `pg_dump` of the database in the Compose stack into
+`~/PSells-Backups/daily/`, logs the result to `~/PSells-Backups/backup.log`, and
+removes copies older than thirty days. It carries `data/config.json` along,
+because the partner rate is in no repository and the application will not
+start without it.
 
-`backup.sh` takes a verified copy of the database into `~/PSells-Backups/daily/`,
-logs the result to `~/PSells-Backups/backup.log`, and removes copies older than
-thirty days. It uses SQLite's own backup command rather than `cp`, because a
-plain file copy of a live database can miss changes that are still sitting in a
-journal beside it.
+Every dump is proved before anything old is deleted: it is restored into a
+throwaway database on the same server, its products are counted and compared
+with the live database, and the throwaway is dropped. A dump that does not
+restore, or restores empty, or disagrees, is logged as `FAILED` with the
+reason, and nothing is removed. A backup that is valid and empty is worse than
+no backup, because it looks fine in a listing.
 
-It verifies each copy before it deletes anything: the new file has to pass an
-integrity check and contain at least one product. A backup that is valid and
-empty is worse than no backup, because it looks fine in a listing.
+If the database container is not running, the script starts it, and only it;
+if Docker Desktop is not running, it waits two minutes and then logs that it
+could not reach the database.
 
 Run it by hand:
 
     ./backup.sh
+    tail -1 ~/PSells-Backups/backup.log
 
-Or daily, through cron:
+Or daily at 09:00 through launchd, macOS's own scheduler. The job file is
+`launchd/local.psells.backup.plist`, a template with its paths filled in on
+install. From the project folder:
 
-    0 9 * * * "$HOME/path/to/psells/backup.sh"
+    sed -e "s|__PROJECT_DIR__|$PWD|" -e "s|__HOME__|$HOME|" \
+        launchd/local.psells.backup.plist > ~/Library/LaunchAgents/local.psells.backup.plist
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.psells.backup.plist
 
-Note that cron does not run jobs it missed. On a laptop that sleeps, a time when
-the machine is reliably awake matters more than the exact hour.
+launchd rather than cron because a Mac asleep at 09:00 runs the backup when it
+wakes; cron skips the day. A Mac that is shut down still misses it.
+
+To restore a dump into the stack's database, which must be empty:
+
+    docker compose exec -T db sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --no-owner --exit-on-error' \
+        < ~/PSells-Backups/daily/psells-<date>.dump
+
+Every copy is on the same disk as the database. Copies off the machine come with
+the cloud phases.
 
 ## Running the tests
 
@@ -270,7 +286,7 @@ database it is pointed at, so it refuses any whose name does not end in
 Every warning is an error (`pytest.ini`), apart from one known deprecation in
 Starlette's test client on Python 3.14, matched on its exact message.
 
-Eight files, and the split is deliberate, so a red run says what kind of thing
+Ten files, and the split is deliberate, so a red run says what kind of thing
 broke before you read a line of it.
 
 `test_domain.py` covers everything in `psells.py` that has no input or output:
@@ -304,6 +320,12 @@ as.
 
 `test_connect.py` covers `psells.connect`: that a write through it is really
 committed, and that a missing or silent database is a sentence.
+
+`test_migrate.py` runs the one-time move out of SQLite against a SQLite file in
+the old shape, including every way it can refuse.
+
+`test_backup.py` holds the launchd job that runs `backup.sh`: that it parses,
+runs the script daily at 09:00, and carries no personal paths.
 
 `test_container.py` reads the `Dockerfile`, `.dockerignore` and `compose.yaml`
 and fails if the image could ever be built from the whole folder or from
