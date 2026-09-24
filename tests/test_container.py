@@ -17,13 +17,16 @@ the app relies on, and the app believes forwarded headers from nginx alone.
 """
 
 import ast
+import base64
 import glob
+import hashlib
 import ipaddress
 import json
 import os
 import re
 import stat
 
+import pytest
 import yaml
 
 import psells
@@ -430,6 +433,83 @@ def test_the_app_believes_forwarded_headers_from_nginx_alone():
     assert nginx not in ipaddress.ip_network(with_defaults(pool["ip_range"]))
 
 
+def http_level():
+    return [words for blocks, words in nginx_directives()
+            if [name for _, name in blocks] == [("http",)]]
+
+
+def response_headers():
+    """The add_header lines of the psells.localhost server, by name."""
+    headers = {}
+    for words in top_level(server("8443", "psells.localhost")):
+        if words[0] == "add_header":
+            name, value, *rest = words[1:]
+            # On every response, errors included, not only successful ones.
+            assert rest == ["always"], words
+            headers[name] = value.strip('"')
+    return headers
+
+
+def test_nginx_hides_its_version_and_limits_request_bodies():
+    assert ["server_tokens", "off"] in http_level()
+    assert ["client_max_body_size", "64k"] in http_level()
+
+
+def test_every_psells_response_carries_the_security_headers():
+    headers = response_headers()
+
+    assert headers["Strict-Transport-Security"] == "max-age=31536000"
+    assert headers["X-Content-Type-Options"] == "nosniff"
+    assert headers["Referrer-Policy"] == "same-origin"
+    assert set(headers) == {
+        "Strict-Transport-Security", "Content-Security-Policy",
+        "X-Content-Type-Options", "Referrer-Policy"}
+
+
+def test_no_location_drops_the_server_headers():
+    # nginx forgets a server's add_header lines inside any location that has
+    # one of its own, silently.
+    for inner, words in server("8443", "psells.localhost"):
+        assert not (inner and words[0] == "add_header"), (inner, words)
+
+
+def csp():
+    return dict(
+        (directive.split(" ", 1) + [""])[:2]
+        for directive in (part.strip() for part in
+                          response_headers()["Content-Security-Policy"].split(";"))
+        if directive)
+
+
+def test_the_content_security_policy_allows_nothing_it_does_not_name():
+    policy = csp()
+
+    assert policy["default-src"] == "'none'"
+    assert policy["form-action"] == "'self'"
+    assert policy["frame-ancestors"] == "'none'"
+    assert policy["base-uri"] == "'none'"
+    assert set(policy) == {"default-src", "style-src", "form-action",
+                           "frame-ancestors", "base-uri"}
+    # No script source of any kind, and no way to allow inline code wholesale.
+    assert "unsafe" not in response_headers()["Content-Security-Policy"]
+
+
+def test_the_style_hash_matches_the_style_block_pages_are_served_with(client):
+    page = client.get("/").text
+    blocks = re.findall(r"<style>(.*?)</style>", page, re.S)
+    digest = base64.b64encode(
+        hashlib.sha256(blocks[0].encode()).digest()).decode()
+
+    # One block, so one hash covers every page; a second would need its own.
+    assert len(blocks) == 1
+    assert csp()["style-src"] == f"'sha256-{digest}'", (
+        "templates/base.html changed its <style> block: put this hash in "
+        f"nginx.conf: sha256-{digest}")
+    # And nothing on any page that the policy would refuse.
+    assert "<script" not in page
+    assert " style=" not in page
+
+
 def test_nginx_runs_as_its_own_user_and_never_as_root():
     proxy = compose()["services"]["proxy"]
     directives = [words[0] for _, words in nginx_directives()]
@@ -520,11 +600,12 @@ def test_every_postgres_is_the_same_pinned_image():
     assert PINNED_IMAGE.match(images.pop())
 
 
-def test_nginx_is_checked_in_ci_with_the_image_the_stack_runs():
+@pytest.mark.parametrize("name", ["lint.yml", "image.yml"])
+def test_nginx_is_checked_and_scanned_in_ci_with_the_image_the_stack_runs(name):
     # Dependabot updates compose.yaml but not an image named in a workflow.
     stack = compose()["services"]["proxy"]["image"]
     ci = workflow(os.path.join(PROJECT_DIR, ".github", "workflows",
-                               "lint.yml"))["jobs"]["nginx"]["env"]["NGINX_IMAGE"]
+                               name))["jobs"]["nginx"]["env"]["NGINX_IMAGE"]
 
     assert stack == ci
     assert PINNED_IMAGE.match(stack), stack

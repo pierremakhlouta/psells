@@ -9,6 +9,8 @@ does this lives in conftest.py.
 
 from datetime import date
 
+import pytest
+
 import psells
 
 from helpers import add_payment, add_product, add_return, add_sale
@@ -199,9 +201,12 @@ def test_an_overpayment_is_a_negative_balance(client, db):
 
 # The generated documentation -------------------------------------------------
 
-def test_the_docs_page_is_served(client):
-    """The demo. If this breaks, the thing you show people is broken."""
-    assert client.get("/docs").status_code == 200
+@pytest.mark.parametrize("path", ["/docs", "/redoc", "/docs/oauth2-redirect"])
+def test_the_interactive_docs_are_not_served(client, path):
+    """Turned off in Phase 05: FastAPI builds them from JavaScript on a CDN,
+    pinned only to a major version, running on the same origin as the forms.
+    /openapi.json, below, is the same description as plain JSON."""
+    assert client.get(path).status_code == 404
 
 
 def test_the_schema_describes_both_endpoints(client):

@@ -3,6 +3,8 @@ name: Image
 # Scans the container image for known vulnerabilities: the Debian packages in
 # the base image and the Python packages installed on top. pip-audit in
 # security.yml covers the requirements files; this covers what actually ships.
+# The nginx image in front of it is scanned the same way, in a job of its own,
+# so each reports its own result.
 #
 # On every push, and weekly, because vulnerabilities are found in packages
 # that have not changed.
@@ -49,6 +51,47 @@ jobs:
         uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439  # v7.4.2
         with:
           image: psells:ci
+          only-fixed: true
+          severity-cutoff: high
+          fail-build: true
+          output-format: table
+          output-file: grype-fixable.txt
+
+      - name: Show what failed the build
+        if: failure()
+        run: cat grype-fixable.txt
+
+  nginx:
+    runs-on: ubuntu-latest
+
+    # The nginx image compose.yaml runs, scanned the same two ways as the app's
+    # image. It is not built here, only pulled, but it is as much a part of
+    # what serves PSells. Dependabot updates compose.yaml and not this line,
+    # so test_container.py fails if the two ever differ.
+    env:
+      NGINX_IMAGE: nginx:1.30.5-alpine@sha256:bf3201ab56f23e5954646379c775d511fc466e9f11376d9725361064ad07ed35
+
+    steps:
+      # Pulled by its digest first, so the scan reads exactly these bytes
+      # from the local Docker rather than looking the name up itself.
+      - name: Pull the image
+        run: docker pull "$NGINX_IMAGE"
+
+      - name: List every known vulnerability
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439  # v7.4.2
+        with:
+          image: ${{ env.NGINX_IMAGE }}
+          fail-build: false
+          output-format: table
+          output-file: grype-all.txt
+
+      - name: Show the list
+        run: cat grype-all.txt
+
+      - name: Fail on a high or critical vulnerability that has a fix
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439  # v7.4.2
+        with:
+          image: ${{ env.NGINX_IMAGE }}
           only-fixed: true
           severity-cutoff: high
           fail-build: true

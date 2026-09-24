@@ -46,6 +46,13 @@ app = FastAPI(
         "All money is in whole cents."
     ),
     version="0.1.0",
+    # No /docs and no /redoc. FastAPI builds both from JavaScript loaded from
+    # a CDN and pinned only to a major version, and it would run on the same
+    # origin as the forms, which the cross-site check trusts. The strict
+    # Content-Security-Policy nginx sends would refuse it anyway. The same
+    # description of the API is served as plain JSON at /openapi.json.
+    docs_url=None,
+    redoc_url=None,
 )
 
 

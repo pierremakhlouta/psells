@@ -166,8 +166,11 @@ labels rather than using a token.
 `api.py` serves the same data over HTTP. It is another way in, not another
 application: every figure it returns comes from the functions the command line
 uses, and it works nothing out for itself. It is served by the same uvicorn
-process as the pages; open `https://psells.localhost/docs`, which is generated from
-the code and lists every endpoint with its fields and types.
+process as the pages. `https://psells.localhost/openapi.json` describes every
+endpoint with its fields and types, generated from the code. FastAPI's
+interactive pages for it, `/docs` and `/redoc`, are turned off: they load their
+JavaScript from a CDN pinned only to a major version, and would run it on the
+same site as the forms.
 
     GET  /products    every product, with stock and the partner cut per unit
     GET  /dashboard   the nine dashboard figures
@@ -233,6 +236,16 @@ passes every request to the application over the private network Compose
 creates, as plain HTTP, with the `Host` the browser sent and with
 `X-Forwarded-Proto` and `X-Forwarded-For` set to what nginx itself saw, so a
 client cannot supply its own.
+
+Every response from PSells carries four headers set by nginx:
+`Strict-Transport-Security` for a year, so a browser that has visited once
+never tries plain HTTP for `psells.localhost` again; a `Content-Security-Policy`
+that allows no scripts at all, only the one style block in `templates/base.html`
+by the hash of its text, forms that post only to PSells, and no framing by
+another site; `X-Content-Type-Options: nosniff`; and `Referrer-Policy:
+same-origin`. nginx does not name its version, and refuses a request body over
+64 KB with a 413. Changing the style block in `base.html` changes its hash, and
+a test then fails with the new hash to put in `nginx/nginx.conf`.
 
 `curl` does not use the macOS keychain, so it is told about the CA directly:
 
@@ -411,7 +424,9 @@ server imports, if any port is published beyond this machine, if the
 application or the database publishes a port at all, if a password is written
 into `compose.yaml`, if nginx stops passing the headers the application relies
 on with the values it relies on, if the application would believe forwarded
-headers from anyone but nginx, if nginx would run as root, if an action or an
+headers from anyone but nginx, if nginx would run as root, if a response would
+lack one of its security headers or the policy's style hash no longer matches
+the page, if an action or an
 image is used by a tag rather than pinned to a commit or a digest, or if a
 workflow can write to the repository. The Lint workflow also runs `nginx -t` on
 the configuration with the image the stack uses.
@@ -422,9 +437,9 @@ every test runs inside a transaction that is rolled back at the end, so tests
 never see each other's rows and nothing has to be cleaned up. On GitHub Actions
 the test database is a service container of the same image, on the same
 port. Everything runs on every push through GitHub Actions, alongside a
-dependency vulnerability audit, a shellcheck pass over the shell scripts, and a
-scan of the built image with Grype, which fails on a high or critical
-vulnerability that has a fix and lists the rest.
+dependency vulnerability audit, a shellcheck pass and an `nginx -t` check, and
+a scan with Grype of the built image and of the nginx image, which fails on a
+high or critical vulnerability that has a fix and lists the rest.
 
 Everything is pinned: Python packages to exact versions, every action in the
 workflows to a commit, and the base images to a version and the digest of
