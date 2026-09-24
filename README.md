@@ -241,6 +241,35 @@ application's address for it is assembled in `compose.yaml` from the same
 values in `.env` the database is created with, so the password is written once.
 `tests/test_container.py` holds all of this in place.
 
+## The certificate
+
+PSells is to be served over HTTPS at `https://psells.localhost`, with a
+certificate from a certificate authority of its own rather than a public one,
+because a public one needs a public name. `make-certificate.sh` makes both:
+
+    ./make-certificate.sh
+
+The first run creates the CA in `~/PSells-CA`, outside the project, readable by
+you only. Its certificate can sign for `psells.localhost` and nothing else:
+its name constraint permits that one name and excludes every IP address, so
+its key could not be used to impersonate any other site even if it leaked. It
+lasts five years. The script then prints the command that tells macOS to trust
+it, once, for your user:
+
+    security add-trusted-cert -r trustRoot -k ~/Library/Keychains/login.keychain-db ~/PSells-CA/ca.crt
+
+Safari and Chrome use that trust; Firefox keeps its own list.
+
+Every run signs a new certificate for `psells.localhost` with that CA, into
+`data/tls/`, which git and the Docker build both ignore. It lasts 397 days,
+inside the limit browsers apply to public certificates, so renewing is
+running the script again, with nothing to change in the keychain. The script
+refuses to sign a certificate that would outlive its CA, and replaces the old
+certificate only once the new one verifies.
+
+`.localhost` names always mean this machine, and Safari, Chrome and curl find
+`psells.localhost` without any change to `/etc/hosts`.
+
 ## Backups
 
 `backup.sh` takes a `pg_dump` of the database in the Compose stack into
@@ -304,7 +333,7 @@ database it is pointed at, so it refuses any whose name does not end in
 Every warning is an error (`pytest.ini`), apart from one known deprecation in
 Starlette's test client on Python 3.14, matched on its exact message.
 
-Ten files, and the split is deliberate, so a red run says what kind of thing
+Eleven files, and the split is deliberate, so a red run says what kind of thing
 broke before you read a line of it.
 
 `test_domain.py` covers everything in `psells.py` that has no input or output:
@@ -344,6 +373,11 @@ the old shape, including every way it can refuse.
 
 `test_backup.py` holds the launchd job that runs `backup.sh`: that it parses,
 runs the script daily at 09:00, and carries no personal paths.
+
+`test_tls.py` runs `make-certificate.sh` into a temporary folder with the
+`openssl` on the machine, and proves the CA's limit by having it sign
+certificates for other names and for IP addresses, each of which must be
+refused.
 
 `test_container.py` reads the `Dockerfile`, `.dockerignore`, `compose.yaml`,
 `nginx/nginx.conf` and the workflows, and fails if the image could ever be
