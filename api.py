@@ -15,15 +15,16 @@ Money crosses the wire as a whole number of cents, never as dollars and never
 as a formatted string. That matches how it is stored, keeps every value exact,
 and leaves formatting to whatever is showing it to a person.
 
-Run it with:
+It runs in the Compose stack, which sets the two things it reads from its
+environment: PSELLS_DATABASE_URL, the PostgreSQL database, and PSELLS_CONFIG,
+the configuration file.
 
-    uvicorn api:app --reload
+    docker compose up --build -d --wait
 
-from anywhere. psells.py resolves its database and configuration beside its own
-file, and PSELLS_DB and PSELLS_CONFIG override both, which is how to point this
-at a copy rather than at the real records:
+The database has no default, so running it anywhere else means naming one, and
+pointing it at a copy rather than the real records is always a deliberate act:
 
-    PSELLS_DB=/path/to/copy.db uvicorn api:app
+    PSELLS_DATABASE_URL=postgresql://... PSELLS_CONFIG=/path/to/config.json uvicorn api:app
 """
 
 import datetime

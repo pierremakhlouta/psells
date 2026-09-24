@@ -33,9 +33,9 @@ PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 def path_from_environment(variable, *parts):
     """An override from the environment, or a path beside this file.
 
-    An empty variable counts as unset. Exporting PSELLS_DB= and meaning "use the
-    default" is a reasonable reading, and treating it as a path to the file ""
-    is not.
+    An empty variable counts as unset. Exporting PSELLS_CONFIG= and meaning
+    "use the default" is a reasonable reading, and treating it as a path to the
+    file "" is not.
     """
     return os.environ.get(variable) or os.path.join(PROJECT_DIR, *parts)
 
