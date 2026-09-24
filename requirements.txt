@@ -1,8 +1,8 @@
 # Runtime dependencies: what PSells needs in order to run.
 #
-# psells.py, the command line application, still uses only the standard library
-# and needs nothing here. These are for the HTTP API in api.py and the web pages
-# in web.py, which one uvicorn process serves together.
+# One image holds all of it: psells.py, the command line application, needs the
+# PostgreSQL driver, and the HTTP API in api.py and the web pages in web.py,
+# which one uvicorn process serves together, need the rest.
 #
 # Development and testing tools live in requirements-dev.txt, so a deployment
 # installs what it needs to run and nothing else.
@@ -17,8 +17,7 @@ jinja2==3.1.6
 # form fields is defined, at import, so without it the whole application fails
 # to start, the API included. Not the unrelated package called plain multipart.
 python-multipart==0.0.32
-# The PostgreSQL driver. The test suite uses it now to check schema_postgres.sql
-# against a real PostgreSQL; the application moves onto it next. [binary]
+# The PostgreSQL driver, used by psells.connect and so by every way in. [binary]
 # brings a compiled copy of the C client library, so nothing has to be built.
 psycopg[binary]==3.3.6
 

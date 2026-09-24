@@ -344,7 +344,8 @@ calls only, not every detail, and no specific business figures.
   add one case it did not cover: a browser tab left open on a deleted product's
   form would post to the new product that inherited its id. Rebuilding the table
   to prevent reuse was judged not worth doing on live data at the end of a phase,
-  because the planned move to PostgreSQL removes the case entirely.
+  because the planned move to PostgreSQL removes the case entirely. It did: ids
+  now come from sequences, which never reuse a value.
 
 - **The API grows no write endpoints until there is authentication.** The pages
   need the work separated from the prompts, and it has been. Putting HTTP
@@ -363,3 +364,74 @@ calls only, not every detail, and no specific business figures.
   is grouped. The text an edit form holds for typing over is not, because it has
   to read back as exactly the amount that is stored.
 
+- **PostgreSQL only, and the tests run on it.** The move off SQLite could have
+  kept SQLite for the tests, in memory and with nothing to start, while
+  production ran PostgreSQL. That would mean two schemas and two dialects, and
+  every test passing against an engine that never runs the business. So SQLite
+  was retired after the one-time move, and the suite runs against a real
+  PostgreSQL: a throwaway one of its own, never the real one, each test inside a
+  transaction that is rolled back. The price is that running the tests needs
+  Docker.
+
+- **The application's connection commits every write.** With PostgreSQL's
+  driver a transaction opens at the first statement of any kind, and a write
+  block inside an open transaction is only a savepoint: the write looks done and
+  is lost when the connection closes. The application's connections run in
+  autocommit, so each write block is a real transaction, and a test checks from
+  a second connection that a write has landed, because nothing else in the suite
+  can see the difference.
+
+- **The types were chosen to change nothing.** Money stays whole cents in
+  integer columns, not `numeric` and not `bigint`, because both would come back
+  into Python as `Decimal`. The partner percentage is the same eight-byte float
+  SQLite used; PostgreSQL's smaller one would lose digits. Dates became real
+  dates, which the type itself checks. The retail flag stays 0 or 1. Categories
+  sort by character code, as they did, rather than by the server's language,
+  which can differ from one machine to the next.
+
+- **The move from SQLite was one transaction, checked before it committed.**
+  Every row was copied with its id, and nothing was kept until the result
+  matched the source in every row and column, every product's stock and partner
+  cut, and every dashboard figure, each worked out by the same functions on both
+  sides. Money being whole cents made that an exact comparison rather than one
+  within a tolerance. A verified copy of the SQLite database was archived first,
+  and the first PostgreSQL backup was restored before it was trusted.
+
+- **The image holds code and nothing else.** The records live in the database
+  container and the configuration file is mounted read-only when the
+  application starts, so an image can be shared without carrying a record. The
+  Dockerfile names every file it copies rather than copying the folder, which
+  holds the real data, and the build context leaves that data out as well.
+  Every file is made readable before the server's own unprivileged user takes
+  over, so the image does not depend on how the files happened to be saved on
+  the machine that built it.
+
+- **Nothing is reachable beyond this machine.** Inside a container the server
+  must listen on every interface, so the protection moved to how the port is
+  published, which is to this machine only. The database publishes no port at
+  all; only the application reaches it, and the terminal application runs inside
+  the application's container rather than on the host. Its password lives in a
+  file kept out of the repository and out of every image, and every setting is
+  required, so a missing one stops the stack with a sentence instead of starting
+  a database with no password.
+
+- **A backup is a dump that has been restored.** Each daily dump is restored
+  into a throwaway database and its products counted against the live database
+  before any older copy is deleted. The schedule moved from cron to macOS's own
+  scheduler, which runs a missed job when the machine wakes; cron skipped every
+  morning the laptop slept through. Every copy is still on the same disk as the
+  database, which is the largest risk left, and waits for the cloud phases.
+
+- **Warnings fail the tests.** A deprecation printed in a summary is read once
+  and then ignored until the thing it warns about is removed. As an error it
+  fails the day it appears. One known warning is allowed, matched on its exact
+  text. On its first run the setting found a real leak: test connections that
+  were never closed.
+
+- **Everything CI runs is pinned to its contents.** A tag names a version and
+  can be moved to different code after it is published, which is how a widely
+  used scanning action was turned against its users in March 2026. Every action
+  is pinned to a commit and every image to a digest, every workflow can only
+  read the repository, and the built image is scanned for known
+  vulnerabilities, failing on a serious one that has a fix and listing the rest.
+  Pins age, so Dependabot proposes each update and the same checks judge it.

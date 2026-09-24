@@ -19,7 +19,9 @@ payouts made to that partner, and computes a live dashboard from all four.
 - Works out each item's partner cut from a rule set per item
 - Computes stock levels, revenue, profit, and the balance owing to the partner
 - Refuses to delete a product that has sales or returns against it
-- Backs itself up daily, on a schedule, and verifies each copy
+- Runs as two containers, the application and a PostgreSQL database, with one
+  command
+- Backs itself up daily, on a schedule, and proves each copy restores
 
 Every figure that can be derived is computed on demand rather than stored, so no
 total can drift out of sync with the records it came from. See
