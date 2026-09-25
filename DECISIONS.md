@@ -435,3 +435,83 @@ calls only, not every detail, and no specific business figures.
   read the repository, and the built image is scanned for known
   vulnerabilities, failing on a serious one that has a fix and listing the rest.
   Pins age, so Dependabot proposes each update and the same checks judge it.
+
+- **HTTPS on this machine before there is a server.** A certificate every
+  browser trusts has to name a public address its issuer can check, and there
+  is no server or domain yet. Holding HTTPS back until there is one would have
+  put two new layers, a server and TLS, into one step, so that a failure had
+  two possible causes. PSells is served over HTTPS on this machine now, with a
+  certificate from a certificate authority of its own that this machine
+  trusts, and a publicly trusted certificate arrives with the server. Everything
+  else about serving it, the proxy, the redirect, the headers and which names
+  are answered, carries over unchanged.
+
+- **The private CA can sign for one name and no address.** Trusting a CA of
+  one's own normally means trusting it for every site, so its key would be as
+  valuable as any file on the machine. Its certificate carries a name
+  constraint that permits only the one name PSells is served on and excludes
+  every IP address, marked critical so that software unable to enforce it must
+  refuse the certificate. A constraint limits only the kinds of name it lists,
+  which is why the addresses are excluded explicitly. The tests prove the limit
+  the only convincing way: they have the CA sign certificates for other names
+  and for addresses and check each is refused, beside one for the permitted
+  name that is accepted. The CA's key lives outside the project; the server's
+  key lives under the ignored data folder, and neither reaches the repository
+  or an image. Server certificates last just under the limit browsers apply to
+  public ones, so renewing is routine, and the script refuses to sign one that
+  would outlive its CA, judged by the sentence openssl prints rather than its
+  exit status, which one version gets wrong.
+
+- **nginx is the only way in, and the application believes nobody else.** The
+  application publishes no port, so every request passes through the proxy's
+  configuration. The application takes the scheme and client address from
+  forwarded headers only when the connection comes from the proxy's one fixed
+  address, which needed a fixed address range for the stack's network. The
+  proxy sets those headers from what it saw rather than adding to what the
+  client sent, and passes the browser's host unchanged, because the server
+  reads the host from that header and the cross-site check compares it with
+  the page's origin. A wider trust, the whole network or everyone, was
+  considered and refused: whoever is trusted can claim a request arrived over
+  HTTPS.
+
+- **One name is answered, and every other refused.** A request for any other
+  name is refused in the handshake, answered 421 if it names another host only
+  inside the request, or redirected to the one name if it arrives over plain
+  HTTP. The cross-site check only ever guarded writes; answering any name left
+  pages readable by a hostile site that points its own name at this machine,
+  which is called DNS rebinding. The redirect names its target in full rather
+  than echoing the host it was sent, so it can only ever lead to PSells.
+
+- **TLS 1.3 only, and HTTPS remembered for a year.** Every client is a current
+  browser or command-line tool on this machine, so older protocol versions
+  would only add handshakes nothing uses. Browsers are told to use nothing but
+  HTTPS for this name for a year after one visit, for this name alone and on no
+  preload list, which is undone by sending a zero lifetime over HTTPS.
+
+- **No scripts on any page.** The pages use none, so the
+  Content-Security-Policy allows none, and allows the one style block by the
+  hash of its exact text rather than allowing inline styles in general. Forms may post only to
+  PSells, and no other site may frame it. A hash covers exact bytes, so a test
+  renders a page, hashes its style block and fails, naming the new hash, if the
+  template and the policy drift apart. Headers are added on error responses too,
+  and all in one place, because the proxy silently drops a server's headers
+  from any location that adds one of its own.
+
+- **The interactive API pages are turned off.** FastAPI builds them from
+  JavaScript fetched from a CDN and pinned only to a major version, the same
+  kind of floating reference that had been hijacked in the scanning action,
+  and they would run it on the same origin as the forms, which the cross-site
+  check trusts. The strict policy would refuse that code anyway. The same
+  description of the API is still served as plain JSON.
+
+- **The proxy runs as its own user, from the slim image.** Nothing in the
+  stack runs as root, so the proxy listens above port 1024 inside its container
+  and keeps its working files where its own user can write. The first scan of
+  the full image failed on a library that only its optional add-on modules
+  need, and PSells loads none of them; the slim variant is the same server
+  without them. A test fails if the configuration ever asks for a module.
+
+- **Authentication comes before anything is public.** Logins, sessions and a
+  token in every form were left for this phase and are their own phase
+  instead, built on this machine before a server puts PSells on a public
+  address. Sessions need the HTTPS now in place.

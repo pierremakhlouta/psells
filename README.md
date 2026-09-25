@@ -180,7 +180,7 @@ All money is sent and received as a whole number of cents, never as dollars and
 never as a formatted string. That matches how it is stored, keeps every value
 exact, and leaves formatting to whatever is showing it to a person.
 
-The server is published on `127.0.0.1` only, so nothing else on the network can
+nginx publishes it on `127.0.0.1` only, so nothing else on the network can
 reach it. That matters, because there is no authentication of any kind yet. To
 try it against invented records rather than the real ones, use the sample stack
 above.
@@ -452,16 +452,26 @@ newer release, which the same workflows then test and scan.
 
 Worth stating plainly rather than leaving to be discovered.
 
-- **There is no authentication.** Anyone who can reach the port can read every
-  figure and change every record, through the pages or the API. The server
-  listens on `127.0.0.1` only, which is the whole of the protection at the
-  moment, so do not put it on `0.0.0.0`. In a container it has to listen on
+- **There is no authentication yet.** Anyone who can reach the port can read
+  every figure and change every record, through the pages or the API. It comes
+  next, before anything is public. The server listens on `127.0.0.1` only,
+  which is the whole of the protection at the moment, so do not put it on
+  `0.0.0.0`. In a container it has to listen on
   `0.0.0.0`, and the same protection comes from the application publishing no
   port and nginx publishing its two as `127.0.0.1:443` and `127.0.0.1:80`.
 - **The protection against cross-site writes relies on the browser's labels.**
   Every current browser sends them, and a page cannot change them, but a token
   in every form would not depend on them. That is the thing to add alongside
   authentication.
+- **The certificate is trusted by this machine only.** It comes from a CA of
+  PSells' own, which other machines, and Firefox, do not trust. A publicly
+  trusted certificate needs a public name, which arrives with a server.
+- **nginx reads a key only its owner can read.** Docker Desktop on macOS allows
+  that; on Linux, nginx's own user would be refused, and the key's permissions
+  will need deciding on a Linux server.
+- **Behind Docker Desktop, the application never sees a client's address.**
+  Every request reaches nginx from the Compose network's gateway, so that is the
+  address logged and forwarded. Harmless while everything is on one machine.
 - **The API can read and sell, and nothing else.** Every other write is in the
   web pages and the command line. Write endpoints wait until authentication is
   decided, rather than adding unauthenticated ways to change the records that
@@ -493,7 +503,8 @@ PSells is built one layer at a time as a long-running project rather than a
 finished product. It stores its data in PostgreSQL behind a schema that
 enforces the business rules, runs as containers under Compose, is used through
 server-rendered web pages, a terminal application and an HTTP API that all call
-the same functions, is covered by an automated test suite that runs on every
-push against a real PostgreSQL, and is backed up on a schedule. Planned next is
-cloud deployment, carrying the same data model and business rules through each
-step.
+the same functions, is served over HTTPS behind nginx, is covered by an
+automated test suite that runs on every push against a real PostgreSQL, and is
+backed up on a schedule. Planned next is authentication, then cloud deployment
+with a publicly trusted certificate, carrying the same data model and business
+rules through each step.
