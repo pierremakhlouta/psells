@@ -47,6 +47,14 @@ fail() {
 
 command -v openssl > /dev/null || fail "openssl not found on PATH"
 
+# OpenSSL only. LibreSSL, the openssl that ships with macOS, prints nothing
+# from -checkend, so the CA expiry check below could never read its answer.
+OPENSSL_VERSION="$(openssl version 2> /dev/null || true)"
+case "$OPENSSL_VERSION" in
+    "OpenSSL "*) ;;
+    *) fail "needs OpenSSL, but the openssl on PATH is '${OPENSSL_VERSION:-unknown}'; install it (brew install openssl@3) and put it first on PATH" ;;
+esac
+
 # Every file this script creates is readable by its owner only, keys above all.
 umask 077
 
@@ -57,8 +65,7 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
 # P-256 elliptic-curve keys: what browsers and Let's Encrypt use by default,
-# smaller and faster than RSA at the same strength. Written by genpkey, which
-# both OpenSSL and the LibreSSL that ships with macOS understand.
+# smaller and faster than RSA at the same strength. Written by genpkey.
 new_key() {
     openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "$1"
 }

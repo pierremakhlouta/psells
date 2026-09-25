@@ -7,8 +7,9 @@ not impersonate another site. That is tested the only convincing way, by
 making the CA sign certificates it should not be able to, and checking that
 they are refused.
 
-openssl here is whichever is on the PATH: OpenSSL on CI, and on a Mac the
-LibreSSL that ships with macOS, so the suite proves the script on both.
+openssl here is whichever is first on the PATH: OpenSSL on CI, and Homebrew
+OpenSSL on the Mac. The script refuses anything else, LibreSSL included,
+and a test checks that refusal with a fake openssl.
 """
 
 import os
@@ -31,9 +32,11 @@ def openssl(*arguments, check=True):
                           text=True, check=check)
 
 
-def run_script(ca_dir, tls_dir):
+def run_script(ca_dir, tls_dir, path=None):
     environment = dict(os.environ, PSELLS_CA_DIR=str(ca_dir),
                        PSELLS_TLS_DIR=str(tls_dir))
+    if path is not None:
+        environment["PATH"] = path
     return subprocess.run(["bash", SCRIPT], capture_output=True, text=True,
                           env=environment)
 
@@ -299,6 +302,26 @@ def test_a_certificate_that_does_not_verify_replaces_nothing(tmp_path):
     assert "does not verify" in result.stderr
     assert (tls_dir / f"{NAME}.crt").read_bytes() == certificate_before
     assert (tls_dir / f"{NAME}.key").read_bytes() == key_before
+
+
+def test_an_openssl_that_is_not_openssl_is_refused_and_nothing_is_made(tmp_path):
+    # LibreSSL, the openssl that ships with macOS, prints nothing from
+    # -checkend, so the script could never read its answer on the CA's expiry.
+    # A fake that answers every command as LibreSSL stands first on the PATH.
+    fake = tmp_path / "bin" / "openssl"
+    fake.parent.mkdir()
+    fake.write_text('#!/bin/sh\necho "LibreSSL 3.3.6"\n')
+    fake.chmod(0o755)
+    ca_dir, tls_dir = tmp_path / "ca", tmp_path / "tls"
+
+    result = run_script(ca_dir, tls_dir,
+                        path=f"{fake.parent}{os.pathsep}{os.environ['PATH']}")
+
+    assert result.returncode != 0
+    assert "needs OpenSSL" in result.stderr
+    assert "LibreSSL 3.3.6" in result.stderr
+    assert not ca_dir.exists()
+    assert not tls_dir.exists()
 
 
 def test_folders_that_already_exist_are_closed_to_everyone_else(tmp_path):
