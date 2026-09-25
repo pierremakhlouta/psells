@@ -510,6 +510,14 @@ def test_the_style_hash_matches_the_style_block_pages_are_served_with(client):
     assert " style=" not in page
 
 
+def test_nginx_loads_no_modules_because_the_slim_image_has_none():
+    # compose.yaml runs the alpine-slim image, which leaves out every add-on
+    # module. A load_module line would stop nginx at startup; this says why
+    # before anyone finds out that way.
+    assert "load_module" not in [words[0] for _, words in nginx_directives()]
+    assert "-alpine-slim@" in compose()["services"]["proxy"]["image"]
+
+
 def test_nginx_runs_as_its_own_user_and_never_as_root():
     proxy = compose()["services"]["proxy"]
     directives = [words[0] for _, words in nginx_directives()]

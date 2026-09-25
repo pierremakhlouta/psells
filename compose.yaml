@@ -21,9 +21,14 @@ services:
     # The only service the outside world can reach. It passes every request to
     # the app over this stack's network; see nginx/nginx.conf. The Docker
     # Official Image, stable line, on Alpine, pinned like every other image.
+    # The slim variant: nginx without the five add-on modules the full Alpine
+    # image adds (XSLT, GeoIP, image filtering, njs, ACME). nginx.conf loads
+    # none of them, and they brought libraries PSells never runs, among them
+    # the libexpat whose high vulnerability failed the first scan of the full
+    # image. A test fails if nginx.conf ever asks for a module.
     # The Lint workflow runs nginx -t with the same image, and a test holds the
     # two equal, because Dependabot does not update an image in a workflow.
-    image: nginx:1.30.5-alpine@sha256:bf3201ab56f23e5954646379c775d511fc466e9f11376d9725361064ad07ed35
+    image: nginx:1.30.5-alpine-slim@sha256:32463212baf0e7d91aded2e9b843a4f2b9e017804b8c9d5bae7b51dcef64389c
     # The image's own nginx user and group (101), never root, as the app runs
     # as psells. nginx/nginx.conf is written for this: port 8080, and its
     # process id and temporary files in /tmp.

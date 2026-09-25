@@ -222,7 +222,8 @@ only redirects to it, both on `127.0.0.1`, forwarded to 8443 and 8080 inside
 its container. Publishing them on `127.0.0.1` is what keeps them to this
 machine. Leaving out the `127.0.0.1:` publishes them to the whole network, which
 with no authentication means anyone on the same Wi-Fi can change the records.
-nginx runs the Docker Official Image as its own unprivileged user, never root,
+nginx runs the Docker Official Image, in its slim variant with none of the
+add-on modules, as its own unprivileged user, never root,
 with its whole configuration in `nginx/nginx.conf`, mounted read-only, and the
 certificate and key mounted read-only from `data/tls/`.
 

@@ -69,7 +69,7 @@ jobs:
     # what serves PSells. Dependabot updates compose.yaml and not this line,
     # so test_container.py fails if the two ever differ.
     env:
-      NGINX_IMAGE: nginx:1.30.5-alpine@sha256:bf3201ab56f23e5954646379c775d511fc466e9f11376d9725361064ad07ed35
+      NGINX_IMAGE: nginx:1.30.5-alpine-slim@sha256:32463212baf0e7d91aded2e9b843a4f2b9e017804b8c9d5bae7b51dcef64389c
 
     steps:
       # Pulled by its digest first, so the scan reads exactly these bytes
