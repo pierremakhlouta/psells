@@ -2,7 +2,7 @@
 
 {% block title %}{% if product %}Edit {{ product.name }}{% else %}Add a product{% endif %} · PSells{% endblock %}
 
-{% from "macros.html" import field with context %}
+{% from "macros.html" import field, form_token with context %}
 
 {% block content %}
 {% if product %}
@@ -29,6 +29,7 @@
     keypad rather than type="number", so every rule about amounts stays in
     parse_money. required is a convenience only; the server checks everything. -#}
 <form class="product-form" action="{{ action }}" method="post">
+  {{ form_token() }}
   {{ field("category", "Category", required=true) }}
   {{ field("name", "Name", required=true) }}
   {{ field("condition", "Condition", required=true) }}

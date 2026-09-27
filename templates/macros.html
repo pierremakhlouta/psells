@@ -16,3 +16,11 @@
   {% if errors[key] %}<p class="error" id="{{ key }}-error">{{ errors[key] }}</p>{% endif %}
 </div>
 {% endmacro %}
+
+{#- The session's form token, as a hidden field. Every form that posts, behind
+    the login, carries it, and tests/test_forms.py fails on one that does not.
+    The value comes from the session the page was served for, which
+    dependencies.current_session keeps on request.state. -#}
+{% macro form_token() %}
+<input type="hidden" name="form_token" value="{{ request.state.session.form_token }}">
+{%- endmacro %}

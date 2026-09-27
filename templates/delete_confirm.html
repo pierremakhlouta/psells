@@ -2,6 +2,8 @@
 
 {% block title %}Delete {{ product.name }} · PSells{% endblock %}
 
+{% from "macros.html" import form_token with context %}
+
 {% block content %}
 <h1>Delete product {{ product.id }}</h1>
 
@@ -27,6 +29,7 @@
 {#- method="post" and a button, never a link: a delete must not be something a
     prefetch, a link preview or a refresh can do. -#}
 <form class="actions" action="{{ url_for('delete_product_submit', product_id=product.id) }}" method="post">
+  {{ form_token() }}
   <button type="submit" class="danger">Delete product</button>
   <a href="{{ url_for('edit_product_page', product_id=product.id) }}">Cancel</a>
 </form>

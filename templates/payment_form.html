@@ -2,7 +2,7 @@
 
 {% block title %}Record a payment · PSells{% endblock %}
 
-{% from "macros.html" import field with context %}
+{% from "macros.html" import field, form_token with context %}
 
 {% block content %}
 <h1>Record a payment to the partner</h1>
@@ -24,6 +24,7 @@
 {% endif %}
 
 <form class="product-form" action="{{ url_for('add_payment_submit') }}" method="post">
+  {{ form_token() }}
   {{ field("amount", "Amount ($)", hint="Zero is allowed.", inputmode="decimal", required=true) }}
   {{ field("date", "Date", hint="Today unless you change it.", type="date") }}
   {{ field("notes", "Notes", hint="For example, how it was paid.", wide=true) }}

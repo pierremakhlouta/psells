@@ -20,7 +20,8 @@ import api
 import auth
 import web
 from dependencies import SESSION_COOKIE
-from helpers import TEST_PASSWORD, TEST_USERNAME, add_product, add_user, log_in
+from helpers import (
+    TEST_PASSWORD, TEST_USERNAME, add_product, add_user, forms, log_in)
 
 
 def every_route(router):
@@ -249,7 +250,11 @@ def test_logging_out_ends_the_session_and_clears_the_cookie(anonymous, db):
     log_in_through_the_page(anonymous)
     kept = anonymous.cookies[SESSION_COOKIE]
 
-    response = anonymous.post("/logout", follow_redirects=False)
+    # Pressed as a browser would: the header's form, with its hidden token.
+    (button,) = forms(anonymous.get("/").text, with_logout=True)[:1]
+    token = {field["name"]: field["value"] for field in button["inputs"]}
+    response = anonymous.post(button["action"], data=token,
+                              follow_redirects=False)
 
     assert response.status_code == 303
     assert response.headers["location"] == "https://testserver/login"

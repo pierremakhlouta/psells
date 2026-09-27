@@ -158,15 +158,22 @@ def client(db, partner_rate):
     """
     api.app.dependency_overrides[dependencies.get_connection] = lambda: db
 
-    cookie_value, _ = log_in(db)
+    cookie_value, form_token = log_in(db)
 
-    # Put straight into the client's cookie jar, which sends it on every
-    # request, redirects included; a Cookie header set by hand is dropped when
-    # a redirect is followed. Placed there without the Secure flag the login
-    # page gives it, so it reaches this client's plain-http test address.
-    # tests/test_login.py uses an https client to test the real cookie.
+    # The cookie goes straight into the client's cookie jar, which sends it on
+    # every request, redirects included; a Cookie header set by hand is
+    # dropped when a redirect is followed. Placed there without the Secure
+    # flag the login page gives it, so it reaches this client's plain-http
+    # test address. tests/test_login.py uses an https client to test the real
+    # cookie.
+    #
+    # The form token goes in the header a program would use, so a test about
+    # a form's fields need not copy the hidden one. tests/test_forms.py posts
+    # the hidden field itself, with no header, to prove the pages' own way
+    # works.
     yield TestClient(api.app,
-                     cookies={dependencies.SESSION_COOKIE: cookie_value})
+                     cookies={dependencies.SESSION_COOKIE: cookie_value},
+                     headers={dependencies.FORM_TOKEN_HEADER: form_token})
 
     api.app.dependency_overrides.clear()
 

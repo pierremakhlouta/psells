@@ -32,14 +32,17 @@ from pydantic import BaseModel
 import auth
 import psells
 from dependencies import (
-    SESSION_COOKIE, Connection, Session, require_page_session)
+    SESSION_COOKIE, Connection, Session, check_form_token,
+    require_page_session)
 
 
-# Every page is on router, which refuses a request without a live session
-# before the route runs. The login page, which has to be reachable without
-# one, is on public, and nothing else is.
+# Every page is on router, which refuses a request without a live session, or
+# a write without the session's form token, before the route runs. The login
+# page, which has to be reachable without either, is on public, and nothing
+# else is.
 router = APIRouter(include_in_schema=False,
-                   dependencies=[Depends(require_page_session)])
+                   dependencies=[Depends(require_page_session),
+                                 Depends(check_form_token)])
 public = APIRouter(include_in_schema=False)
 
 # Beside this file, not beside the shell. A bare "templates" would be looked up

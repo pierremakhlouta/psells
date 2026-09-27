@@ -3,6 +3,7 @@
     Every template in this folder ends in .html, and must. Autoescaping is
     switched on by file extension, so a template named .j2 or .jinja would put
     database text into the page unescaped, and nothing would say so. -#}
+{% from "macros.html" import form_token with context -%}
 <!doctype html>
 <html lang="en">
 <head>
@@ -221,6 +222,7 @@
       <a href="{{ url_for('add_payment_page') }}">Record payment</a>
       {#- A form, not a link: logging out is a POST. -#}
       <form class="logout" action="{{ url_for('logout') }}" method="post">
+        {{ form_token() }}
         <button type="submit">Log out</button>
       </form>
       {% endblock %}

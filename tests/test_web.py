@@ -21,7 +21,7 @@ import psells
 import web
 
 from helpers import (add_payment, add_product, add_return, add_sale,
-                     figures, form_data, forms, table_rows)
+                     field_names, figures, form_data, forms, table_rows)
 
 
 # Column positions in the inventory table, so a test says which figure it
@@ -280,7 +280,7 @@ def test_the_add_form_offers_every_field_the_reader_reads(client):
     """Three lists of the same names: the form, the model that receives it,
     and psells. A field missing from any one would be silently dropped."""
     form = add_form(client)
-    offered = {f["name"] for f in form["inputs"] if "name" in f}
+    offered = field_names(form)
 
     assert form["method"] == "post"
     assert form["action"].endswith("/products/new")
@@ -662,7 +662,7 @@ def test_the_sale_form_offers_the_fields_the_reader_reads(client, db):
     _, form = sale_form_of(client)
 
     assert form["action"].endswith("/products/1/sell")
-    assert {f["name"] for f in form["inputs"]} == set(psells.SALE_FORM_FIELDS)
+    assert field_names(form) == set(psells.SALE_FORM_FIELDS)
     assert set(web.SaleForm.model_fields) == set(psells.SALE_FORM_FIELDS)
     assert form_data(form) == {"quantity": "1", "sale_price": "",
                                "date": date.today().isoformat()}
@@ -842,7 +842,7 @@ def test_the_return_form_offers_the_fields_the_reader_reads(client, db):
     _, form = return_form_of(client)
 
     assert form["action"].endswith("/products/1/return")
-    assert {f["name"] for f in form["inputs"]} == set(psells.RETURN_FORM_FIELDS)
+    assert field_names(form) == set(psells.RETURN_FORM_FIELDS)
     assert set(web.ReturnForm.model_fields) == set(psells.RETURN_FORM_FIELDS)
     assert form_data(form) == {"quantity": "1",
                                "date": date.today().isoformat(), "notes": ""}
@@ -970,7 +970,7 @@ def test_the_payment_form_offers_the_fields_the_reader_reads(client):
     form = payment_form_of(client)
 
     assert form["action"].endswith("/payments/new")
-    assert {f["name"] for f in form["inputs"]} == set(psells.PAYMENT_FORM_FIELDS)
+    assert field_names(form) == set(psells.PAYMENT_FORM_FIELDS)
     assert set(web.PaymentForm.model_fields) == set(psells.PAYMENT_FORM_FIELDS)
     assert form_data(form) == {"amount": "", "date": date.today().isoformat(),
                                "notes": ""}
@@ -1362,7 +1362,7 @@ def test_pages_are_not_in_the_api_documentation(client):
     paths = client.get("/openapi.json").json()["paths"]
 
     assert "/" not in paths
-    assert set(paths) == {"/products", "/dashboard", "/sales"}
+    assert set(paths) == {"/products", "/dashboard", "/sales", "/session"}
 
 
 # Templates format and never compute -----------------------------------------

@@ -2,7 +2,7 @@
 
 {% block title %}Return {{ product.name }} · PSells{% endblock %}
 
-{% from "macros.html" import field with context %}
+{% from "macros.html" import field, form_token with context %}
 
 {% block content %}
 <h1>Record a return</h1>
@@ -26,6 +26,7 @@
 {% endif %}
 
 <form class="product-form" action="{{ url_for('return_product_submit', product_id=product.id) }}" method="post">
+  {{ form_token() }}
   {{ field("quantity", "Quantity returned", inputmode="numeric", required=true) }}
   {{ field("date", "Date", hint="Today unless you change it.", type="date") }}
   {{ field("notes", "Notes", wide=true) }}

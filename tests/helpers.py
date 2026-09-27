@@ -296,15 +296,29 @@ def forms(html, with_logout=False):
             if not form["action"].endswith("/logout")]
 
 
+# The hidden field every form behind the login carries. It is the session's,
+# not the form's, so the two helpers below set it aside: a test about what a
+# form asks for compares only the fields a person fills in. tests/test_forms.py
+# checks the hidden field itself.
+FORM_TOKEN_FIELD = "form_token"
+
+
+def field_names(form):
+    """The names of the fields a person fills in, without the form token."""
+    return {field["name"] for field in form["inputs"]
+            if "name" in field and field["name"] != FORM_TOKEN_FIELD}
+
+
 def form_data(form):
-    """What a browser would send for this form as it stands, by name.
+    """What a browser would send for this form as it stands, by name, without
+    the form token.
 
     A checkbox is sent only when ticked, and sends its value.
     """
     data = {}
 
     for field in form["inputs"]:
-        if "name" not in field:
+        if "name" not in field or field["name"] == FORM_TOKEN_FIELD:
             continue
 
         if field.get("type") == "checkbox":

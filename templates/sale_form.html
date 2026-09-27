@@ -2,7 +2,7 @@
 
 {% block title %}Sell {{ product.name }} · PSells{% endblock %}
 
-{% from "macros.html" import field with context %}
+{% from "macros.html" import field, form_token with context %}
 
 {% block content %}
 <h1>Record a sale</h1>
@@ -28,6 +28,7 @@
 {#- The partner cut shown above is the one frozen when this is submitted.
     Changing the product's partner share later does not change this sale. -#}
 <form class="product-form" action="{{ url_for('sell_product_submit', product_id=product.id) }}" method="post">
+  {{ form_token() }}
   {{ field("quantity", "Quantity sold", inputmode="numeric", required=true) }}
   {{ field("sale_price", "Sale price per unit ($)", hint="Listed at " ~ product.listed_price_cents|money ~ ".", inputmode="decimal", required=true) }}
   {{ field("date", "Date", hint="Today unless you change it.", type="date") }}

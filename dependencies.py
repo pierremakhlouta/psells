@@ -15,6 +15,7 @@ import psycopg
 from fastapi import Depends, HTTPException, Request
 
 import auth
+import cross_site
 import psells
 
 
@@ -91,3 +92,41 @@ def require_api_session(session: Session):
     if session is None:
         raise HTTPException(status_code=401, detail="Log in first.")
     return session
+
+
+# The form token ------------------------------------------------------------------
+#
+# Every write behind the login must also carry the session's form token: in
+# the hidden form_token field every form has, or, for a program calling the
+# API, in an X-Form-Token header. Another site can make a browser send the
+# cookie with a forged form, but it cannot read a page of this one to learn the
+# token, and it cannot set a custom header without a permission PSells never
+# grants. The browser-label check in cross_site.py stays in front of this as a
+# second, independent layer, and is what covers the login form, which has no
+# session yet and so no token.
+#
+# async, unlike everything else here, because reading a form body is. It does
+# not touch the database: the session it compares against was already found
+# by current_session, which FastAPI runs once per request and shares. Starlette
+# keeps the parsed form on the request, so the route reads the same one.
+
+FORM_TOKEN_FIELD = "form_token"
+FORM_TOKEN_HEADER = "X-Form-Token"
+
+
+class FormTokenRefused(Exception):
+    """A write without the right form token. api.py answers it with a 403."""
+
+
+async def check_form_token(request: Request, session: Session):
+    if request.method.upper() in cross_site.SAFE_METHODS or session is None:
+        # No session is not this check's to answer: the session check beside
+        # it sends the request to log in.
+        return
+
+    submitted = request.headers.get(FORM_TOKEN_HEADER)
+    if submitted is None:
+        submitted = (await request.form()).get(FORM_TOKEN_FIELD)
+
+    if not auth.form_token_matches(session, submitted):
+        raise FormTokenRefused()

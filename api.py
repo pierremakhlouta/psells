@@ -36,7 +36,9 @@ from pydantic import BaseModel, Field
 import cross_site
 import psells
 import web
-from dependencies import Connection, LoginRequired, require_api_session
+from dependencies import (
+    Connection, FormTokenRefused, LoginRequired, Session, check_form_token,
+    require_api_session)
 
 
 app = FastAPI(
@@ -58,9 +60,11 @@ app = FastAPI(
 )
 
 
-# Every endpoint is on this router, which answers 401 without a live session
-# before the endpoint runs. The reasoning is in dependencies.py.
-protected = APIRouter(dependencies=[Depends(require_api_session)])
+# Every endpoint is on this router, which answers 401 without a live session,
+# and 403 to a write without the session's form token, before the endpoint
+# runs. The reasoning is in dependencies.py.
+protected = APIRouter(dependencies=[Depends(require_api_session),
+                                    Depends(check_form_token)])
 
 
 @app.exception_handler(LoginRequired)
@@ -71,6 +75,17 @@ def send_to_the_login_page(request, exc):
     login page rather than the post being sent there again.
     """
     return RedirectResponse(request.url_for("login_page"), status_code=303)
+
+
+@app.exception_handler(FormTokenRefused)
+def refuse_without_the_form_token(request, exc):
+    """A write without the right form token: refused in plain text, as the
+    cross-site check refuses, for pages and the API alike."""
+    return PlainTextResponse(
+        "Refused: the form token is missing or wrong. "
+        "Reload the page and try again.",
+        status_code=403,
+    )
 
 
 # Cross-site writes -------------------------------------------------------------
@@ -281,6 +296,24 @@ def record_sale(new_sale: NewSale, connection: Connection):
             (new_sale.item_id,)
         ).fetchone()["quantity_available"],
     )
+
+
+class SessionInfo(BaseModel):
+    form_token: str = Field(
+        description="Send this in an X-Form-Token header with every write."
+    )
+
+
+@protected.get("/session", response_model=SessionInfo, tags=["session"])
+def read_session(session: Session):
+    """The form token of the session this request belongs to.
+
+    A program logged in with the cookie needs it for POST /sales; a page gets
+    it in its forms. Another site cannot read this answer: a browser shows a
+    cross-site response to the page that asked only if the server allows it,
+    and PSells never does.
+    """
+    return SessionInfo(form_token=session["form_token"])
 
 
 @protected.get("/openapi.json", include_in_schema=False)
