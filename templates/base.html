@@ -37,6 +37,21 @@
     nav a:hover { text-decoration: underline; }
     nav .brand { font-weight: 600; margin-right: 1rem; }
 
+    nav .logout { margin: 0 0 0 auto; }
+
+    nav .logout button {
+      padding: 0;
+      font: inherit;
+      color: #f6f8fa;
+      background: none;
+      border: none;
+      cursor: pointer;
+    }
+
+    nav .logout button:hover { text-decoration: underline; }
+
+    .login { max-width: 22rem; }
+
     main { padding-top: 1.5rem; padding-bottom: 3rem; }
 
     h1 { font-size: 1.4rem; margin: 0 0 1rem; }
@@ -159,7 +174,8 @@
     .field small { color: #656d76; }
     .field .error { margin: 0; color: #cf222e; }
 
-    .field input[type="text"], .field select, .field textarea {
+    .field input[type="text"], .field input[type="password"],
+    .field select, .field textarea {
       padding: 0.4rem 0.6rem;
       font: inherit;
       border: 1px solid #d0d7de;
@@ -197,9 +213,17 @@
   <header>
     <nav>
       <a class="brand" href="{{ url_for('inventory_page') }}">PSells</a>
+      {#- The login page empties this block: nothing behind the login is
+          linked from it. -#}
+      {% block nav %}
       <a href="{{ url_for('inventory_page') }}">Inventory</a>
       <a href="{{ url_for('add_product_page') }}">Add product</a>
       <a href="{{ url_for('add_payment_page') }}">Record payment</a>
+      {#- A form, not a link: logging out is a POST. -#}
+      <form class="logout" action="{{ url_for('logout') }}" method="post">
+        <button type="submit">Log out</button>
+      </form>
+      {% endblock %}
     </nav>
   </header>
 

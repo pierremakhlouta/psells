@@ -16,7 +16,7 @@ import api
 import cross_site
 import dependencies
 
-from helpers import add_product
+from helpers import add_product, log_in
 
 
 THIS_SITE = "http://testserver"
@@ -135,10 +135,12 @@ def through(db, stock, partner_rate):
     """A test client whose requests arrive from a proxy uvicorn does or does
     not trust, over plain HTTP, as they do from nginx."""
     api.app.dependency_overrides[dependencies.get_connection] = lambda: db
+    cookie_value, _ = log_in(db)
 
     def client(trusted):
         return TestClient(ProxyHeadersMiddleware(api.app, trusted_hosts=trusted),
-                          base_url="http://psells.localhost")
+                          base_url="http://psells.localhost",
+                          cookies={dependencies.SESSION_COOKIE: cookie_value})
 
     yield client
 

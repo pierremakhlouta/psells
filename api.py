@@ -29,14 +29,14 @@ pointing it at a copy rather than the real records is always a deliberate act:
 
 import datetime
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import PlainTextResponse
+from fastapi import APIRouter, Depends, FastAPI, HTTPException
+from fastapi.responses import PlainTextResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 import cross_site
 import psells
 import web
-from dependencies import Connection
+from dependencies import Connection, LoginRequired, require_api_session
 
 
 app = FastAPI(
@@ -50,10 +50,27 @@ app = FastAPI(
     # a CDN and pinned only to a major version, and it would run on the same
     # origin as the forms, which the cross-site check trusts. The strict
     # Content-Security-Policy nginx sends would refuse it anyway. The same
-    # description of the API is served as plain JSON at /openapi.json.
+    # description of the API is served as plain JSON at /openapi.json, by a
+    # route of its own below, so that it too needs a session.
     docs_url=None,
     redoc_url=None,
+    openapi_url=None,
 )
+
+
+# Every endpoint is on this router, which answers 401 without a live session
+# before the endpoint runs. The reasoning is in dependencies.py.
+protected = APIRouter(dependencies=[Depends(require_api_session)])
+
+
+@app.exception_handler(LoginRequired)
+def send_to_the_login_page(request, exc):
+    """A page asked for without a session: go and log in.
+
+    303, so a form posted after the session ended is followed by a GET of the
+    login page rather than the post being sent there again.
+    """
+    return RedirectResponse(request.url_for("login_page"), status_code=303)
 
 
 # Cross-site writes -------------------------------------------------------------
@@ -189,13 +206,13 @@ def to_product(row):
 
 # Endpoints -------------------------------------------------------------------
 
-@app.get("/products", response_model=list[Product], tags=["products"])
+@protected.get("/products", response_model=list[Product], tags=["products"])
 def read_products(connection: Connection):
     """Every product, in id order, with its derived quantities."""
     return [to_product(row) for row in psells.all_products(connection)]
 
 
-@app.get("/dashboard", response_model=Dashboard, tags=["dashboard"])
+@protected.get("/dashboard", response_model=Dashboard, tags=["dashboard"])
 def read_dashboard(connection: Connection):
     """The nine dashboard figures. Quantities are counts, money is cents."""
     totals = psells.dashboard_totals(connection)
@@ -213,7 +230,7 @@ def read_dashboard(connection: Connection):
     )
 
 
-@app.post(
+@protected.post(
     "/sales",
     response_model=Sale,
     status_code=201,
@@ -266,6 +283,19 @@ def record_sale(new_sale: NewSale, connection: Connection):
     )
 
 
+@protected.get("/openapi.json", include_in_schema=False)
+def read_openapi():
+    """The description of the API as JSON, for someone logged in.
+
+    FastAPI's own /openapi.json is turned off above, because it is not a route
+    a router's dependencies reach. This serves the same description.
+    """
+    return app.openapi()
+
+
+app.include_router(protected)
+
+
 # The web pages ---------------------------------------------------------------
 #
 # Included rather than written here. web.py takes its connection from
@@ -273,3 +303,4 @@ def record_sale(new_sale: NewSale, connection: Connection):
 # import web.py without web.py having to import this one back.
 
 app.include_router(web.router)
+app.include_router(web.public)

@@ -4,11 +4,12 @@
     undefined, and the first errors[key] raises UndefinedError: every form page
     becomes a 500. Checked, not assumed. values holds text exactly
     as it arrived; errors holds a sentence per field that was refused. -#}
-{% macro field(key, label, hint="", inputmode="", required=false, wide=false, type="text") %}
+{% macro field(key, label, hint="", inputmode="", required=false, wide=false, type="text", autocomplete="") %}
 <div class="field{% if wide %} wide{% endif %}{% if errors[key] %} has-error{% endif %}">
   <label for="{{ key }}">{{ label }}</label>
   <input type="{{ type }}" id="{{ key }}" name="{{ key }}" value="{{ values[key] }}"
          {%- if inputmode %} inputmode="{{ inputmode }}"{% endif %}
+         {%- if autocomplete %} autocomplete="{{ autocomplete }}"{% endif %}
          {%- if required %} required{% endif %}
          {%- if errors[key] %} aria-invalid="true" aria-describedby="{{ key }}-error"{% endif %}>
   {% if hint %}<small>{{ hint }}</small>{% endif %}

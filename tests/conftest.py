@@ -16,7 +16,7 @@ from psycopg.rows import dict_row
 import api
 import dependencies
 import psells
-from helpers import TEST_DATABASE_URL
+from helpers import TEST_DATABASE_URL, log_in
 
 
 # PostgreSQL -----------------------------------------------------------------
@@ -146,7 +146,7 @@ def answers(monkeypatch):
 
 @pytest.fixture
 def client(db, partner_rate):
-    """A test client whose requests run against the in-memory database.
+    """A logged-in test client whose requests run against the test database.
 
     It calls the application directly rather than opening a socket, and swaps
     the connection dependency for the in-memory db fixture, so no request made
@@ -158,6 +158,27 @@ def client(db, partner_rate):
     """
     api.app.dependency_overrides[dependencies.get_connection] = lambda: db
 
-    yield TestClient(api.app)
+    cookie_value, _ = log_in(db)
+
+    # Put straight into the client's cookie jar, which sends it on every
+    # request, redirects included; a Cookie header set by hand is dropped when
+    # a redirect is followed. Placed there without the Secure flag the login
+    # page gives it, so it reaches this client's plain-http test address.
+    # tests/test_login.py uses an https client to test the real cookie.
+    yield TestClient(api.app,
+                     cookies={dependencies.SESSION_COOKIE: cookie_value})
+
+    api.app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def anonymous(db, partner_rate):
+    """A test client with no session, over https as the browser is.
+
+    For the login page and for proving that everything else refuses.
+    """
+    api.app.dependency_overrides[dependencies.get_connection] = lambda: db
+
+    yield TestClient(api.app, base_url="https://testserver")
 
     api.app.dependency_overrides.clear()

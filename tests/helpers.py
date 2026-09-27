@@ -5,8 +5,11 @@ rather than fixtures, so a test file imports them by name. pytest puts this
 folder on the import path, which is what makes `from helpers import ...` work.
 """
 
+import functools
 import os
 from html.parser import HTMLParser
+
+import auth
 
 
 # The throwaway PostgreSQL the suite runs against: the db-test service in
@@ -81,6 +84,41 @@ def add_return(connection, return_id, item_id, quantity):
         "id": return_id, "date": "2026-09-01", "item_id": item_id,
         "quantity": quantity, "notes": "",
     })
+
+
+# The account every logged-in test uses. Invented, like every value here.
+TEST_USERNAME = "owner"
+TEST_PASSWORD = "an invented passphrase"
+
+
+@functools.cache
+def test_password_hash():
+    """The Argon2id hash of TEST_PASSWORD, made once per run.
+
+    Each hash takes a noticeable fraction of a second, by design, and nearly
+    every web and API test needs an account; making it once keeps the suite
+    quick without making the hash any cheaper.
+    """
+    return auth.hash_password(TEST_PASSWORD)
+
+
+def add_user(connection):
+    """The test account, with TEST_PASSWORD; its id."""
+    return connection.execute(
+        "INSERT INTO users (username, password_hash) VALUES (%s, %s) "
+        "RETURNING id",
+        (TEST_USERNAME, test_password_hash()),
+    ).fetchone()["id"]
+
+
+def log_in(connection):
+    """A live session for the test account: (cookie value, form token).
+
+    Made directly by auth.start_session rather than through the login page, so
+    tests about something else do not depend on the login page working.
+    tests/test_login.py tests the page itself.
+    """
+    return auth.start_session(connection, add_user(connection), auth.now())
 
 
 def stock(connection, product_id):
@@ -235,8 +273,12 @@ class _Forms(HTMLParser):
             self._form = None
 
 
-def forms(html):
+def forms(html, with_logout=False):
     """Every form in a page: its action, its method, and its inputs.
+
+    The Log out button in the header of every page behind the login is a form
+    too. It is left out unless with_logout is true, so a test about a page's
+    own form finds that form and not the header's.
 
     Each input is the full dictionary of its attributes, exactly as a browser
     would read them, so a test can see which name a form will send, what value
@@ -248,7 +290,10 @@ def forms(html):
     parser.feed(html)
     parser.close()
 
-    return parser.forms
+    if with_logout:
+        return parser.forms
+    return [form for form in parser.forms
+            if not form["action"].endswith("/logout")]
 
 
 def form_data(form):

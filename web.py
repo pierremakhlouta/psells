@@ -15,22 +15,32 @@ tests/test_web.py enforces them wherever a test can:
 Every route is a plain def, for the reason given in dependencies.py. None of
 them appears in the API's generated documentation, because they return HTML
 for a person rather than JSON for a program.
+
+Every page needs a live session, except the login page. The rules about
+passwords and sessions are in auth.py; this file only carries the cookie.
 """
 
 import datetime
 import os
 from typing import Annotated
 
-from fastapi import APIRouter, Form, Request
+from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
+import auth
 import psells
-from dependencies import Connection
+from dependencies import (
+    SESSION_COOKIE, Connection, Session, require_page_session)
 
 
-router = APIRouter(include_in_schema=False)
+# Every page is on router, which refuses a request without a live session
+# before the route runs. The login page, which has to be reachable without
+# one, is on public, and nothing else is.
+router = APIRouter(include_in_schema=False,
+                   dependencies=[Depends(require_page_session)])
+public = APIRouter(include_in_schema=False)
 
 # Beside this file, not beside the shell. A bare "templates" would be looked up
 # from whatever directory uvicorn happened to be started in, which is the same
@@ -520,3 +530,79 @@ def delete_product_submit(request: Request, connection: Connection,
 
     return RedirectResponse(request.url_for("inventory_page"),
                             status_code=303)
+
+
+# Logging in and out ------------------------------------------------------------
+
+def login_form(request, username="", problem="", status_code=200):
+    return templates.TemplateResponse(
+        request, "login.html",
+        {"values": {"username": username, "password": ""},
+         "errors": {}, "problem": problem},
+        status_code=status_code,
+    )
+
+
+@public.get("/login", response_class=HTMLResponse)
+def login_page(request: Request, session: Session):
+    """The login form, or the inventory for someone already logged in."""
+    if session is not None:
+        return RedirectResponse(request.url_for("inventory_page"),
+                                status_code=303)
+    return login_form(request)
+
+
+@public.post("/login", response_class=HTMLResponse)
+def login_submit(request: Request, connection: Connection,
+                 username: Annotated[str, Form()] = "",
+                 password: Annotated[str, Form()] = ""):
+    """Log in and go to the inventory, or show the form again with a 401.
+
+    A wrong password and an unknown username get the same sentence, so the
+    page does not say which usernames exist. The username comes back as it
+    was typed; the password never does.
+
+    Any session the browser already had is ended first, and the new one gets
+    new values, so a cookie someone planted before the login is worthless
+    after it.
+
+    The cookie lasts as long as the longest a session can, so the browser
+    forgets it no later than the server would. HttpOnly keeps it from any
+    script; SameSite=Lax keeps it off another site's form posts.
+    """
+    user_id = auth.check_login(connection, username, password)
+
+    if user_id is None:
+        return login_form(request, username,
+                          "The username or password is wrong.",
+                          status_code=401)
+
+    auth.end_session(connection, request.cookies.get(SESSION_COOKIE))
+    cookie_value, _ = auth.start_session(connection, user_id, auth.now())
+
+    response = RedirectResponse(request.url_for("inventory_page"),
+                                status_code=303)
+    response.set_cookie(
+        SESSION_COOKIE, cookie_value,
+        max_age=int(auth.ABSOLUTE_LIMIT.total_seconds()),
+        path="/", secure=True, httponly=True, samesite="lax",
+    )
+    return response
+
+
+@router.post("/logout")
+def logout(request: Request, connection: Connection):
+    """End this session and go back to the login page.
+
+    POST rather than a link, so that nothing another page can load, an image
+    or a link followed in the background, can log anyone out. The cookie is
+    deleted with the same attributes it was set with, or a browser keeps the
+    __Host- one.
+    """
+    auth.end_session(connection, request.cookies.get(SESSION_COOKIE))
+
+    response = RedirectResponse(request.url_for("login_page"),
+                                status_code=303)
+    response.delete_cookie(SESSION_COOKIE, path="/", secure=True,
+                           httponly=True, samesite="lax")
+    return response
