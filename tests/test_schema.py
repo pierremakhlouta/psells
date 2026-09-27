@@ -11,6 +11,7 @@ refusal is about that one field.
 """
 
 import datetime
+import os
 
 import psycopg
 import pytest
@@ -356,6 +357,212 @@ def test_python_receives_the_types_the_application_expects(db):
     assert type(sale_date) is datetime.date
 
 
+# Authentication --------------------------------------------------------------
+#
+# The users and sessions tables of Phase 05b. A stand-in Argon2id string is
+# enough here: the table checks the prefix, not the hash.
+
+GOOD_HASH = "$argon2id$v=19$m=65536,t=3,p=4$c2FsdHNhbHQ$aGFzaGhhc2g"
+NOW = datetime.datetime(2026, 9, 27, 10, 0, tzinfo=datetime.timezone.utc)
+
+
+def insert_user(db, username="owner", password_hash=GOOD_HASH):
+    return db.execute(
+        "INSERT INTO users (username, password_hash) VALUES (%s, %s) "
+        "RETURNING id",
+        (username, password_hash),
+    ).fetchone()["id"]
+
+
+def insert_session(db, user_id, token_digest=b"\x01" * 32,
+                   form_token="f" * 43, created_at=NOW, last_seen_at=NOW):
+    db.execute(
+        "INSERT INTO sessions (token_digest, user_id, form_token, created_at, "
+        "last_seen_at) VALUES (%s, %s, %s, %s, %s)",
+        (token_digest, user_id, form_token, created_at, last_seen_at),
+    )
+
+
+def test_the_good_user_and_session_are_accepted(db):
+    user_id = insert_user(db)
+    insert_session(db, user_id)
+
+    row = db.execute("SELECT * FROM sessions").fetchone()
+    assert row["user_id"] == user_id
+    assert row["created_at"] == NOW
+
+
+@pytest.mark.parametrize("username, password_hash, constraint", [
+    ("", GOOD_HASH, "users_username_check"),
+    (" owner", GOOD_HASH, "users_username_check"),
+    ("owner ", GOOD_HASH, "users_username_check"),
+    # A plain password, and Argon2's other two variants, are all refused.
+    ("owner", "correct horse battery staple", "users_password_hash_check"),
+    ("owner", GOOD_HASH.replace("argon2id", "argon2i"),
+     "users_password_hash_check"),
+    ("owner", GOOD_HASH.replace("argon2id", "argon2d"),
+     "users_password_hash_check"),
+])
+def test_a_user_breaking_one_rule_is_refused_by_that_rule(
+        db, username, password_hash, constraint):
+    error = refused(
+        db,
+        "INSERT INTO users (username, password_hash) VALUES (%s, %s)",
+        (username, password_hash),
+    )
+
+    assert error.diag.constraint_name == constraint
+
+
+def test_two_users_cannot_share_a_username(db):
+    insert_user(db)
+
+    error = refused(
+        db,
+        "INSERT INTO users (username, password_hash) VALUES (%s, %s)",
+        ("owner", GOOD_HASH),
+    )
+
+    assert isinstance(error, errors.UniqueViolation)
+    assert error.diag.constraint_name == "users_username_key"
+
+
+@pytest.mark.parametrize("changes, constraint", [
+    ({"token_digest": b"\x01" * 31}, "sessions_token_digest_check"),
+    ({"token_digest": b"\x01" * 33}, "sessions_token_digest_check"),
+    ({"form_token": "f" * 31}, "sessions_form_token_check"),
+    ({"last_seen_at": NOW - datetime.timedelta(seconds=1)},
+     "session_times_in_order"),
+])
+def test_a_session_breaking_one_rule_is_refused_by_that_rule(
+        db, changes, constraint):
+    user_id = insert_user(db)
+
+    with pytest.raises(errors.IntegrityError) as caught:
+        with db.transaction():
+            insert_session(db, user_id, **changes)
+
+    assert caught.value.diag.constraint_name == constraint
+
+
+def test_a_session_for_a_user_that_does_not_exist_is_refused(db):
+    missing = insert_user(db)
+    db.execute("DELETE FROM users WHERE id = %s", (missing,))
+
+    with pytest.raises(errors.ForeignKeyViolation) as caught:
+        with db.transaction():
+            insert_session(db, missing)
+
+    assert caught.value.diag.constraint_name == "sessions_user_id_fkey"
+
+
+def test_deleting_a_user_ends_their_sessions(db):
+    user_id = insert_user(db)
+    insert_session(db, user_id, token_digest=b"\x01" * 32)
+    insert_session(db, user_id, token_digest=b"\x02" * 32)
+
+    db.execute("DELETE FROM users WHERE id = %s", (user_id,))
+
+    count = db.execute("SELECT COUNT(*) AS n FROM sessions").fetchone()
+    assert count["n"] == 0
+
+
+# The migration -----------------------------------------------------------------
+#
+# A database made before Phase 05b gets the authentication tables from
+# migrations/0001_authentication.sql, and a new one from the end of schema.sql.
+# Both must end up the same, or the live database and every fresh one (the
+# tests, the sample stack, a rebuild from a backup's schema) quietly differ.
+#
+# Each is built in a schema of its own inside the test's transaction, so the
+# rollback removes both. The older database is schema.sql up to the
+# Authentication heading, which is why that section has to stay last.
+
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+AUTHENTICATION_HEADING = "-- Authentication ---"
+
+
+def read(*path):
+    with open(os.path.join(HERE, *path)) as source:
+        return source.read()
+
+
+def describe(db, schema):
+    """Every column, constraint, index and view in one schema, as plain text.
+
+    search_path is set to the schema being described, so the definitions
+    PostgreSQL prints name its tables without a schema in front, and the two
+    descriptions can be compared as they are.
+    """
+    db.execute(f"SET LOCAL search_path TO {schema}")
+
+    columns = db.execute(
+        "SELECT table_name, column_name, data_type, is_nullable, "
+        "column_default, is_identity, identity_generation "
+        "FROM information_schema.columns WHERE table_schema = %s "
+        "ORDER BY table_name, column_name",
+        (schema,),
+    ).fetchall()
+    constraints = db.execute(
+        "SELECT c.conrelid::regclass::text AS table_name, c.conname, "
+        "pg_get_constraintdef(c.oid) AS definition "
+        "FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace "
+        "WHERE n.nspname = %s ORDER BY 1, 2",
+        (schema,),
+    ).fetchall()
+    indexes = db.execute(
+        "SELECT indexname, replace(indexdef, %s, '') AS definition "
+        "FROM pg_indexes WHERE schemaname = %s ORDER BY 1",
+        (f"{schema}.", schema),
+    ).fetchall()
+    views = db.execute(
+        "SELECT viewname, definition FROM pg_views "
+        "WHERE schemaname = %s ORDER BY 1",
+        (schema,),
+    ).fetchall()
+
+    return columns, constraints, indexes, views
+
+
+def test_the_migration_builds_what_schema_sql_builds(db):
+    schema = read("schema.sql")
+    migration = read("migrations", "0001_authentication.sql")
+
+    assert schema.count(AUTHENTICATION_HEADING) == 1
+    before_authentication = schema.split(AUTHENTICATION_HEADING)[0]
+
+    db.execute("CREATE SCHEMA fresh")
+    db.execute("SET LOCAL search_path TO fresh")
+    db.execute(schema)
+
+    db.execute("CREATE SCHEMA migrated")
+    db.execute("SET LOCAL search_path TO migrated")
+    db.execute(before_authentication)
+    db.execute(migration)
+
+    fresh = describe(db, "fresh")
+    migrated = describe(db, "migrated")
+    db.execute("SET LOCAL search_path TO public")
+
+    # Not empty, so two empty descriptions cannot pass as equal.
+    assert any(row["table_name"] == "sessions" for row in fresh[0])
+    assert fresh == migrated
+
+
+def test_the_migration_has_no_transaction_of_its_own(db):
+    # psql's --single-transaction supplies one. A COMMIT in the file would end
+    # the test's transaction above and leave its schemas behind, and a BEGIN
+    # would only draw a warning from psql.
+    statements = [
+        line.strip().upper()
+        for line in read("migrations", "0001_authentication.sql").splitlines()
+        if line.strip() and not line.strip().startswith("--")
+    ]
+
+    assert not any(line.startswith(("BEGIN", "COMMIT", "ROLLBACK"))
+                   for line in statements)
+
+
 # Isolation -------------------------------------------------------------------
 
 def test_a_transaction_block_in_a_test_does_not_commit(db):
@@ -379,6 +586,7 @@ def test_every_test_starts_with_empty_tables(db):
     # Last in the file on purpose: every test above has written rows, and each
     # one's rollback is what leaves these tables empty. If the fixture ever
     # committed instead, this is the test that would say so.
-    for table in ("products", "sales", "returns", "payments"):
+    for table in ("products", "sales", "returns", "payments",
+                  "users", "sessions"):
         count = db.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()
         assert count["n"] == 0, table

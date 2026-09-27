@@ -173,3 +173,55 @@ LEFT JOIN (
     FROM returns
     GROUP BY item_id
 ) r ON r.item_id = p.id;
+
+
+-- Authentication ------------------------------------------------------------
+--
+-- Added in Phase 05b. A database created before then gets these tables from
+-- migrations/0001_authentication.sql instead, which must create exactly what
+-- this section does; tests/test_schema.py builds a database both ways and
+-- compares them. Keep this section last, because that test takes everything
+-- above its heading as the schema the migration was written against.
+--
+-- One account today, Pierre's. A table rather than a setting, so a second
+-- person later is a row, not a redesign.
+--
+-- password_hash is the whole string Argon2 produces: the algorithm, its
+-- parameters, the salt and the hash together. The check refuses anything that
+-- is not Argon2id, so a plain password cannot be stored here by mistake.
+
+CREATE TABLE users (
+    id             integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    username       text    NOT NULL UNIQUE
+                   CHECK (length(username) > 0 AND username = trim(username)),
+    password_hash  text    NOT NULL CHECK (password_hash LIKE '$argon2id$%')
+);
+
+-- One row per login. The cookie carries a long random value; only its SHA-256
+-- digest is kept, so a copy of the database or of a backup holds nothing a
+-- browser could present. Logging out deletes the row.
+--
+-- Whether a session has expired is worked out from the two times, never
+-- stored: it ends 2 hours after last_seen_at, or 12 hours after created_at,
+-- whichever comes first. The application sets both times from its own clock,
+-- so there are no defaults here.
+--
+-- form_token is the value every form must send back. It is not secret from
+-- the person logged in, whose pages show it, only from other sites, so it is
+-- kept as it is rather than hashed.
+--
+-- Deleting a user deletes their sessions with them.
+
+CREATE TABLE sessions (
+    token_digest  bytea       PRIMARY KEY CHECK (length(token_digest) = 32),
+    user_id       integer     NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    form_token    text        NOT NULL CHECK (length(form_token) >= 32),
+    created_at    timestamptz NOT NULL,
+    last_seen_at  timestamptz NOT NULL,
+    CONSTRAINT session_times_in_order CHECK (last_seen_at >= created_at)
+);
+
+-- Ending every session of one user, which changing the password does, would
+-- otherwise scan the whole table.
+
+CREATE INDEX idx_sessions_user_id ON sessions(user_id);
