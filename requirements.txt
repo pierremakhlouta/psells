@@ -21,3 +21,8 @@ python-multipart==0.0.32
 # brings a compiled copy of the C client library, so nothing has to be built.
 psycopg[binary]==3.3.6
 
+
+# Hashes and checks the login password with Argon2id, in auth.py. Brings
+# argon2-cffi-bindings, the compiled Argon2 library, and cffi with it; both
+# come as prebuilt wheels for the Mac and for the image.
+argon2-cffi==25.1.0

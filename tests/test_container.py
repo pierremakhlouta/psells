@@ -136,7 +136,10 @@ def test_the_env_file_stays_out_of_git_and_out_of_images():
 
 
 def test_every_module_the_server_imports_is_copied():
-    needed = {name + ".py" for name in local_imports("api")}
+    # set_password.py is run inside the container too, so it and what it
+    # imports have to be there.
+    needed = {name + ".py"
+              for name in local_imports("api") | local_imports("set_password")}
     sources = {source.rstrip("/") for source in copied_sources()}
 
     assert needed <= sources, needed - sources
