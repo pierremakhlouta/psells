@@ -458,6 +458,38 @@ def test_nginx_hides_its_version_and_limits_request_bodies():
     assert ["client_max_body_size", "64k"] in http_level()
 
 
+def login_limit_map():
+    """The map nginx keys the login limit on, as {match: value}."""
+    found = [(blocks, words) for blocks, words in nginx_directives()
+             if [name for _, name in blocks][-1:] == [
+                 ("map", '"$request_method:$uri"', "$login_attempt")]]
+    return {words[0].strip('"'): words[1].strip('"') for _, words in found}
+
+
+def test_only_a_post_to_login_is_counted_by_address():
+    # Every other request maps to an empty key, which limit_req never counts,
+    # so pages, the API and showing the login page are never limited.
+    assert login_limit_map() == {"default": "", "POST:/login":
+                                 "$binary_remote_addr"}
+
+
+def test_login_attempts_are_limited_to_five_a_minute_with_a_burst_of_five():
+    assert ["limit_req_zone", "$login_attempt", "zone=login:1m",
+            "rate=5r/m"] in http_level()
+    assert ["limit_req_status", "429"] in http_level()
+    assert ["limit_req", "zone=login", "burst=5", "nodelay"] in proxied()
+
+
+def test_the_limit_sits_where_every_request_to_the_app_passes():
+    # In the one location that proxies, so no path to the app avoids it, and
+    # nowhere else, where a second limit_req would count some posts twice.
+    everywhere = [(blocks, words) for blocks, words in nginx_directives()
+                  if words[0] == "limit_req"]
+
+    assert len(everywhere) == 1
+    assert [name for _, name in everywhere[0][0]][-1] == ("location", "/")
+
+
 def test_every_psells_response_carries_the_security_headers():
     headers = response_headers()
 
