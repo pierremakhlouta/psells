@@ -19,6 +19,9 @@ PSells tracks a small reselling business as four related tables:
 A dashboard presents figures rolled up from all four. Every dashboard figure is
 computed on demand; none of it is stored.
 
+Two more tables, `users` and `sessions`, hold the login. They sit beside the
+business data and never refer to it; they are described at the end.
+
 ## Core principles
 
 - **Raw facts are stored; everything else is computed.** Rows hold only what the
@@ -327,6 +330,17 @@ price whenever the flag is off. The prompt previously allowed zero.
 | `amount_cents >= 0` | never negative |
 | `date` is a real calendar date | as above |
 
+### users and sessions
+
+| Rule | Reason |
+|---|---|
+| `username` is unique, not empty, and has no leading or trailing spaces | one name, typed one way |
+| `password_hash` starts `$argon2id$` | a plain password cannot be stored by mistake |
+| `token_digest` is exactly 32 bytes | a SHA-256 digest and nothing else |
+| `form_token` is at least 32 characters | never short enough to guess |
+| `last_seen_at >= created_at` | a session cannot be used before it began |
+| `user_id` references an existing user, deleted with it | no session outlives its account |
+
 ### What the database cannot enforce
 
 Two invariants span more than one row, and a `CHECK` constraint can only look at
@@ -353,3 +367,46 @@ Rolled up from the four tables; nothing here is stored:
 
 Total available is total received minus total sold minus total returned. Returns
 no longer reduce a stored intake figure, so they are subtracted here explicitly.
+
+## The login: users and sessions
+
+Added in Phase 05b. These two tables are about who may use PSells, not about
+the business, and no business table refers to them. Records carry no user,
+because there is one.
+
+### users
+
+One row per account. PSells has one.
+
+| Column          | Type    | Notes                                         |
+|-----------------|---------|-----------------------------------------------|
+| `id`            | integer | primary key, from a sequence                  |
+| `username`      | text    | unique                                        |
+| `password_hash` | text    | the whole Argon2id string: algorithm, parameters, salt and hash |
+
+The password itself is never stored. The account is created, and its password
+changed, only by `set_password.py`, which also ends every session of the
+account.
+
+### sessions
+
+One row per login.
+
+| Column         | Type        | Notes                                               |
+|----------------|-------------|-----------------------------------------------------|
+| `token_digest` | bytea       | primary key: the SHA-256 digest of the cookie value |
+| `user_id`      | integer     | references `users(id)`, deleted with it             |
+| `form_token`   | text        | the value every form of this session sends back     |
+| `created_at`   | timestamptz | when the login happened                             |
+| `last_seen_at` | timestamptz | when the session was last used                      |
+
+The value in the browser's cookie is never stored, only its digest. Logging out
+deletes the row.
+
+**Computed, not stored:** whether a session is still live. It ends two hours
+after `last_seen_at` or twelve hours after `created_at`, whichever comes first,
+worked out on each request from the two times, as every other derived figure
+is. Expired rows are cleared out at the next login.
+
+An existing database gets both tables from `migrations/0001_authentication.sql`;
+a new one gets them from the end of `schema.sql`.

@@ -317,7 +317,7 @@ calls only, not every detail, and no specific business figures.
   before anything runs, including from another server on the same machine. The
   alternative, a secret token in every form, needs a secret stored somewhere and
   belongs with logins and sessions; it is the thing to add when authentication is
-  decided.
+  decided. Authentication added it, and this check stays beside it (below).
 
 - **On the web edit page, an emptied field means cleared.** The terminal treats
   a blank answer as "keep the current value". A web form opens already filled
@@ -350,7 +350,8 @@ calls only, not every detail, and no specific business figures.
 - **The API grows no write endpoints until there is authentication.** The pages
   need the work separated from the prompts, and it has been. Putting HTTP
   endpoints on top of it now would add unauthenticated ways to change the
-  records that nothing yet calls.
+  records that nothing yet calls. Authentication now exists; more write
+  endpoints still wait, now for a program that needs them.
 
 - **Pinned versions are checked weekly.** Pinning makes a build repeatable and
   then goes quiet forever. The vulnerability audit answers whether a pinned
@@ -514,4 +515,100 @@ calls only, not every detail, and no specific business figures.
 - **Authentication comes before anything is public.** Logins, sessions and a
   token in every form were left for this phase and are their own phase
   instead, built on this machine before a server puts PSells on a public
-  address. Sessions need the HTTPS now in place.
+  address. Sessions need the HTTPS now in place. Built next, as below.
+
+- **One account, logged into with a password.** PSells has one user. The
+  account lives in a table rather than a setting, so a second person later is a
+  row rather than a redesign, but there are no roles and no second account
+  until that is decided; the command that sets the password refuses to create
+  one under another name, so a typing mistake cannot. A form and a session
+  cookie were chosen over the browser's own password dialog, which has no
+  logout and resends the password with every request. Passkeys were deferred:
+  they need JavaScript in the page, which the no-scripts policy forbids.
+
+- **Passwords are hashed with Argon2id, and only length is required.** Argon2id
+  is the current first choice for password storage, deliberately slow and
+  memory hungry so a copied table is expensive to guess against. A maintained
+  library does it, rather than a hand-written format around the standard
+  library's scrypt, because the salt, the stored parameters, the constant-time
+  comparison and the upgrade path are all easy to get subtly wrong. Its
+  parameters travel inside each hash, so a hash made with weaker ones is
+  replaced at the next login. A password must be at least ten characters and
+  nothing else: rules demanding digits or symbols push people towards
+  predictable patterns. An unknown username still costs one full check, so a
+  refusal takes as long whether or not the name exists.
+
+- **Sessions live in the database, and the database keeps only their hash.**
+  The cookie carries a long random value; the table keeps its SHA-256 digest,
+  so neither the database nor a backup holds anything a browser could present.
+  A plain hash suffices because the value is random, with nothing to guess.
+  Logging out deletes the row, so a copied cookie stops working at once, which
+  a signed cookie holding the session itself could not do before it expired,
+  and a table needs no signing secret. A session ends two hours after it was
+  last used or twelve after it began; that is worked out from the two times
+  rather than stored, like every other derived figure, in the same statement
+  that marks the session used, so two requests at once cannot disagree.
+  Changing the password ends every session.
+
+- **Every route needs a session, and one check says so.** The check is a
+  dependency set on the router, not on each route, so a route added later
+  cannot be added without it; the login page is alone on a router without one.
+  A test does not list the protected routes: it asks the application for every
+  route it has, calls each without a session, and fails if any route sits
+  outside the checked routers. Pages without a session are sent to the login
+  page; the API answers 401. The machine-readable description of the API is
+  behind the login too. The check reads the database, so it is a plain function
+  rather than middleware, which would have to be asynchronous.
+
+- **The cookie is host-only, HTTPS-only and hidden from scripts.** Its name
+  carries the `__Host-` prefix, which makes the browser refuse it unless it is
+  Secure, set by this host with no domain, and for the whole site, so no other
+  name can set or overwrite it. `SameSite=Lax` keeps it off other sites' form
+  posts while still sending it when a link to PSells is followed; `Strict`
+  would show the login page to anyone following a link while logged in. A login
+  ends whatever session the browser already had, so a value planted beforehand
+  is worthless after it.
+
+- **A form token alongside the browser-label check, not instead of it.** Each
+  session has its own token, which every form carries in a hidden field and
+  every write must send back; a program sends it in a header, and learns it
+  from an endpoint whose answer another site cannot read. The label check stays
+  in front: either stops a forged write alone, the token does not depend on the
+  browser's labels, and the labels are what cover the login form, which has no
+  session and so no token. The token is compared in constant time.
+
+- **The API takes the same login as the pages.** One credential, one way to
+  revoke it. API keys for programs were considered and wait until a program
+  needs one, rather than adding a second kind of secret to issue, store and
+  rotate with nothing using it.
+
+- **Guessing is slowed at the proxy, with no lockout.** nginx allows each
+  address five login attempts a minute, with a burst of five, and answers 429
+  past that, before a guess reaches the application. Only posts to the login
+  are counted, so no page is ever slowed. Locking the account after a number
+  of failures was rejected, because anyone could then lock the one account
+  out on purpose; many addresses guessing at once are left to the password's
+  length and Argon2id's cost.
+
+- **The password is set from inside the stack, never from a page.** A script
+  run in the application's container creates the account or changes its
+  password. Whoever can reach the containers already has the database, so
+  nothing new is exposed, and no web page can change the password, so a stolen
+  session cannot lock its owner out.
+
+- **Schema changes to an existing database are migration files, applied by
+  hand.** The schema file builds tables only when a database is first created.
+  A change is also written as a file that only adds, applied once after a
+  backup, in a single transaction that stops at the first error. The same
+  statements then live in two places, so a test builds a database both ways and
+  compares every column, constraint, index and view. A migration tool that
+  records which files have run was considered and waits for the managed
+  database later on, when there will be more than one change to track.
+
+- **The proxy's configuration and the application ship together.** nginx
+  reads its configuration from the project folder, while the application runs
+  from an image, so restarting only nginx can pair a new policy with an old
+  page. That happened once in this phase: a new style hash met the old style
+  block and every page lost its styling. A change that touches the style block
+  is released by rebuilding the application with it; a change to the proxy
+  alone is applied with a reload.

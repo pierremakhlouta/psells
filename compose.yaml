@@ -34,8 +34,8 @@ services:
     # process id and temporary files in /tmp.
     user: "101:101"
     ports:
-      # 127.0.0.1 only. There is no authentication, and without this prefix
-      # anyone on the same network could read and change every record.
+      # 127.0.0.1 only. Without this prefix anyone on the same network could
+      # reach the login page and start guessing; the login is a password only.
       # HTTPS on 443, so the address is https://psells.localhost with no port;
       # 80 only redirects to it. Inside, nginx listens above 1024 on 8443 and
       # 8080, because it does not run as root.

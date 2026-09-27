@@ -15,10 +15,11 @@ A request with neither header did not come from a browser acting for a page, so
 it cannot be a forgery of this kind: the test client, curl, and the command
 line's own users are all in that position. Such a request is let through.
 
-This checks the labels rather than using a token in every form. A token would
-need a secret kept somewhere and a hidden field in every form; it pairs
-naturally with logins and sessions, and is the thing to revisit when
-authentication is decided.
+Since Phase 05b every form behind the login also carries a token belonging to
+the session, checked in dependencies.py. The two are independent: this check
+needs no session, which is why it is the one that covers the login form, and
+the token does not depend on the browser sending labels. Either stops a forged
+write on its own.
 
 Behind nginx, the scheme and host passed in here are still the browser's.
 nginx passes the Host the browser sent unchanged and sets X-Forwarded-Proto,

@@ -19,6 +19,7 @@ payouts made to that partner, and computes a live dashboard from all four.
 - Works out each item's partner cut from a rule set per item
 - Computes stock levels, revenue, profit, and the balance owing to the partner
 - Refuses to delete a product that has sales or returns against it
+- Asks for a login before every page and endpoint, with a token in every form
 - Runs as three containers, nginx in front of the application and a PostgreSQL
   database beside it, with one command
 - Backs itself up daily, on a schedule, and proves each copy restores
@@ -41,8 +42,8 @@ Working on it also needs Python 3 on the machine, for the tests:
     pip install -r requirements-dev.txt
 
 `requirements.txt` lists what the application needs to run: FastAPI, uvicorn,
-Jinja2 for the templates, python-multipart to read form posts, and psycopg, the
-PostgreSQL driver. `requirements-dev.txt` adds pytest, httpx2 for the test
+Jinja2 for the templates, python-multipart to read form posts, psycopg, the
+PostgreSQL driver, and argon2-cffi, which hashes the login password. `requirements-dev.txt` adds pytest, httpx2 for the test
 client, PyYAML so a test can read `compose.yaml`, and openpyxl for
 `import_excel.py`, the one-time script that read the original spreadsheet.
 
@@ -66,8 +67,16 @@ Then:
     docker compose up --build -d --wait
 
 The first start creates the database and builds its tables from `schema.sql`.
-Open `https://psells.localhost/` for the web pages. The terminal application runs
-inside the same container, against the same database:
+Then create the account, once. It asks for a username and for the password
+twice, without showing it; the password must be at least ten characters:
+
+    docker compose exec app python set_password.py
+
+Open `https://psells.localhost/` and log in. The same command changes the
+password later, and logs out every browser that was logged in. No web page can
+change it. The terminal application runs inside the same container, against
+the same database, and needs no login, because reaching it already takes
+access to the containers:
 
     docker compose exec app python psells.py
 
@@ -113,7 +122,9 @@ sample configuration. From the project folder, with `.env` in place:
     PSELLS_NETWORK=10.213.48 PSELLS_CONFIG_FILE=./sample_data/config.json docker compose -p psells-sample up --build -d --wait
     docker compose -p psells-sample exec -T db sh -c 'psql -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" "$POSTGRES_DB"' < sample_data/seed.sql
 
-Then open `https://psells.localhost/`, or run the terminal application with
+Then create an account in it with
+`docker compose -p psells-sample exec app python set_password.py`, open
+`https://psells.localhost/` and log in, or run the terminal application with
 `docker compose -p psells-sample exec app python psells.py`. When finished,
 remove it and its database:
 
@@ -156,10 +167,25 @@ afterwards cannot repeat it. A refusal shows the form again with a sentence
 beside each field that is wrong and everything already typed kept: 422 when what
 was typed is wrong in itself, 409 when it was fine and the stock disagrees.
 
-Any write that a browser labels as coming from another site is refused with a
-403 before any route runs, including one sent from another server on the same
-machine. See [DECISIONS.md](DECISIONS.md) for why this checks the browser's
-labels rather than using a token.
+### Logging in
+
+Every page asks for a login first, except the login page itself. A wrong
+password and an unknown username get the same sentence. A login lasts until two
+hours pass without a request, or twelve hours after it began, whichever comes
+first; **Log out**, in the header of every page, ends it at once. The password
+is stored only as an Argon2id hash, and the session only as a hash of the
+value in the browser's cookie, so neither the database nor a backup holds
+anything that would log someone in. The cookie is `__Host-psells_session`:
+sent over HTTPS only, unreadable by scripts, and not sent with another site's
+form posts. nginx allows five login attempts a minute from one address, with a
+burst of five, and answers 429 past that.
+
+Every write is checked twice, independently. Every form carries a hidden token
+belonging to the login session, and a write without it is refused with a 403.
+And any write that a browser labels as coming from another site is refused with
+a 403 before any route runs, including one sent from another server on the same
+machine; that check is what covers the login form, which has no session yet.
+See [DECISIONS.md](DECISIONS.md) for the reasoning behind each.
 
 ## The HTTP API
 
@@ -175,15 +201,43 @@ same site as the forms.
     GET  /products    every product, with stock and the partner cut per unit
     GET  /dashboard   the nine dashboard figures
     POST /sales       record one sale
+    GET  /session     the form token of the session asking
 
 All money is sent and received as a whole number of cents, never as dollars and
 never as a formatted string. That matches how it is stored, keeps every value
 exact, and leaves formatting to whatever is showing it to a person.
 
-nginx publishes it on `127.0.0.1` only, so nothing else on the network can
-reach it. That matters, because there is no authentication of any kind yet. To
-try it against invented records rather than the real ones, use the sample stack
-above.
+The API takes the same login as the pages: the session cookie from logging in
+at `/login`. Without it, every endpoint, `/openapi.json` included, answers 401
+with `{"detail": "Log in first."}`. A write also needs the session's form token
+in an `X-Form-Token` header, which `GET /session` returns. With curl:
+
+    curl --cacert ~/PSells-CA/ca.crt -c jar -d username=... -d password=... https://psells.localhost/login
+    TOKEN=$(curl -s --cacert ~/PSells-CA/ca.crt -b jar https://psells.localhost/session | python3 -c 'import json,sys; print(json.load(sys.stdin)["form_token"])')
+    curl --cacert ~/PSells-CA/ca.crt -b jar -H "X-Form-Token: $TOKEN" -H 'Content-Type: application/json' \
+        -d '{"item_id": 1, "quantity": 1, "sale_price_cents": 9000}' https://psells.localhost/sales
+
+To try it against invented records rather than the real ones, use the sample
+stack above.
+
+## Changing the schema of an existing database
+
+`schema.sql` builds the tables only when the database is first created, so a
+table added to it later never reaches a database that already exists. Each
+such change is also written as a file in `migrations/`, applied once, by hand,
+after a backup:
+
+    ./backup.sh
+    docker compose exec -T db sh -c \
+        'psql -v ON_ERROR_STOP=1 --single-transaction -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
+        < migrations/0001_authentication.sql
+
+`--single-transaction` makes it all or nothing and `ON_ERROR_STOP` stops it at
+the first error, so running one twice stops at "already exists" and changes
+nothing. `0001_authentication.sql` adds the `users` and `sessions` tables and
+touches nothing else; a database created from the current `schema.sql` already
+has them. `tests/test_schema.py` builds a database both ways and fails if the
+two differ.
 
 ## Moving from SQLite
 
@@ -220,8 +274,8 @@ record. It names every file it copies rather than copying the folder, and
 nginx is the only service that publishes ports: 443 for HTTPS and 80, which
 only redirects to it, both on `127.0.0.1`, forwarded to 8443 and 8080 inside
 its container. Publishing them on `127.0.0.1` is what keeps them to this
-machine. Leaving out the `127.0.0.1:` publishes them to the whole network, which
-with no authentication means anyone on the same Wi-Fi can change the records.
+machine. Leaving out the `127.0.0.1:` publishes them to the whole network, so
+anyone on the same Wi-Fi could reach the login page and start guessing.
 nginx runs the Docker Official Image, in its slim variant with none of the
 add-on modules, as its own unprivileged user, never root,
 with its whole configuration in `nginx/nginx.conf`, mounted read-only, and the
@@ -247,6 +301,15 @@ another site; `X-Content-Type-Options: nosniff`; and `Referrer-Policy:
 same-origin`. nginx does not name its version, and refuses a request body over
 64 KB with a 413. Changing the style block in `base.html` changes its hash, and
 a test then fails with the new hash to put in `nginx/nginx.conf`.
+
+`nginx/nginx.conf` is read from this folder, not from an image, so the running
+nginx takes a change to it the next time it starts or reloads, whatever version
+of the application is running. A change to the style block therefore reaches
+the stack as one release: rebuild the application with it
+(`docker compose up --build -d --wait`), rather than restarting nginx alone. A
+change to `nginx.conf` only is applied with:
+
+    docker compose exec proxy nginx -t && docker compose exec proxy nginx -s reload
 
 `curl` does not use the macOS keychain, so it is told about the CA directly:
 
@@ -300,9 +363,9 @@ running the script again, with nothing to change in the keychain. nginx reads
 both files when it starts, so after renewing:
 
     docker compose restart proxy
- The script
-refuses to sign a certificate that would outlive its CA, and replaces the old
-certificate only once the new one verifies.
+
+The script refuses to sign a certificate that would outlive its CA, and
+replaces the old certificate only once the new one verifies.
 
 `.localhost` names always mean this machine, and Safari, Chrome and curl find
 `psells.localhost` without any change to `/etc/hosts`.
@@ -370,8 +433,8 @@ database it is pointed at, so it refuses any whose name does not end in
 Every warning is an error (`pytest.ini`), apart from one known deprecation in
 Starlette's test client on Python 3.14, matched on its exact message.
 
-Eleven files, and the split is deliberate, so a red run says what kind of thing
-broke before you read a line of it.
+Fourteen files, and the split is deliberate, so a red run says what kind of
+thing broke before you read a line of it.
 
 `test_domain.py` covers everything in `psells.py` that has no input or output:
 partner-share in all three modes including its rounding, search, the dashboard
@@ -387,7 +450,23 @@ of that queue a claim about how many questions the function asks: if it ever
 asks one more, the queue runs dry and the test fails rather than hanging.
 
 `test_api.py` drives the HTTP endpoints through FastAPI's test client, with the
-connection dependency pointed at the test's own connection.
+connection dependency pointed at the test's own connection. That client is
+logged in, with a session made directly, so tests about something else do not
+depend on the login page.
+
+`test_auth.py` covers `auth.py` and `set_password.py`: Argon2id hashing, a
+refusal that takes as long for an unknown username, the upgrade of an old hash,
+and a session's two limits, each tested to the second on both sides with a
+fixed clock.
+
+`test_login.py` asks the application for every route it has and calls each one
+without a session, so a route added later is covered the day it is added, and
+fails if any route sits outside the checks. It also covers the login page, the
+cookie's attributes, and logging out.
+
+`test_forms.py` does the same for the form token: it reads every template and
+renders every page for a form without the token, and calls every write with no
+token, a wrong one and another session's.
 
 `test_web.py` drives the pages the same way, reading each page with small
 parsers built on the standard library, so an assertion names a cell in a row
@@ -401,8 +480,8 @@ application as it is in the stack.
 
 `test_schema.py` runs `schema.sql` on its own: every rule tried with a row that
 breaks exactly that rule and refused by that rule's own constraint, ids never
-reused, the view's derived stock, and the Python types each column comes back
-as.
+reused, the view's derived stock, the Python types each column comes back as,
+and that each file in `migrations/` builds exactly what `schema.sql` builds.
 
 `test_connect.py` covers `psells.connect`: that a write through it is really
 committed, and that a missing or silent database is a sentence.
@@ -427,7 +506,7 @@ into `compose.yaml`, if nginx stops passing the headers the application relies
 on with the values it relies on, if the application would believe forwarded
 headers from anyone but nginx, if nginx would run as root, if a response would
 lack one of its security headers or the policy's style hash no longer matches
-the page, if an action or an
+the page, if the login limit stops counting only login attempts, if an action or an
 image is used by a tag rather than pinned to a commit or a digest, or if a
 workflow can write to the repository. The Lint workflow also runs `nginx -t` on
 the configuration with the image the stack uses.
@@ -452,17 +531,14 @@ newer release, which the same workflows then test and scan.
 
 Worth stating plainly rather than leaving to be discovered.
 
-- **There is no authentication yet.** Anyone who can reach the port can read
-  every figure and change every record, through the pages or the API. It comes
-  next, before anything is public. The server listens on `127.0.0.1` only,
-  which is the whole of the protection at the moment, so do not put it on
-  `0.0.0.0`. In a container it has to listen on
-  `0.0.0.0`, and the same protection comes from the application publishing no
-  port and nginx publishing its two as `127.0.0.1:443` and `127.0.0.1:80`.
-- **The protection against cross-site writes relies on the browser's labels.**
-  Every current browser sends them, and a page cannot change them, but a token
-  in every form would not depend on them. That is the thing to add alongside
-  authentication.
+- **The login is a password and nothing else.** One account, a minimum of ten
+  characters, no second factor. Argon2id makes each guess expensive and nginx
+  limits how many arrive; a long passphrase is still the real protection. It
+  stays published on `127.0.0.1` only until it moves to a server.
+- **Behind Docker Desktop, every browser on the Mac shares one login
+  allowance.** nginx sees every connection as coming from Docker's gateway, so
+  the five attempts a minute are counted for the machine, not for a browser.
+  On a Linux server each visitor's own address is counted.
 - **The certificate is trusted by this machine only.** It comes from a CA of
   PSells' own, which other machines, and Firefox, do not trust. A publicly
   trusted certificate needs a public name, which arrives with a server.
@@ -473,9 +549,9 @@ Worth stating plainly rather than leaving to be discovered.
   Every request reaches nginx from the Compose network's gateway, so that is the
   address logged and forwarded. Harmless while everything is on one machine.
 - **The API can read and sell, and nothing else.** Every other write is in the
-  web pages and the command line. Write endpoints wait until authentication is
-  decided, rather than adding unauthenticated ways to change the records that
-  nothing yet calls.
+  web pages and the command line. More write endpoints wait for a program that
+  needs them, and so do API keys; until then a program logs in with the same
+  cookie as the browser.
 - **Two rules live in the application rather than the database.** Available stock
   never going negative, and an intake quantity never being edited below what has
   already sold and returned, both span more than one table, and a `CHECK`
@@ -503,8 +579,8 @@ PSells is built one layer at a time as a long-running project rather than a
 finished product. It stores its data in PostgreSQL behind a schema that
 enforces the business rules, runs as containers under Compose, is used through
 server-rendered web pages, a terminal application and an HTTP API that all call
-the same functions, is served over HTTPS behind nginx, is covered by an
-automated test suite that runs on every push against a real PostgreSQL, and is
-backed up on a schedule. Planned next is authentication, then cloud deployment
-with a publicly trusted certificate, carrying the same data model and business
-rules through each step.
+the same functions, is served over HTTPS behind nginx, asks for a login before
+anything else, is covered by an automated test suite that runs on every push
+against a real PostgreSQL, and is backed up on a schedule. Planned next is
+cloud deployment with a publicly trusted certificate, carrying the same data
+model and business rules through each step.
