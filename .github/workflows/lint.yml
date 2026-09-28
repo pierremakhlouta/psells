@@ -101,15 +101,17 @@ jobs:
       # Each configuration parses, names attributes that exist, and fits the
       # provider its lock file pins. No AWS account is reached: -backend=false
       # skips the state bucket, and validate reads nothing from AWS. The copy
-      # is writable because init downloads the provider into it.
+      # is writable because init downloads the provider into it, and it is the
+      # whole repository, because the server's user data is read from
+      # deploy/aws/, outside infra/.
       - name: Validate each Terraform configuration
         run: |
-          cp -r infra "$RUNNER_TEMP/infra"
+          cp -r "$PWD" "$RUNNER_TEMP/repo"
           for dir in infra/aws infra/aws/bootstrap; do
             docker run --rm --user "$(id -u):$(id -g)" --env HOME=/tmp \
-              --volume "$RUNNER_TEMP/infra:/repo/infra" --workdir "/repo/$dir" \
+              --volume "$RUNNER_TEMP/repo:/repo" --workdir "/repo/$dir" \
               "$TERRAFORM_IMAGE" init -backend=false -input=false -lockfile=readonly
             docker run --rm --user "$(id -u):$(id -g)" --env HOME=/tmp \
-              --volume "$RUNNER_TEMP/infra:/repo/infra" --workdir "/repo/$dir" \
+              --volume "$RUNNER_TEMP/repo:/repo" --workdir "/repo/$dir" \
               "$TERRAFORM_IMAGE" validate
           done
