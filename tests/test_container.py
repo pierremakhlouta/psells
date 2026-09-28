@@ -879,6 +879,45 @@ def test_every_commit_is_scanned_for_secrets_with_a_pinned_scanner():
     assert ":/repo:ro" in scan
 
 
+def test_only_a_job_without_third_party_code_can_publish_and_only_from_main():
+    jobs = workflow(os.path.join(PROJECT_DIR, ".github", "workflows",
+                                 "image.yml"))["jobs"]
+    main_push = "github.event_name == 'push' && github.ref == 'refs/heads/main'"
+
+    # The scanner runs where the token can write nothing.
+    for name, job in jobs.items():
+        if name != "publish":
+            assert "packages" not in job.get("permissions", {}), name
+    publish = jobs["publish"]
+    assert publish["permissions"] == {"packages": "write"}
+    assert publish["if"] == main_push
+    assert publish["needs"] == "app"
+    # Nothing runs beside the token but GitHub's own artifact action.
+    actions = [step["uses"].split("@")[0] for step in publish["steps"]
+               if "uses" in step]
+    assert actions == ["actions/download-artifact"]
+
+
+def test_what_is_published_is_what_was_scanned():
+    jobs = workflow(os.path.join(PROJECT_DIR, ".github", "workflows",
+                                 "image.yml"))["jobs"]
+    app = "\n".join(step.get("run", "") for step in jobs["app"]["steps"])
+    publish = "\n".join(step.get("run", "") for step in jobs["publish"]["steps"])
+    arches = {entry["arch"]: entry["runner"]
+              for entry in jobs["app"]["strategy"]["matrix"]["include"]}
+
+    # Both architectures, each built on its own kind of machine.
+    assert arches == {"amd64": "ubuntu-24.04", "arm64": "ubuntu-24.04-arm"}
+    # The ID of the scanned image is recorded, and a loaded image that does
+    # not have it is refused before anything is pushed.
+    assert "docker image inspect --format '{{.Id}}' psells:ci > image-id" in app
+    assert '[ "$id" = "$scanned" ] ||' in publish
+    assert publish.index('[ "$id" = "$scanned" ]') < publish.index("docker push")
+    # Tagged by commit, never by a name that moves, such as latest.
+    assert "latest" not in publish
+    assert '"$IMAGE:${{ github.sha }}"' in publish
+
+
 def test_dependabot_watches_every_kind_of_pin():
     with open(os.path.join(PROJECT_DIR, ".github", "dependabot.yml")) as config:
         ecosystems = {update["package-ecosystem"]
