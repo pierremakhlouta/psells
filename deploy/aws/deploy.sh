@@ -64,8 +64,9 @@ while IFS=$'\t' read -r name value; do
         "$PARAMETERS/db") database="$value" ;;
     esac
 done <<< "$values"
-[ -n "$user" ] && [ -n "$password" ] && [ -n "$database" ] ||
+if [ -z "$user" ] || [ -z "$password" ] || [ -z "$database" ]; then
     fail "expected user, password and db under $PARAMETERS"
+fi
 
 # Readable by root only, written whole and then moved into place, so a
 # failure halfway never leaves a .env without its password.
