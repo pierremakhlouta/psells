@@ -153,6 +153,23 @@ def compose():
         return yaml.safe_load(compose_file)
 
 
+class ComposeLoader(yaml.SafeLoader):
+    """A safe loader that also reads Compose's !override tag."""
+
+
+ComposeLoader.add_constructor(
+    "!override", lambda loader, node: Override(loader.construct_sequence(node)))
+
+
+class Override(list):
+    """A list compose.aws.yaml marks !override: it replaces, not extends."""
+
+
+def compose_aws():
+    with open(os.path.join(PROJECT_DIR, "compose.aws.yaml")) as compose_file:
+        return yaml.load(compose_file, Loader=ComposeLoader)
+
+
 def published_ports(service):
     """Every port mapping of a service, in the short "host:container" form.
 
@@ -598,7 +615,7 @@ def test_the_nginx_config_is_mounted_read_only_and_readable_by_nginx():
     mounts = compose()["services"]["proxy"]["volumes"]
 
     assert mounts == ["./nginx/nginx.conf:/etc/nginx/nginx.conf:ro",
-                      "./nginx/sites/${PSELLS_SITE:-localhost}:/etc/nginx/site:ro",
+                      "./nginx/sites/localhost:/etc/nginx/site:ro",
                       "./data/tls:/etc/nginx/tls:ro"]
     # nginx reads them as user 101, not as the files' owner. A file readable
     # by its owner only is refused at startup on Linux, the trap of Phase 04
@@ -645,10 +662,82 @@ def test_nginx_conf_itself_names_no_place():
     ]
 
 
-def test_the_stack_uses_the_localhost_site_unless_told_otherwise():
-    assert "localhost" in SITES
-    mount = compose()["services"]["proxy"]["volumes"][1]
-    assert with_defaults(mount) == "./nginx/sites/localhost:/etc/nginx/site:ro"
+def test_there_is_a_site_for_the_mac_and_one_for_the_server():
+    assert SITES == ["aws", "localhost"]
+
+
+# The AWS server -----------------------------------------------------------------
+#
+# compose.aws.yaml is laid over compose.yaml on the server only. A volume in it
+# replaces the one in compose.yaml with the same target; a list marked
+# !override replaces the whole list.
+
+def mounts_by_target(volumes):
+    return {volume.split(":")[1]: volume for volume in volumes}
+
+
+def test_the_server_publishes_both_ports_on_every_address_and_nothing_else():
+    ports = compose_aws()["services"]["proxy"]["ports"]
+
+    # !override, or Compose would add these to the 127.0.0.1 ones and fail to
+    # bind the same port twice.
+    assert isinstance(ports, Override)
+    assert list(ports) == ["443:8443", "80:8080"]
+    # And nginx listens where they lead, as on the Mac.
+    listening = {listen[0] for listen, _, _ in servers("aws")}
+    assert listening == {"8443", "8080", "127.0.0.1:8081"}
+
+
+def test_the_server_swaps_the_site_and_certificate_and_adds_the_webroot():
+    mac = mounts_by_target(compose()["services"]["proxy"]["volumes"])
+    server = mounts_by_target(compose_aws()["services"]["proxy"]["volumes"])
+
+    # The same targets as on the Mac, so these replace them, and one more.
+    assert set(server) == {"/etc/nginx/site", "/etc/nginx/tls", "/var/www/acme"}
+    assert set(server) - set(mac) == {"/var/www/acme"}
+    assert server["/etc/nginx/site"] == "./nginx/sites/aws:/etc/nginx/site:ro"
+    assert server["/etc/nginx/tls"] == "./data/letsencrypt:/etc/nginx/tls:ro"
+    assert server["/var/www/acme"] == "./data/acme:/var/www/acme:ro"
+
+
+def test_certbot_writes_where_nginx_reads_as_nginx_own_user():
+    services = compose_aws()["services"]
+    certbot = services["certbot"]
+    proxy = services["proxy"]
+    certbot_mounts = mounts_by_target(certbot["volumes"])
+    proxy_mounts = mounts_by_target(proxy["volumes"])
+
+    # The same user as nginx, so the key is owner-only and nginx its owner.
+    assert certbot["user"] == compose()["services"]["proxy"]["user"] == "101:101"
+    # Started only when asked for, pinned, and off the stack's network.
+    assert certbot["profiles"] == ["certbot"]
+    assert PINNED_IMAGE.match(certbot["image"]), certbot["image"]
+    assert certbot["network_mode"] == "bridge"
+    # certbot's config folder is what nginx reads as its certificates, and
+    # its webroot is what nginx serves the challenge from.
+    assert (certbot_mounts["/etc/letsencrypt"].split(":")[0]
+            == proxy_mounts["/etc/nginx/tls"].split(":")[0])
+    assert (certbot_mounts["/var/www/acme"].split(":")[0]
+            == proxy_mounts["/var/www/acme"].split(":")[0])
+    # Writable by certbot, read-only to nginx.
+    assert not certbot_mounts["/etc/letsencrypt"].endswith(":ro")
+    assert proxy_mounts["/etc/nginx/tls"].endswith(":ro")
+
+
+def test_the_server_site_serves_the_challenge_and_its_certbot_certificate():
+    http = site_directives("aws", "http.conf")
+    https = [words for _, words in site_directives("aws", "https.conf")]
+    name = [w[1] for w in https if w[0] == "server_name"][0]
+    served = compose_aws()["services"]["proxy"]["volumes"]
+
+    # The challenge path answers from the webroot compose.aws.yaml mounts.
+    assert [(blocks, words) for blocks, words in http if words[0] == "root"] == [
+        ((("location", "/.well-known/acme-challenge/"),), ["root", "/var/www/acme"])]
+    assert "./data/acme:/var/www/acme:ro" in served
+    # And the certificate is certbot's for that name, under the tls mount.
+    live = f"/etc/nginx/tls/live/{name}/"
+    assert ["ssl_certificate", live + "fullchain.pem"] in https
+    assert ["ssl_certificate_key", live + "privkey.pem"] in https
 
 
 @pytest.mark.parametrize("site", SITES)
@@ -700,7 +789,7 @@ WORKFLOWS = sorted(glob.glob(
     os.path.join(PROJECT_DIR, ".github", "workflows", "*.yml")))
 
 PINNED_ACTION = re.compile(r"^[\w.-]+/[\w.-]+@[0-9a-f]{40}$")
-PINNED_IMAGE = re.compile(r"^[\w./-]+:\d+\.\d+(\.\d+)?[\w.-]*@sha256:[0-9a-f]{64}$")
+PINNED_IMAGE = re.compile(r"^[\w./-]+:v?\d+\.\d+(\.\d+)?[\w.-]*@sha256:[0-9a-f]{64}$")
 
 
 def workflow(path):

@@ -1,0 +1,49 @@
+# What differs on the AWS server, laid over compose.yaml. Used there only:
+#
+#     docker compose -f compose.yaml -f compose.aws.yaml up -d --wait
+#
+# The Mac never reads this file. Compose merges it into compose.yaml: a
+# volume here replaces the one in compose.yaml with the same path inside the
+# container, a new one is added, and !override replaces a list outright where
+# Compose would otherwise add the two lists together.
+#
+# The server holds the invented sample data only, never the real records.
+
+services:
+  proxy:
+    # On every address, because this server is public: its security group
+    # lets in 80 and 443 and nothing else. compose.yaml publishes on
+    # 127.0.0.1 only, which on the server would reach no one.
+    ports: !override
+      - "443:8443"
+      - "80:8080"
+    volumes:
+      # The server's name and its certificate's paths, in place of the Mac's.
+      - "./nginx/sites/aws:/etc/nginx/site:ro"
+      # Let's Encrypt's certificate, written by the certbot service below, in
+      # place of the Mac's own CA.
+      - "./data/letsencrypt:/etc/nginx/tls:ro"
+      # The files Let's Encrypt fetches over plain HTTP to prove the name,
+      # which certbot leaves here; see nginx/sites/aws/http.conf.
+      - "./data/acme:/var/www/acme:ro"
+
+  certbot:
+    # Gets and renews the certificate. Runs only when asked for:
+    #     docker compose -f compose.yaml -f compose.aws.yaml run --rm certbot renew
+    # Pinned like every other image; checked with docker buildx imagetools
+    # inspect on 27 September 2026 against the v5.8.0 release.
+    image: certbot/certbot:v5.8.0@sha256:f70ad0adbb7e117f0fe42a63c553f28ea451edabc0148757b6efcd9735acaa20
+    profiles: ["certbot"]
+    # nginx's own user. certbot needs no root for a webroot, and the key it
+    # writes, readable by its owner only, then belongs to the one user that
+    # reads it. Both folders below must belong to 101 on the server.
+    user: "101:101"
+    # certbot's working and log folders default to places only root may write;
+    # these go in the container and are thrown away with it.
+    entrypoint: ["certbot", "--work-dir", "/tmp/certbot/work",
+                 "--logs-dir", "/tmp/certbot/logs"]
+    volumes:
+      - "./data/letsencrypt:/etc/letsencrypt"
+      - "./data/acme:/var/www/acme"
+    # Not on the stack's network: it talks to Let's Encrypt, not to the app.
+    network_mode: bridge
