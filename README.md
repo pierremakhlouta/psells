@@ -439,11 +439,12 @@ the account is on AWS's free plan, which cannot be charged, and the server
 lives inside that plan's six months.
 
 It is the same stack, with `compose.aws.yaml` laid over `compose.yaml`. That
-file holds everything that differs on the server: ports 443 and 80 published on
-every address rather than `127.0.0.1`, the `aws` site folder for nginx, a
-Let's Encrypt certificate in place of the Mac's own CA, the folder Let's
-Encrypt's challenge is answered from, and a `certbot` service run only when
-asked for. The Mac never reads it.
+file holds everything that differs on the server: the application's image,
+published by CI and pulled by digest rather than built there, ports 443 and 80
+published on every address rather than `127.0.0.1`, the `aws` site folder for
+nginx, a Let's Encrypt certificate in place of the Mac's own CA, the folder
+Let's Encrypt's challenge is answered from, and a `certbot` service run only
+when asked for. The Mac never reads it.
 
 How it is put together:
 
@@ -469,13 +470,42 @@ How it is put together:
   proves the dump restores, as `backup.sh` does, and only then copies it to a
   private, encrypted S3 bucket that deletes each copy after thirty days.
 
-A deploy, as root on the server through Session Manager, checks out a commit
-and runs the script, which builds the stack there, loads the sample records
-into an empty database, and installs both timers:
+### Shipping from a push
+
+A push to `main` goes live by itself, in about four minutes, once every check
+has passed:
+
+1. **Image** builds the application's image on amd64 and on arm64, the
+   server's architecture, scans each, and publishes the scanned images to
+   GitHub's container registry as `ghcr.io/pierremakhlouta/psells:<commit>`.
+   The scanner runs in a job that can publish nothing; a separate job, which
+   runs no third-party code, pushes each image only if its ID is the one that
+   was scanned.
+2. **Deploy** starts whenever Tests, Lint, Security or Image finishes on
+   `main`, and its gate goes on only when all four have passed for that exact
+   commit. A failed check means no deploy; a scheduled scan deploys nothing.
+3. It signs in to AWS with GitHub's OpenID Connect token, which AWS trades for
+   a role trusted only by `main` of this repository, for fifteen minutes. No
+   AWS key is stored in GitHub.
+4. That role can run one thing: the SSM document `psells-deploy`, on the
+   server tagged `psells`. The document accepts a full commit hash and an image
+   digest, each checked by AWS against a pattern before anything runs, checks
+   out the commit and runs `deploy/aws/deploy.sh`, which pulls the image by
+   digest and refuses one that is not that commit's own.
+5. The workflow fails unless the server reports running exactly that digest
+   and the site answers over trusted HTTPS.
+
+Rolling back is the same workflow run by hand with an earlier commit on
+`main`, which redeploys that commit's own scanned image, in under a minute:
+
+    gh workflow run deploy.yml -f commit=<full hash of an earlier commit>
+
+It refuses a commit whose checks did not all pass. By hand on the server, as
+root through Session Manager, a deploy is:
 
     git -C /opt/psells fetch --quiet origin
     git -C /opt/psells checkout --quiet --detach <commit>
-    /opt/psells/deploy/aws/deploy.sh
+    PSELLS_IMAGE_DIGEST=<its digest> /opt/psells/deploy/aws/deploy.sh
 
 `deploy.sh` and `backup-to-s3.sh` refuse to run where `data/config.json`
 exists, which is only ever the Mac, so neither can overwrite the real `.env` or
@@ -514,8 +544,8 @@ the name and the certificate's name survive it:
 
     AWS_PROFILE=psells terraform apply -replace=aws_instance.server
 
-It takes about ten minutes, most of it building the application's image on
-the small server. A rebuilt server starts with the sample records and no
+It takes about ten minutes, most of it installing Docker and pulling images;
+the application's image is the one CI published for the head of `main`. A rebuilt server starts with the sample records and no
 account, so the demonstration's password is set again through Session
 Manager. `-var acme_staging=true` asks Let's Encrypt's staging service
 instead, whose certificates no browser trusts and which has no weekly limit,
@@ -527,7 +557,8 @@ deleting them, and it leaves the state bucket and the database password,
 which it does not manage.
 
 The Lint workflow checks the formatting of every configuration and validates
-each one against the provider the lock file pins, without reaching AWS.
+each one against the provider the lock file pins, without reaching AWS. The
+deploy role and the `psells-deploy` document are in `infra/aws/deploy.tf`.
 
 ## Running the tests
 
@@ -629,7 +660,9 @@ version the lock file agrees with, if the state bucket could be destroyed or
 lose its versions, if the code holds a secret, an address, an account number,
 a resource ID or a leftover import block, if the firewall would let in
 anything but 80 and 443, if the server could have a key pair, reach IMDS from
-a container or run up CPU charges, or if its role could do more than it does.
+a container or run up CPU charges, if its role could do more than it does, or
+if the deploy role could be taken by another branch or repository, send
+anything but the deploy document or reach any server but PSells'.
 
 `test_container.py` reads the `Dockerfile`, `.dockerignore`, `compose.yaml`,
 `compose.aws.yaml`, `nginx/nginx.conf` with each site's files, and the
@@ -645,7 +678,11 @@ the page, if the login limit stops counting only login attempts, if an action or
 image is used by a tag rather than pinned to a commit or a digest, or if a
 workflow can write to the repository. On the server's side it fails if
 `compose.aws.yaml` stops replacing the ports, the site or the certificate, or
-if certbot would write anywhere nginx does not read or as another user. The
+if certbot would write anywhere nginx does not read or as another user, if
+any job but the one without third-party code could publish the image or it
+could publish an image other than the scanned one, or if the Deploy workflow
+could skip a check, hold a key, run an action, write an event's value into a
+script, or pass without confirming the digest and the site. The
 Lint workflow also runs `nginx -t` on the configuration, with each site, with
 the image the stack uses, and `terraform fmt` and `validate` on every
 configuration.
@@ -657,10 +694,11 @@ never see each other's rows and nothing has to be cleaned up. On GitHub Actions
 the test database is a service container of the same image, on the same
 port. Everything runs on every push through GitHub Actions, alongside a
 dependency vulnerability audit, a shellcheck pass and an `nginx -t` check, and
-a scan with Grype of the built image and of the nginx image, which fails on a
-high or critical vulnerability that has a fix and lists the rest, and a scan of
-every commit in the history with gitleaks, which fails on anything that looks
-like a credential.
+a scan with Grype of the built image, on both architectures, and of the nginx
+image, which fails on a high or critical vulnerability that has a fix and
+lists the rest, and a scan of every commit in the history with gitleaks, which
+fails on anything that looks like a credential. On `main`, the scanned image is
+then published and deployed, as described under "Shipping from a push".
 
 Everything is pinned: Python packages to exact versions, every action in the
 workflows to a commit, and the base images to a version and the digest of
@@ -737,7 +775,8 @@ the same functions, is served over HTTPS behind nginx, asks for a login before
 anything else, is covered by an automated test suite that runs on every push
 against a real PostgreSQL, and is backed up on a schedule. A copy with
 invented records runs on AWS behind a publicly trusted certificate, described
-in Terraform and rebuilt from it. Planned next is shipping from a push: build
-and scan the image in CI, publish it to a registry, and deploy it to the
-server with no manual step, carrying the same data model and business rules
+in Terraform and rebuilt from it, and a push to `main` ships itself there once
+every check passes. Planned next is monitoring: a dashboard of the server and
+the application, service level objectives, an alert, and a deliberate failure
+written up as an incident, carrying the same data model and business rules
 through each step.

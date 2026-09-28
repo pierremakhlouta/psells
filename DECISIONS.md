@@ -736,3 +736,34 @@ calls only, not every detail, and no specific business figures.
   "always", so a container stopped deliberately is not brought back behind
   its owner's back. The test database has none: it is a throwaway.
 
+- **CI reaches AWS with OpenID Connect, not a stored key.** A workflow run
+  presents a token GitHub signs, naming the repository and branch; AWS trades
+  it for a role for fifteen minutes. The role trusts one exact subject: main of
+  this repository, by name and by the numeric IDs GitHub now includes, so a
+  recycled name cannot match. A key stored as a secret would have worked until
+  someone deleted it, from any branch that could read it.
+
+- **The pipeline can deploy and do nothing else on the server.** The role may
+  send one SSM document, which takes a commit hash and an image digest checked
+  against patterns before anything runs, to the server tagged psells. AWS's
+  generic shell document would have been simpler and would have let anyone who
+  could change a workflow run anything as root.
+
+- **What runs is what was scanned.** The image is built for amd64 and arm64 on
+  native runners, scanned, and published to GHCR, free for a public image; the
+  server pulls it by digest and stops building. The scanner runs where nothing
+  can be published, and the job that publishes runs no third-party code and
+  refuses an image whose ID differs from the scanned one. A deploy takes
+  seconds instead of ten minutes.
+
+- **A deploy waits for every check.** It runs only when Tests, Lint, Security
+  and Image have all passed for that exact commit on main. Keeping the four
+  workflows separate, each with its badge, meant a gate that asks GitHub for
+  their results rather than one workflow that does everything.
+
+- **A deploy is checked from outside, and rolled back by hand.** It fails
+  unless the server reports the digest it was sent and the site answers over
+  trusted HTTPS. Rolling back is the same workflow with an earlier commit,
+  which reuses that commit's scanned image. An automatic rollback was more
+  logic to test, and could not undo a change to the database anyway.
+
