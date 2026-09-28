@@ -686,3 +686,45 @@ calls only, not every detail, and no specific business figures.
   scanned once before the phase ended, and the same scanner now runs in CI
   over every commit on every branch, because a secret removed in a later
   commit is still in the history anyone can clone.
+
+- **Terraform's state is kept in S3, and made by a bootstrap.** State records
+  every value of everything Terraform manages, so it lives in a bucket that is
+  private, encrypted, versioned and locked while a plan runs, not in the
+  repository and not on one laptop. That bucket cannot hold the state that
+  creates it, so a small configuration of its own makes it once and keeps its
+  own state locally; it can be rebuilt from the bucket's name. A hosted
+  service was free too, but it would have been another account holding
+  credentials to this one.
+
+- **What existed was adopted, not rebuilt, and then rebuilt on purpose.**
+  Everything made by hand in the previous phase was imported, and the first
+  plan changed nothing but four missing tags. A plan with no changes is the
+  proof that the code describes what runs. Then the server alone was
+  destroyed and rebuilt from code twice, first with test certificates, keeping
+  its address so the name and the certificate's name survived. Tearing
+  everything down would have proved slightly more and cost the backups.
+
+- **Terraform does not manage the access it runs with, or any secret.** The
+  IAM user it runs as, its group and the root user are left out, so no plan
+  can remove the way back in. The database password stays a parameter made by
+  hand, because a managed value is copied into the state in plain text; only
+  its path is written in the code. The address the budget's alerts go to is
+  read from a file git ignores.
+
+- **A new server sets itself up; a running one is left alone.** The host
+  setup, the clone and the deploy run from the server's first-boot script, and
+  the deploy fetches a certificate when there is none. A newer image or an
+  edited script does not replace a running server; both are used when it is
+  rebuilt. A rebuilt server starts from the sample records, which cost nothing
+  to reload, rather than from a disk kept aside or a backup it would need
+  permission to read.
+
+- **Bucket names are in the code.** They are not secrets: both buckets are
+  private, refuse plain HTTP and hold no account number. Hiding them would have
+  made the code unreadable without a local file.
+
+- **Terraform is checked on every push without reaching AWS.** Formatting and
+  validation run against the provider the lock file pins, from a pinned image,
+  on a copy of the whole repository, since the server's user data is read from
+  outside the Terraform folder.
+

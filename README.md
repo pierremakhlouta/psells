@@ -477,6 +477,54 @@ into an empty database, and installs both timers:
 exists, which is only ever the Mac, so neither can overwrite the real `.env` or
 send the real records anywhere.
 
+### The server as code
+
+Everything the demonstration uses in AWS is described in Terraform in
+`infra/aws/`: the server and its fixed address, the firewall, the server's
+role and its two policies, the backup bucket and its settings, the plain
+parameters, the account's default of encrypted disks, and the budget. Only
+the IAM user Terraform runs as, its group and the root user are left out, so
+a mistake in a plan can never remove the access that runs it, and the
+database password, because Terraform keeps a copy of every value it manages
+in its state, in plain text.
+
+The state lives in an S3 bucket of its own, private, encrypted, versioned and
+locked while a plan runs. That bucket is made once by `infra/aws/bootstrap/`,
+a small configuration whose own state stays on the machine that ran it. From
+`infra/aws/`, signed in with `aws login`:
+
+    AWS_PROFILE=psells terraform init
+    AWS_PROFILE=psells terraform plan
+
+A plan that reports no changes is the proof that the code describes what is
+running. The address the budget's alerts go to is read from
+`infra/aws/terraform.tfvars`, which git ignores:
+
+    alert_email = "you@example.com"
+
+A new server sets itself up. Terraform gives it `deploy/aws/first-boot.sh`,
+which prepares the host, clones this repository and runs `deploy.sh`, which
+now also fetches a certificate from Let's Encrypt when the server has none.
+Rebuilding the server from code is therefore one command, and the address,
+the name and the certificate's name survive it:
+
+    AWS_PROFILE=psells terraform apply -replace=aws_instance.server
+
+It takes about ten minutes, most of it building the application's image on
+the small server. A rebuilt server starts with the sample records and no
+account, so the demonstration's password is set again through Session
+Manager. `-var acme_staging=true` asks Let's Encrypt's staging service
+instead, whose certificates no browser trusts and which has no weekly limit,
+for trying a rebuild.
+
+`terraform destroy` is the cost control: it removes everything above. It
+stops at the backup bucket while the bucket holds backups, rather than
+deleting them, and it leaves the state bucket and the database password,
+which it does not manage.
+
+The Lint workflow checks the formatting of every configuration and validates
+each one against the provider the lock file pins, without reaching AWS.
+
 ## Running the tests
 
 The suite needs a PostgreSQL to run against: `db-test` in `compose.yaml`, a
@@ -497,7 +545,7 @@ database it is pointed at, so it refuses any whose name does not end in
 Every warning is an error (`pytest.ini`), apart from one known deprecation in
 Starlette's test client on Python 3.14, matched on its exact message.
 
-Fifteen files, and the split is deliberate, so a red run says what kind of
+Sixteen files, and the split is deliberate, so a red run says what kind of
 thing broke before you read a line of it.
 
 `test_domain.py` covers everything in `psells.py` that has no input or output:
@@ -567,7 +615,17 @@ commands, and fails if either would do anything where `data/config.json`
 exists, or `deploy.sh` anywhere but the server's folder. It also checks the
 server gets the sample configuration only, that a backup is proved before it
 is sent, and that the systemd timers agree with `compose.aws.yaml` and with
-the script that installs them.
+the script that installs them. It also checks that a certificate is fetched
+only when there is none, before the stack starts, and that `first-boot.sh`
+deploys only after every step that prepares the host.
+
+`test_infra.py` reads the Terraform in `infra/aws/` and fails if a state or
+variables file could be committed, if the provider is not pinned to one exact
+version the lock file agrees with, if the state bucket could be destroyed or
+lose its versions, if the code holds a secret, an address, an account number,
+a resource ID or a leftover import block, if the firewall would let in
+anything but 80 and 443, if the server could have a key pair, reach IMDS from
+a container or run up CPU charges, or if its role could do more than it does.
 
 `test_container.py` reads the `Dockerfile`, `.dockerignore`, `compose.yaml`,
 `compose.aws.yaml`, `nginx/nginx.conf` with each site's files, and the
@@ -585,7 +643,8 @@ workflow can write to the repository. On the server's side it fails if
 `compose.aws.yaml` stops replacing the ports, the site or the certificate, or
 if certbot would write anywhere nginx does not read or as another user. The
 Lint workflow also runs `nginx -t` on the configuration, with each site, with
-the image the stack uses.
+the image the stack uses, and `terraform fmt` and `validate` on every
+configuration.
 
 No test needs a data file. The suite builds its tables from `schema.sql` at the
 start of every run, so a constraint added there is exercised automatically, and
@@ -628,7 +687,13 @@ Worth stating plainly rather than leaving to be discovered.
   ever held anything real.
 - **The demonstration is temporary.** AWS's free plan ends six months after the
   account was opened, in March 2027, and the server with it. The repository,
-  and the code that will rebuild the server, are what last.
+  and the Terraform that rebuilds the server, are what last.
+- **A rebuilt server forgets its account.** It starts from the sample records
+  with no login, and the password is set again by hand, since it is typed and
+  never stored.
+- **On the Mac, the stack does not come back by itself.** The containers have
+  no restart policy, so when Docker Desktop restarts, PSells stays stopped
+  until `docker compose up -d --wait` is run.
 - **Behind Docker Desktop, the application never sees a client's address.**
   Every request reaches nginx from the Compose network's gateway, so that is the
   address logged and forwarded. Harmless while everything is on one machine.
@@ -666,7 +731,8 @@ server-rendered web pages, a terminal application and an HTTP API that all call
 the same functions, is served over HTTPS behind nginx, asks for a login before
 anything else, is covered by an automated test suite that runs on every push
 against a real PostgreSQL, and is backed up on a schedule. A copy with
-invented records runs on AWS behind a publicly trusted certificate. Planned
-next is describing that server as code with Terraform, so it can be rebuilt
-from the repository, carrying the same data model and business rules through
-each step.
+invented records runs on AWS behind a publicly trusted certificate, described
+in Terraform and rebuilt from it. Planned next is shipping from a push: build
+and scan the image in CI, publish it to a registry, and deploy it to the
+server with no manual step, carrying the same data model and business rules
+through each step.
