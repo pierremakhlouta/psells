@@ -331,6 +331,10 @@ is why the stack's network has a fixed range, `10.213.47.0/24`, with nginx at a
 fixed address outside the part Docker hands out. If the range ever clashes
 with a network the Mac is on, `PSELLS_NETWORK` in `.env` moves it.
 
+The three services restart whenever Docker starts (`restart: unless-stopped`),
+so PSells comes back after Docker Desktop restarts or the server reboots; a
+container stopped on purpose with `docker compose stop` stays stopped.
+
 `--wait` returns once every service reports healthy: the database when it
 accepts connections, the web server when uvicorn does, and nginx when it
 answers its own health check. Without it, a request
@@ -691,9 +695,10 @@ Worth stating plainly rather than leaving to be discovered.
 - **A rebuilt server forgets its account.** It starts from the sample records
   with no login, and the password is set again by hand, since it is typed and
   never stored.
-- **On the Mac, the stack does not come back by itself.** The containers have
-  no restart policy, so when Docker Desktop restarts, PSells stays stopped
-  until `docker compose up -d --wait` is run.
+- **The stack comes back only when Docker does.** The three containers restart
+  whenever Docker starts, after Docker Desktop restarts or the server reboots,
+  but on the Mac Docker Desktop itself has to be running: if it does not start
+  at login, neither does PSells, and neither does the daily backup.
 - **Behind Docker Desktop, the application never sees a client's address.**
   Every request reaches nginx from the Compose network's gateway, so that is the
   address logged and forwarded. Harmless while everything is on one machine.

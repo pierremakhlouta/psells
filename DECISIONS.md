@@ -728,3 +728,11 @@ calls only, not every detail, and no specific business figures.
   on a copy of the whole repository, since the server's user data is read from
   outside the Terraform folder.
 
+- **The stack restarts with Docker, unless stopped on purpose.** The
+  containers had no restart policy, and when Docker Desktop restarted one
+  morning PSells stayed down until someone noticed; a reboot of the AWS server
+  would have done the same to the demonstration. The proxy, the application and
+  the database now restart whenever Docker starts. "unless-stopped" rather than
+  "always", so a container stopped deliberately is not brought back behind
+  its owner's back. The test database has none: it is a throwaway.
+

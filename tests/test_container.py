@@ -772,6 +772,20 @@ def test_every_site_gives_nginx_the_same_servers(site):
     assert sum(1 for w in served if w[0] == "add_header") == 4
 
 
+def test_the_stack_comes_back_whenever_docker_starts():
+    services = compose()["services"]
+
+    # After Docker Desktop restarts, or the server reboots. unless-stopped, so
+    # a container stopped on purpose stays stopped.
+    for name in ("proxy", "app", "db"):
+        assert services[name].get("restart") == "unless-stopped", name
+    # The throwaway test database is not part of the running stack.
+    assert "restart" not in services["db-test"]
+    # And the server's overlay does not take it away.
+    for name, service in compose_aws()["services"].items():
+        assert "restart" not in service or service["restart"] == "unless-stopped", name
+
+
 def test_nginx_starts_after_the_app_is_healthy_and_restarts_with_it():
     dependency = compose()["services"]["proxy"]["depends_on"]["app"]
 

@@ -33,6 +33,12 @@ services:
     # as psells. nginx/nginx.conf is written for this: port 8080, and its
     # process id and temporary files in /tmp.
     user: "101:101"
+    # Started again whenever Docker starts: after Docker Desktop restarts on
+    # the Mac, or the server reboots. Without it, PSells stayed down after a
+    # Docker restart until someone started it by hand. unless-stopped rather
+    # than always, so a container stopped on purpose stays stopped. The same
+    # for the app and the database below.
+    restart: unless-stopped
     ports:
       # 127.0.0.1 only. Without this prefix anyone on the same network could
       # reach the login page and start guessing; the login is a password only.
@@ -79,6 +85,7 @@ services:
 
   app:
     build: .
+    restart: unless-stopped
     # No ports. Only nginx reaches the app, over this stack's network, so every
     # request passes through nginx/nginx.conf first.
     environment:
@@ -118,6 +125,7 @@ services:
     # An exact version and the digest of its contents, so every machine runs
     # the same bytes. Dependabot proposes updates; db-test and CI must match.
     image: postgres:18.6@sha256:86c951e05bf56c93d95d397747fb8820ac76cc3bedb78f43abd83eedbe3666ae
+    restart: unless-stopped
     environment:
       POSTGRES_USER: "${POSTGRES_USER:?set POSTGRES_USER in .env}"
       POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}"
