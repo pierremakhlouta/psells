@@ -25,3 +25,14 @@ data/
 # committed template.
 
 .env
+
+# Terraform's working files. State holds every value of every resource in plain
+# text, and the bootstrap's state stays on the machine that made the bucket;
+# infra/aws/'s own state lives in S3. The lock file, which pins the providers'
+# exact builds, is committed.
+
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+*.tfplan
