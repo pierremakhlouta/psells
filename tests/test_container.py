@@ -851,6 +851,20 @@ def test_nginx_is_checked_and_scanned_in_ci_with_the_image_the_stack_runs(name):
     assert PINNED_IMAGE.match(stack), stack
 
 
+def test_every_commit_is_scanned_for_secrets_with_a_pinned_scanner():
+    job = workflow(os.path.join(PROJECT_DIR, ".github", "workflows",
+                                "security.yml"))["jobs"]["secrets"]
+    checkout = job["steps"][0]
+    scan = job["steps"][1]["run"]
+
+    assert PINNED_IMAGE.match(job["env"]["GITLEAKS_IMAGE"])
+    # The whole history, not the one commit a checkout fetches by default.
+    assert checkout["with"]["fetch-depth"] == 0
+    assert "--log-opts=--all" in scan
+    assert "--redact" in scan
+    assert ":/repo:ro" in scan
+
+
 def test_dependabot_watches_every_kind_of_pin():
     with open(os.path.join(PROJECT_DIR, ".github", "dependabot.yml")) as config:
         ecosystems = {update["package-ecosystem"]
