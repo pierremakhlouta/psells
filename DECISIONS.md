@@ -420,8 +420,10 @@ calls only, not every detail, and no specific business figures.
   into a throwaway database and its products counted against the live database
   before any older copy is deleted. The schedule moved from cron to macOS's own
   scheduler, which runs a missed job when the machine wakes; cron skipped every
-  morning the laptop slept through. Every copy is still on the same disk as the
-  database, which is the largest risk left, and waits for the cloud phases.
+  morning the laptop slept through. Every copy of the real database is still on
+  the same disk as the database, which is the largest risk left. The cloud
+  phases did not solve it, because the real records do not go to the cloud;
+  the copy off the machine needs a free home that outlasts them.
 
 - **Warnings fail the tests.** A deprecation printed in a summary is read once
   and then ignored until the thing it warns about is removed. As an error it
@@ -481,7 +483,10 @@ calls only, not every detail, and no specific business figures.
   HTTP. The cross-site check only ever guarded writes; answering any name left
   pages readable by a hostile site that points its own name at this machine,
   which is called DNS rebinding. The redirect names its target in full rather
-  than echoing the host it was sent, so it can only ever lead to PSells.
+  than echoing the host it was sent, so it can only ever lead to PSells. Each
+  place PSells runs answers its own one name: the name, its certificate and
+  the redirect live in a small folder per place, and the proxy's configuration
+  includes whichever is mounted, so every other rule is written once for all.
 
 - **TLS 1.3 only, and HTTPS remembered for a year.** Every client is a current
   browser or command-line tool on this machine, so older protocol versions
@@ -615,3 +620,69 @@ calls only, not every detail, and no specific business figures.
   block and every page lost its styling. A change that touches the style block
   is released by rebuilding the application with it; a change to the proxy
   alone is applied with a reload.
+
+- **The cloud phases cost nothing, ever.** PSells is for learning and for job
+  applications; the cloud does not help run the business. AWS no longer gives
+  new accounts a year of free use but a free plan that cannot be charged and
+  closes after six months, or when its credits run out. The account stays on
+  that plan and is never upgraded, so no bill is possible, and the cloud
+  phases are done inside those six months. What lasts is the repository and
+  the code that rebuilds the server, not a permanent public address.
+
+- **The cloud holds invented records only.** The server runs the sample data
+  and the placeholder partner percentage. The real records stay on the Mac,
+  where the business is run, and a script that finds the real configuration
+  refuses to deploy or back up. Putting the real business on a public server
+  would have meant real figures behind a password-only login on the internet,
+  for no benefit to the business.
+
+- **No long-lived keys, and no SSH.** The daily AWS login is a user with its
+  own passkey, and the command line signs in through the browser for hours at
+  most, rather than holding an access key that works until someone deletes it.
+  AWS's usual answer for people, Identity Center, needs an organisation, and
+  joining one upgrades the account to paid. The server has no SSH port and no
+  key pair: a shell on it comes through AWS's Session Manager, over the same
+  short-lived login, and the firewall admits 80 and 443 only.
+
+- **The person has broad rights; the server has narrow ones.** The one person
+  using the account is an administrator, protected by a passkey and short
+  sessions, because limits there would mostly slow the learning. Least
+  privilege goes where a program acts alone: the server's role may read the
+  database's parameters and the backup bucket's name, add backups, and nothing
+  else. It cannot read, list or delete a backup, so a compromised server can
+  neither read old copies nor erase them. Each permission was checked by
+  asking for something just outside it and being refused.
+
+- **Secrets live in Parameter Store and are written out at deploy.** The
+  database password is generated inside AWS as an encrypted parameter, free on
+  the standard tier, and the deploy script writes it into a root-only settings
+  file. Secrets Manager's rotation was more than a demonstration database
+  needs.
+
+- **The server is laid over the Mac's stack, not written again.** One extra
+  Compose file names only what differs on the server: the ports on every
+  address, the server's name and certificate, and certbot. Everything else,
+  every header, limit and rule, is the same file the Mac runs. A second full
+  configuration would have let the two drift, one security header at a time.
+
+- **certbot runs as nginx's own user.** A certificate's private key has to be
+  readable by nginx, which is not root. certbot usually runs as root and
+  writes a key only root can read; running it as nginx's user instead leaves a
+  key readable by its owner only, and its owner is the one process that reads
+  it, with no permissions to widen after each renewal. nginx's module that
+  fetches certificates itself was not used, because it is in the full image,
+  whose extra libraries failed a scan in Phase 05.
+
+- **The deploy builds on the server, by hand, this once.** The server checks
+  out a commit and builds it there, as the Mac does. A registry and deploys
+  that happen on every push are the next phase but one, and doing them now
+  would have taken that phase's lesson.
+
+- **Passwords are at least fifteen characters, since the login went public.**
+  Fifteen is what NIST asks of a password that is the only factor. The first
+  version allowed ten while the login was reachable from one machine only.
+
+- **Every commit is scanned for secrets on every push.** The history was
+  scanned once before the phase ended, and the same scanner now runs in CI
+  over every commit on every branch, because a secret removed in a later
+  commit is still in the history anyone can clone.

@@ -23,6 +23,8 @@ payouts made to that partner, and computes a live dashboard from all four.
 - Runs as three containers, nginx in front of the application and a PostgreSQL
   database beside it, with one command
 - Backs itself up daily, on a schedule, and proves each copy restores
+- Runs a public demonstration on AWS, with invented records only, at
+  `https://psells.lakeshorefreight.me`
 
 Every figure that can be derived is computed on demand rather than stored, so no
 total can drift out of sync with the records it came from. See
@@ -281,6 +283,12 @@ add-on modules, as its own unprivileged user, never root,
 with its whole configuration in `nginx/nginx.conf`, mounted read-only, and the
 certificate and key mounted read-only from `data/tls/`.
 
+What differs from one place PSells runs to another is not in `nginx.conf`: the
+name it answers to, its certificate, and what plain HTTP does live in a folder
+per place under `nginx/sites/`, `localhost` on the Mac and `aws` on the server,
+and `nginx.conf` includes the two files of whichever folder is mounted. Every
+header, limit and rule is in `nginx.conf` once, the same everywhere.
+
 HTTPS ends at nginx, TLS 1.3 only. It answers for `psells.localhost` and no
 other name: an HTTPS handshake for another name is refused, a request that
 names another host only in its `Host` header gets 421, and plain HTTP for any
@@ -370,6 +378,9 @@ replaces the old certificate only once the new one verifies.
 `.localhost` names always mean this machine, and Safari, Chrome and curl find
 `psells.localhost` without any change to `/etc/hosts`.
 
+The AWS server has a certificate from Let's Encrypt instead, which every
+browser trusts; see "The demonstration on AWS" below.
+
 ## Backups
 
 `backup.sh` takes a `pg_dump` of the database in the Compose stack into
@@ -410,8 +421,61 @@ To restore a dump into the stack's database, which must be empty:
     docker compose exec -T db sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --no-owner --exit-on-error' \
         < ~/PSells-Backups/daily/psells-<date>.dump
 
-Every copy is on the same disk as the database. Copies off the machine come with
-the cloud phases.
+Every copy of the real database is on the same disk as it. The demonstration
+server's backups go to S3, described below, but they hold invented records
+only: the real data never leaves the Mac.
+
+## The demonstration on AWS
+
+A copy of PSells runs at `https://psells.lakeshorefreight.me`, on one small
+EC2 server in AWS's Montreal region, holding the invented records from
+`sample_data/seed.sql` and the placeholder partner percentage, never the real
+ones. It exists to show the system running in the cloud, and it costs nothing:
+the account is on AWS's free plan, which cannot be charged, and the server
+lives inside that plan's six months.
+
+It is the same stack, with `compose.aws.yaml` laid over `compose.yaml`. That
+file holds everything that differs on the server: ports 443 and 80 published on
+every address rather than `127.0.0.1`, the `aws` site folder for nginx, a
+Let's Encrypt certificate in place of the Mac's own CA, the folder Let's
+Encrypt's challenge is answered from, and a `certbot` service run only when
+asked for. The Mac never reads it.
+
+How it is put together:
+
+- **No SSH.** The server's firewall lets in ports 80 and 443 and nothing else.
+  A shell on it comes through AWS Systems Manager Session Manager, signed in
+  with the same short-lived credentials as the AWS CLI, and nobody holds an
+  SSH key.
+- **No long-lived keys.** The CLI signs in with `aws login`, which gives
+  credentials that last hours, not an access key. The server itself acts
+  through its IAM role, which may read the database parameters and the backup
+  bucket's name, add backups to that bucket, and do nothing else: it cannot
+  read, list or delete what is already there.
+- **Secrets in Parameter Store.** The database password is a `SecureString`
+  under `/psells/postgres`, generated there and never written in the
+  repository. `deploy/aws/deploy.sh` writes `.env` from it on each deploy,
+  readable by root only.
+- **The certificate.** certbot, pinned like every other image, gets it and
+  renews it through the webroot nginx serves on port 80, twice a day from a
+  systemd timer, and nginx reloads afterwards. certbot runs as nginx's own
+  user, so the private key is readable by its owner only and its owner is the
+  one process that reads it.
+- **Backups.** Once a day `deploy/aws/backup-to-s3.sh` dumps the database,
+  proves the dump restores, as `backup.sh` does, and only then copies it to a
+  private, encrypted S3 bucket that deletes each copy after thirty days.
+
+A deploy, as root on the server through Session Manager, checks out a commit
+and runs the script, which builds the stack there, loads the sample records
+into an empty database, and installs both timers:
+
+    git -C /opt/psells fetch --quiet origin
+    git -C /opt/psells checkout --quiet --detach <commit>
+    /opt/psells/deploy/aws/deploy.sh
+
+`deploy.sh` and `backup-to-s3.sh` refuse to run where `data/config.json`
+exists, which is only ever the Mac, so neither can overwrite the real `.env` or
+send the real records anywhere.
 
 ## Running the tests
 
@@ -433,7 +497,7 @@ database it is pointed at, so it refuses any whose name does not end in
 Every warning is an error (`pytest.ini`), apart from one known deprecation in
 Starlette's test client on Python 3.14, matched on its exact message.
 
-Fourteen files, and the split is deliberate, so a red run says what kind of
+Fifteen files, and the split is deliberate, so a red run says what kind of
 thing broke before you read a line of it.
 
 `test_domain.py` covers everything in `psells.py` that has no input or output:
@@ -497,8 +561,17 @@ runs the script daily at 09:00, and carries no personal paths.
 certificates for other names and for IP addresses, each of which must be
 refused.
 
+`test_deploy.py` runs copies of `deploy/aws/deploy.sh` and
+`backup-to-s3.sh` in a temporary folder with stand-in `docker` and `aws`
+commands, and fails if either would do anything where `data/config.json`
+exists, or `deploy.sh` anywhere but the server's folder. It also checks the
+server gets the sample configuration only, that a backup is proved before it
+is sent, and that the systemd timers agree with `compose.aws.yaml` and with
+the script that installs them.
+
 `test_container.py` reads the `Dockerfile`, `.dockerignore`, `compose.yaml`,
-`nginx/nginx.conf` and the workflows, and fails if the image could ever be
+`compose.aws.yaml`, `nginx/nginx.conf` with each site's files, and the
+workflows, and fails if the image could ever be
 built from the whole folder or from `data/`, if it leaves out a module the
 server imports, if any port is published beyond this machine, if the
 application or the database publishes a port at all, if a password is written
@@ -508,8 +581,11 @@ headers from anyone but nginx, if nginx would run as root, if a response would
 lack one of its security headers or the policy's style hash no longer matches
 the page, if the login limit stops counting only login attempts, if an action or an
 image is used by a tag rather than pinned to a commit or a digest, or if a
-workflow can write to the repository. The Lint workflow also runs `nginx -t` on
-the configuration with the image the stack uses.
+workflow can write to the repository. On the server's side it fails if
+`compose.aws.yaml` stops replacing the ports, the site or the certificate, or
+if certbot would write anywhere nginx does not read or as another user. The
+Lint workflow also runs `nginx -t` on the configuration, with each site, with
+the image the stack uses.
 
 No test needs a data file. The suite builds its tables from `schema.sql` at the
 start of every run, so a constraint added there is exercised automatically, and
@@ -519,7 +595,9 @@ the test database is a service container of the same image, on the same
 port. Everything runs on every push through GitHub Actions, alongside a
 dependency vulnerability audit, a shellcheck pass and an `nginx -t` check, and
 a scan with Grype of the built image and of the nginx image, which fails on a
-high or critical vulnerability that has a fix and lists the rest.
+high or critical vulnerability that has a fix and lists the rest, and a scan of
+every commit in the history with gitleaks, which fails on anything that looks
+like a credential.
 
 Everything is pinned: Python packages to exact versions, every action in the
 workflows to a commit, and the base images to a version and the digest of
@@ -531,20 +609,26 @@ newer release, which the same workflows then test and scan.
 
 Worth stating plainly rather than leaving to be discovered.
 
-- **The login is a password and nothing else.** One account, a minimum of ten
-  characters, no second factor. Argon2id makes each guess expensive and nginx
-  limits how many arrive; a long passphrase is still the real protection. It
-  stays published on `127.0.0.1` only until it moves to a server.
+- **The login is a password and nothing else.** One account, a minimum of
+  fifteen characters, no second factor. Argon2id makes each guess expensive and
+  nginx limits how many arrive; a long passphrase is still the real
+  protection. On the Mac it is published on `127.0.0.1` only; the
+  demonstration server's login is public, in front of invented records.
 - **Behind Docker Desktop, every browser on the Mac shares one login
   allowance.** nginx sees every connection as coming from Docker's gateway, so
   the five attempts a minute are counted for the machine, not for a browser.
   On a Linux server each visitor's own address is counted.
-- **The certificate is trusted by this machine only.** It comes from a CA of
-  PSells' own, which other machines, and Firefox, do not trust. A publicly
-  trusted certificate needs a public name, which arrives with a server.
-- **nginx reads a key only its owner can read.** Docker Desktop on macOS allows
-  that; on Linux, nginx's own user would be refused, and the key's permissions
-  will need deciding on a Linux server.
+- **The Mac's certificate is trusted by the Mac only.** It comes from a CA of
+  PSells' own, which other machines, and Firefox, do not trust. The
+  demonstration server's certificate, from Let's Encrypt, is trusted everywhere.
+- **On the server, nginx's user number is also a system account's.** The
+  private key belongs to user 101, nginx's user inside its container, and on
+  the Ubuntu host number 101 is the `uuidd` service's account, which could
+  therefore read it. Worth closing with user-namespace remapping if the server
+  ever held anything real.
+- **The demonstration is temporary.** AWS's free plan ends six months after the
+  account was opened, in March 2027, and the server with it. The repository,
+  and the code that will rebuild the server, are what last.
 - **Behind Docker Desktop, the application never sees a client's address.**
   Every request reaches nginx from the Compose network's gateway, so that is the
   address logged and forwarded. Harmless while everything is on one machine.
@@ -581,6 +665,8 @@ enforces the business rules, runs as containers under Compose, is used through
 server-rendered web pages, a terminal application and an HTTP API that all call
 the same functions, is served over HTTPS behind nginx, asks for a login before
 anything else, is covered by an automated test suite that runs on every push
-against a real PostgreSQL, and is backed up on a schedule. Planned next is
-cloud deployment with a publicly trusted certificate, carrying the same data
-model and business rules through each step.
+against a real PostgreSQL, and is backed up on a schedule. A copy with
+invented records runs on AWS behind a publicly trusted certificate. Planned
+next is describing that server as code with Terraform, so it can be rebuilt
+from the repository, carrying the same data model and business rules through
+each step.
