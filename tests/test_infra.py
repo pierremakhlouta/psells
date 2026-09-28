@@ -95,3 +95,81 @@ def test_the_state_bucket_cannot_be_destroyed_by_accident_and_keeps_versions():
                     "block_public_policy", "restrict_public_buckets"):
         assert re.search(rf"^\s*{setting}\s*= true$", text, re.M), setting
     assert '"aws:SecureTransport" = "false"' in text
+
+
+# The server's configuration ---------------------------------------------------
+
+MAIN = os.path.join(INFRA_DIR)
+
+
+def main_text():
+    """Every .tf file of infra/aws/ itself, joined."""
+    return "".join(read(path) for path in
+                   sorted(glob.glob(os.path.join(MAIN, "*.tf"))))
+
+
+def without_comments(text):
+    return "\n".join(line.split("#", 1)[0] for line in text.splitlines())
+
+
+def test_the_state_is_kept_in_s3_encrypted_and_locked():
+    text = main_text()
+
+    assert re.search(r'^\s*backend "s3" \{', text, re.M)
+    assert re.search(r'^\s*bucket\s*= "psells-terraform-state-[0-9a-f]+"$', text, re.M)
+    assert re.search(r"^\s*encrypt\s*= true$", text, re.M)
+    assert re.search(r"^\s*use_lockfile\s*= true$", text, re.M)
+
+
+def test_no_secret_and_no_personal_value_is_in_the_configuration():
+    code = without_comments(main_text())
+
+    # The database password is made by hand; managing it here would copy its
+    # value into the state in plain text.
+    assert "/psells/postgres/password" not in code
+    assert "SecureString" not in code
+    # The alert address comes from terraform.tfvars, which git ignores.
+    assert "@" not in code
+    assert ignored("infra/aws/terraform.tfvars")
+    # No import block, and no account number or resource id written in.
+    assert not re.search(r"^\s*import \{", code, re.M)
+    assert not re.search(r"\b\d{12}\b", code)
+    assert not re.search(r"\b(i|sg|sgr|eipalloc|eipassoc|vol)-[0-9a-f]{8,}\b", code)
+
+
+def test_the_firewall_lets_in_http_and_https_and_nothing_else():
+    code = without_comments(main_text())
+    ingress = re.findall(
+        r'resource "aws_vpc_security_group_ingress_rule" "\w+" \{(.*?)\n\}',
+        code, re.S)
+    ports = sorted((re.search(r"from_port\s*= (\d+)", rule).group(1),
+                    re.search(r"to_port\s*= (\d+)", rule).group(1))
+                   for rule in ingress)
+
+    assert ports == [("443", "443"), ("80", "80")]
+    # Inline rules on the group itself would slip past the check above.
+    assert not re.search(r"^\s*ingress \{", code, re.M)
+
+
+def test_the_server_has_no_key_imdsv2_only_and_cannot_burst_into_a_bill():
+    server = re.search(r'resource "aws_instance" "server" \{(.*?)\n\}',
+                       without_comments(main_text()), re.S).group(1)
+
+    assert "key_name" not in server
+    assert re.search(r'http_tokens\s*= "required"', server)
+    assert re.search(r"http_put_response_hop_limit = 1\b", server)
+    assert re.search(r'cpu_credits = "standard"', server)
+    assert re.search(r"encrypted\s*= true", server)
+
+
+def test_the_server_role_may_only_read_two_paths_and_add_backups():
+    code = without_comments(main_text())
+    actions = sorted(re.findall(r'Action\s*= "([^"]+)"', code))
+
+    # The backup bucket's Deny s3:* over plain HTTP, and the role's trust, are
+    # the only other actions named.
+    assert actions == ["s3:*", "s3:PutObject", "ssm:GetParametersByPath",
+                       "sts:AssumeRole"]
+    assert '"${aws_s3_bucket.backups.arn}/daily/*"' in code
+    assert re.search(r"parameter/psells/postgres\",", code)
+    assert re.search(r"parameter/psells/backup\",", code)

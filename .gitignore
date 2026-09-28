@@ -36,3 +36,7 @@ data/
 *.tfstate.*
 crash.log
 *.tfplan
+
+# Values that are personal, such as the address the budget's alerts go to.
+
+*.tfvars
