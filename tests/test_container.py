@@ -933,6 +933,73 @@ def test_what_is_published_is_what_was_scanned():
     assert '"$IMAGE:${{ github.sha }}"' in publish
 
 
+def deploy_workflow():
+    return workflow(os.path.join(PROJECT_DIR, ".github", "workflows", "deploy.yml"))
+
+
+def test_a_deploy_waits_for_every_check_on_main():
+    document = deploy_workflow()
+    # PyYAML reads the key "on" as True.
+    triggers = document[True]
+    gate = document["jobs"]["gate"]["steps"][0]["run"]
+    checks = {os.path.basename(path): workflow(path)["name"] for path in WORKFLOWS
+              if not path.endswith("deploy.yml")}
+
+    # Started by every other workflow, on main only, and by hand.
+    assert sorted(triggers["workflow_run"]["workflows"]) == sorted(checks.values())
+    assert triggers["workflow_run"]["branches"] == ["main"]
+    assert triggers["workflow_run"]["types"] == ["completed"]
+    assert list(triggers["workflow_dispatch"]["inputs"]) == ["commit"]
+    # The gate asks about every one of them, for pushes to main, and only
+    # a full commit hash gets past it.
+    assert sorted(re.search(r"for workflow in ([^;]+);", gate).group(1).split()) \
+        == sorted(checks)
+    assert "branch=main&event=push" in gate
+    assert '[[ "$commit" =~ ^[0-9a-f]{40}$ ]]' in gate
+    # One deploy at a time, and a running one is never cancelled halfway.
+    assert document["concurrency"] == {"group": "deploy",
+                                       "cancel-in-progress": False}
+
+
+def test_the_deploy_holds_no_key_and_runs_no_third_party_code():
+    document = deploy_workflow()
+    jobs = document["jobs"]
+    with open(os.path.join(PROJECT_DIR, ".github", "workflows",
+                           "deploy.yml")) as source:
+        text = source.read()
+
+    assert jobs["gate"]["permissions"] == {"actions": "read"}
+    assert jobs["deploy"]["permissions"] == {"id-token": "write"}
+    assert jobs["deploy"]["needs"] == "gate"
+    assert jobs["deploy"]["if"] == "needs.gate.outputs.go == 'yes'"
+    # No action at all: the AWS CLI and curl on the runner do everything.
+    assert not [step for job in jobs.values() for step in job["steps"]
+                if "uses" in step]
+    # No stored AWS key; the role comes from a repository variable.
+    assert "secrets.AWS" not in text
+    assert jobs["deploy"]["env"]["ROLE"] == "${{ vars.AWS_DEPLOY_ROLE_ARN }}"
+    assert "--document-name psells-deploy" in text
+    assert "AWS-RunShellScript" not in text
+
+
+def test_nothing_from_the_event_is_written_into_a_script():
+    for job in deploy_workflow()["jobs"].values():
+        for step in job["steps"]:
+            # Event values and inputs reach a script only through env.
+            assert "github.event" not in step.get("run", "")
+            assert "inputs." not in step.get("run", "")
+
+
+def test_a_deploy_is_checked_from_outside_and_against_its_digest():
+    steps = "\n".join(step.get("run", "") for step in
+                      deploy_workflow()["jobs"]["deploy"]["steps"])
+
+    assert 'grep -qx "running $IMAGE@$DIGEST" result.txt' in steps
+    assert '"$SITE/login"' in steps
+    # A visitor's view: an untrusted certificate fails the check.
+    assert " -k" not in steps and "--insecure" not in steps
+
+
 def test_dependabot_watches_every_kind_of_pin():
     with open(os.path.join(PROJECT_DIR, ".github", "dependabot.yml")) as config:
         ecosystems = {update["package-ecosystem"]

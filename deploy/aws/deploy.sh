@@ -168,3 +168,6 @@ systemctl enable --now psells-certbot-renew.timer psells-backup.timer
 systemctl list-timers psells-certbot-renew.timer psells-backup.timer --no-pager
 
 echo "== deployed $(git log --oneline -1)"
+# What the application's container is really running, which the Deploy
+# workflow compares with the digest it sent.
+echo "running $(docker inspect -f '{{.Config.Image}}' "$(compose ps -q app)")"

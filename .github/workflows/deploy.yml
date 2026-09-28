@@ -1,0 +1,173 @@
+name: Deploy
+
+# Puts a commit on main live on the AWS demonstration server, with the image
+# CI published for it, once every check has passed for that exact commit.
+#
+# It starts each time one of the four workflows finishes on main, and the
+# gate lets it through only when all four have passed; the last to finish is
+# the one that deploys. Run by hand with a commit, it deploys that commit the
+# same way, which is how a bad deploy is rolled back.
+#
+# No AWS key is stored. The deploy job asks GitHub for a token naming this
+# repository and branch, and AWS trades it for an hour-long role that can run
+# one SSM document, psells-deploy, on the PSells server and read how it went.
+# The role's ARN is a repository variable, AWS_DEPLOY_ROLE_ARN, so the
+# account number stays out of the code.
+
+on:
+  workflow_run:
+    workflows: [Tests, Lint, Security, Image]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: "The full hash of a commit on main to deploy (to roll back, an earlier one)"
+        required: true
+        type: string
+
+# One deploy at a time. A newer one waits for the running one to finish and
+# replaces any that was waiting, so the last commit wins.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/pierremakhlouta/psells
+  SITE: https://psells.lakeshorefreight.me
+
+jobs:
+  gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    # Reading other workflows' results is all this job does.
+    permissions:
+      actions: read
+
+    outputs:
+      commit: ${{ steps.check.outputs.commit }}
+      digest: ${{ steps.check.outputs.digest }}
+      go: ${{ steps.check.outputs.go }}
+
+    steps:
+      # Values from the event reach the shell as environment variables, never
+      # written into the script, so nothing in them can become a command.
+      - name: Check all four workflows passed for the commit
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_EVENT: ${{ github.event.workflow_run.event }}
+          ASKED: ${{ inputs.commit }}
+        run: |
+          set -euo pipefail
+          # A push to main deploys; the weekly scheduled scan does not.
+          if [ "$EVENT" = workflow_run ] && [ "$RUN_EVENT" != push ]; then
+            echo "started by a $RUN_EVENT run, not a push; nothing to deploy"
+            echo "go=no" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if [ "$EVENT" = workflow_dispatch ]; then commit="$ASKED"; else commit="$RUN_SHA"; fi
+          [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || { echo "not a full commit hash: $commit"; exit 1; }
+
+          # The latest run of each workflow for this commit, pushed to main.
+          go=yes
+          failed=no
+          for workflow in tests.yml lint.yml security.yml image.yml; do
+            result=$(gh api "repos/$REPO/actions/workflows/$workflow/runs?head_sha=$commit&branch=main&event=push&per_page=1" \
+              --jq '.workflow_runs[0] | "\(.status) \(.conclusion)"')
+            echo "$workflow: $result"
+            [ "$result" = "completed success" ] || go=no
+            case "$result" in "completed success"|"queued "*|"in_progress "*|"waiting "*|"pending "*) ;; *) failed=yes ;; esac
+          done
+
+          if [ "$go" = no ] && [ "$EVENT" = workflow_dispatch ]; then
+            echo "not every check passed for $commit, so it is not deployed"; exit 1
+          fi
+          echo "go=$go" >> "$GITHUB_OUTPUT"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          if [ "$failed" = yes ]; then echo "a check did not pass for $commit; not deploying"; exit 0; fi
+          [ "$go" = yes ] || { echo "waiting for the other checks; not deploying yet"; exit 0; }
+
+          # The digest CI published for the commit, which the server must run.
+          digest=$(docker buildx imagetools inspect "$IMAGE:$commit" --format '{{.Manifest.Digest}}')
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "no image published for $commit"; exit 1; }
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "deploying $commit with $IMAGE@$digest"
+
+  deploy:
+    needs: gate
+    if: needs.gate.outputs.go == 'yes'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    # id-token lets the job ask GitHub for the token AWS checks. It holds no
+    # other permission.
+    permissions:
+      id-token: write
+
+    env:
+      COMMIT: ${{ needs.gate.outputs.commit }}
+      DIGEST: ${{ needs.gate.outputs.digest }}
+      ROLE: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+      AWS_REGION: ca-central-1
+
+    steps:
+      # GitHub's token for this run, with AWS as its audience, traded for the
+      # deploy role's credentials for fifteen minutes. The AWS CLI on the
+      # runner does it; no third-party action handles the credentials.
+      - name: Sign in to AWS as the deploy role
+        run: |
+          set -euo pipefail
+          token=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" | jq -r .value)
+          echo "::add-mask::$token"
+          credentials=$(aws sts assume-role-with-web-identity --role-arn "$ROLE" \
+            --role-session-name "github-${{ github.run_id }}" --duration-seconds 900 \
+            --web-identity-token "$token" --query Credentials --output json)
+          for key in AccessKeyId SecretAccessKey SessionToken; do
+            echo "::add-mask::$(jq -r ".$key" <<< "$credentials")"
+          done
+          {
+            echo "AWS_ACCESS_KEY_ID=$(jq -r .AccessKeyId <<< "$credentials")"
+            echo "AWS_SECRET_ACCESS_KEY=$(jq -r .SecretAccessKey <<< "$credentials")"
+            echo "AWS_SESSION_TOKEN=$(jq -r .SessionToken <<< "$credentials")"
+          } >> "$GITHUB_ENV"
+
+      # The one document the role may send, to the server by its tag, so a
+      # rebuilt server needs no change here.
+      - name: Deploy the commit with its image
+        run: |
+          set -euo pipefail
+          command=$(aws ssm send-command --document-name psells-deploy \
+            --targets Key=tag:Name,Values=psells \
+            --parameters "commit=$COMMIT,digest=$DIGEST" \
+            --comment "Deploy ${COMMIT:0:7} from run ${{ github.run_id }}" \
+            --query Command.CommandId --output text)
+          echo "command $command"
+          sleep 5
+          instance=$(aws ssm list-command-invocations --command-id "$command" \
+            --query 'CommandInvocations[0].InstanceId' --output text)
+          aws ssm wait command-executed --command-id "$command" --instance-id "$instance" || true
+          aws ssm get-command-invocation --command-id "$command" --instance-id "$instance" \
+            --query '[Status, StandardOutputContent, StandardErrorContent]' --output text | tee result.txt
+          [ "$(head -c 7 result.txt)" = Success ] || { echo "the deploy did not succeed"; exit 1; }
+          grep -qx "running $IMAGE@$DIGEST" result.txt ||
+            { echo "the server is not running $IMAGE@$DIGEST"; exit 1; }
+
+      # From outside, as a visitor: the certificate must be trusted (no -k)
+      # and the login page must answer.
+      - name: Check the site from outside
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5 6; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$SITE/login" || true)
+            [ "$code" = 200 ] && { echo "$SITE/login answers 200 over trusted HTTPS"; exit 0; }
+            echo "attempt $attempt: $code"; sleep 10
+          done
+          echo "$SITE/login did not answer 200"; exit 1

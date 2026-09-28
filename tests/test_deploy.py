@@ -270,3 +270,11 @@ def test_deploy_runs_the_published_image_of_the_commit_and_builds_nothing():
     assert "--build" not in text
     assert "compose up -d --wait" in text
 
+
+
+def test_deploy_ends_by_naming_the_image_the_app_runs():
+    # The Deploy workflow looks for this exact line, "running <image>@<digest>".
+    with open(SCRIPT) as script:
+        last = script.read().rstrip().splitlines()[-1]
+
+    assert last == """echo "running $(docker inspect -f '{{.Config.Image}}' "$(compose ps -q app)")\""""
