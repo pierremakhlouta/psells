@@ -5,6 +5,20 @@ data "aws_vpc" "default" {
   default = true
 }
 
+# Every default subnet, one per zone: RDS and the load balancer each need
+# at least two zones.
+data "aws_subnets" "default" {
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.default.id]
+  }
+
+  filter {
+    name   = "default-for-az"
+    values = ["true"]
+  }
+}
+
 data "aws_subnet" "server" {
   vpc_id            = data.aws_vpc.default.id
   availability_zone = "ca-central-1a"

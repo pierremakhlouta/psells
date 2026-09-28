@@ -126,8 +126,13 @@ def test_no_secret_and_no_personal_value_is_in_the_configuration():
     code = without_comments(main_text())
 
     # The database password is made by hand; managing it here would copy its
-    # value into the state in plain text.
-    assert "/psells/postgres/password" not in code
+    # value into the state in plain text. It may be read only ephemerally,
+    # which keeps nothing, for RDS's write-only password.
+    for kind in ("resource", "data"):
+        for _, _, body in blocks(code, kind):
+            assert "/psells/postgres/password" not in body
+    assert [name for _, name, body in blocks(code, "ephemeral")
+            if "/psells/postgres/password" in body] == ["postgres_password"]
     assert "SecureString" not in code
     # The alert address comes from terraform.tfvars, which git ignores. (An @
     # alone is allowed: GitHub's subject uses it between a name and an ID.)
@@ -144,11 +149,21 @@ def test_the_firewall_lets_in_http_and_https_and_nothing_else():
     ingress = re.findall(
         r'resource "aws_vpc_security_group_ingress_rule" "\w+" \{(.*?)\n\}',
         code, re.S)
-    ports = sorted((re.search(r"from_port\s*= (\d+)", rule).group(1),
-                    re.search(r"to_port\s*= (\d+)", rule).group(1))
-                   for rule in ingress)
+    # The server's own security group: what reaches the server at all.
+    server = [rule for rule in ingress
+              if re.search(r"^\s*security_group_id\s*= aws_security_group\.web\.id$",
+                           rule, re.M)]
+    from_anywhere = sorted((re.search(r"from_port\s*= (\d+)", rule).group(1),
+                            re.search(r"to_port\s*= (\d+)", rule).group(1))
+                           for rule in server if '"0.0.0.0/0"' in rule)
+    from_elsewhere = [rule for rule in server if '"0.0.0.0/0"' not in rule]
 
-    assert ports == [("443", "443"), ("80", "80")]
+    assert from_anywhere == [("443", "443"), ("80", "80")]
+    # The one other way in: the load balancer's listener, from the load
+    # balancer's own security group, and only while it exists.
+    assert len(from_elsewhere) == 1
+    assert "referenced_security_group_id = aws_security_group.lb[0].id" in from_elsewhere[0]
+    assert re.search(r"from_port\s*= 8090\b", from_elsewhere[0])
     # Inline rules on the group itself would slip past the check above.
     assert not re.search(r"^\s*ingress \{", code, re.M)
 
@@ -269,3 +284,69 @@ def test_the_deploy_document_takes_only_a_commit_hash_and_a_digest():
     assert "checkout --quiet --detach '{{ commit }}'" in code
     assert "PSELLS_IMAGE_DIGEST='{{ digest }}' /opt/psells/deploy/aws/deploy.sh" in code
 
+
+
+# Managed services, behind a switch -------------------------------------------
+
+SWITCHED = ("database.tf", "loadbalancer.tf")
+
+
+def blocks(text, kind):
+    """Each top-level block of that kind, as (type, name, body)."""
+    return re.findall(rf'^{kind} "(\w+)" "(\w+)" \{{(.*?)\n\}}', text, re.S | re.M)
+
+
+def test_everything_that_costs_money_waits_for_the_switch():
+    variables = read(os.path.join(MAIN, "variables.tf"))
+    assert re.search(r'variable "managed_services" \{[^}]*default\s*= false',
+                     variables, re.S)
+    for name in SWITCHED:
+        code = without_comments(read(os.path.join(MAIN, name)))
+        for kind in ("resource", "ephemeral"):
+            for resource_type, resource_name, body in blocks(code, kind):
+                # The certificate alone is free and kept, so it is validated once.
+                if (resource_type, resource_name) == ("aws_acm_certificate", "lb"):
+                    continue
+                assert re.search(r"^\s*count = var\.managed_services \? 1 : 0$",
+                                 body, re.M), (resource_type, resource_name)
+
+
+def test_rds_is_private_encrypted_and_never_holds_the_password_in_state():
+    database = dict(((t, n), b) for t, n, b in blocks(
+        without_comments(read(os.path.join(MAIN, "database.tf"))), "resource"))
+    db = database[("aws_db_instance", "db")]
+
+    assert re.search(r"publicly_accessible\s*= false", db)
+    assert re.search(r"storage_encrypted = true", db)
+    assert re.search(r'engine_version = "18\.6"', db)
+    # Write-only, from the ephemeral read: never a plain password argument.
+    assert re.search(r"password_wo\s*= ephemeral\.aws_ssm_parameter\.postgres_password\[0\]\.value", db)
+    assert not re.search(r"^\s*password\s*=", db, re.M)
+    # PostgreSQL's port from the server's security group, and nothing else.
+    rule = database[("aws_vpc_security_group_ingress_rule", "db_from_server")]
+    assert "referenced_security_group_id = aws_security_group.web.id" in rule
+    assert "cidr_ipv4" not in rule
+    assert [n for t, n in database if t == "aws_vpc_security_group_ingress_rule"] \
+        == ["db_from_server"]
+
+
+def test_the_load_balancer_is_tls_1_3_and_reaches_only_the_server_listener():
+    lb = dict(((t, n), b) for t, n, b in blocks(
+        without_comments(read(os.path.join(MAIN, "loadbalancer.tf"))), "resource"))
+
+    https = lb[("aws_lb_listener", "https")]
+    assert re.search(r'ssl_policy\s*= "ELBSecurityPolicy-TLS13-1-3-', https)
+    # A name that is not its own is refused at the load balancer.
+    assert 'status_code  = "421"' in https
+    assert "values = [local.lb_name]" in lb[("aws_lb_listener_rule", "psells")]
+    # The server's 8090 opens to the load balancer only, and the load balancer
+    # sends to that port only.
+    into_server = lb[("aws_vpc_security_group_ingress_rule", "server_from_lb")]
+    assert "referenced_security_group_id = aws_security_group.lb[0].id" in into_server
+    assert "from_port                    = 8090" in into_server
+    out = lb[("aws_vpc_security_group_egress_rule", "lb_to_server")]
+    assert "referenced_security_group_id = aws_security_group.web.id" in out
+    assert "from_port                    = 8090" in out
+    assert lb[("aws_lb", "lb")].count("drop_invalid_header_fields = true") == 1
+    # The health check asks nginx's own path on the listener.
+    assert 'path    = "/lb-health"' in lb[("aws_lb_target_group", "server")]
