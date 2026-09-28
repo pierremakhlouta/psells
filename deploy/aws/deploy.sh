@@ -11,13 +11,18 @@
 #     git -C /opt/psells checkout --quiet --detach <commit>
 #     /opt/psells/deploy/aws/deploy.sh
 #
-# Writes .env from Parameter Store, gets a certificate from Let's Encrypt if
-# the server has none yet, builds and starts the stack with compose.aws.yaml
+# Finds the image CI published for the checked-out commit, writes .env from
+# Parameter Store with that image's digest, gets a certificate from Let's
+# Encrypt if the server has none yet, starts the stack with compose.aws.yaml
 # laid over compose.yaml, loads sample_data/seed.sql into a database that has
 # no products yet, and installs the timers that renew the certificate and back
 # the database up to S3. Safe to run again: .env is rewritten, an existing
 # certificate is kept, the stack is brought up to date, and a database with
 # records in it is left alone.
+#
+# PSELLS_IMAGE_DIGEST, when set, must be the digest CI published for the
+# checked-out commit, or nothing is deployed: the Deploy workflow sends both,
+# and a commit is never run with another commit's image.
 #
 # A new server runs it from first-boot.sh. PSELLS_ACME_STAGING=1 asks Let's
 # Encrypt's staging service for the certificate instead, which no browser
@@ -54,6 +59,21 @@ compose() {
     docker compose -f compose.yaml -f compose.aws.yaml "$@"
 }
 
+echo "== image"
+# CI publishes every commit on main under its own tag, for amd64 and arm64.
+# The tag is resolved once to the digest of what was scanned, and the stack
+# runs that digest, which cannot change afterwards.
+REGISTRY_IMAGE=ghcr.io/pierremakhlouta/psells
+commit=$(git rev-parse HEAD)
+published=$(docker buildx imagetools inspect "$REGISTRY_IMAGE:$commit" --format '{{.Manifest.Digest}}') ||
+    fail "no image is published for $commit; CI publishes one after a push to main passes"
+[[ "$published" =~ ^sha256:[0-9a-f]{64}$ ]] || fail "unexpected digest for $commit: $published"
+if [ -n "${PSELLS_IMAGE_DIGEST:-}" ] && [ "$PSELLS_IMAGE_DIGEST" != "$published" ]; then
+    fail "asked to deploy $PSELLS_IMAGE_DIGEST, but $commit's image is $published"
+fi
+image="$REGISTRY_IMAGE@$published"
+echo "$image"
+
 echo "== .env from Parameter Store ($PARAMETERS)"
 # name<TAB>value, one per line. The password never reaches the terminal.
 values=$(aws ssm get-parameters-by-path --region "$REGION" --path "$PARAMETERS" \
@@ -84,6 +104,7 @@ POSTGRES_USER=$user
 POSTGRES_PASSWORD=$password
 POSTGRES_DB=$database
 PSELLS_CONFIG_FILE=./sample_data/config.json
+PSELLS_IMAGE=$image
 EOF
 mv .env.new .env
 umask 022
@@ -113,7 +134,8 @@ else
 fi
 
 echo "== stack"
-compose up -d --build --wait
+# Pulls the image if the server does not have it yet; builds nothing.
+compose up -d --wait
 
 if [ "$new_certificate" = yes ]; then
     # Now nginx holds port 80, renewals must come through its webroot. This

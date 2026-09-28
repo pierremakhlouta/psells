@@ -102,11 +102,13 @@ def test_the_server_gets_the_sample_configuration_only():
 
 
 class ComposeLoader(yaml.SafeLoader):
-    """A safe loader that also reads Compose's !override tag, as a list."""
+    """A safe loader that also reads Compose's !override tag, as a list, and
+    !reset, as None."""
 
 
 ComposeLoader.add_constructor(
     "!override", lambda loader, node: loader.construct_sequence(node))
+ComposeLoader.add_constructor("!reset", lambda loader, node: None)
 
 
 def unit(path):
@@ -229,7 +231,7 @@ def test_a_certificate_is_fetched_only_when_missing_and_before_the_stack():
     assert re.search(r'if \[ -e "data/letsencrypt/live/\$NAME/fullchain.pem" \]',
                      text)
     # Before nginx holds port 80, then renewals switched to nginx's webroot.
-    assert fetch < text.index("compose up -d --build --wait") \
+    assert fetch < text.index("compose up -d --wait") \
         < text.index("reconfigure")
     # Through the pinned certbot service, as nginx's user, into its folders.
     assert "compose run --rm -p 80:80 certbot certonly" in text
@@ -251,3 +253,20 @@ def test_first_boot_prepares_the_host_then_deploys_the_public_repository():
                  "snap install aws-cli", "git clone"):
         assert text.index(step) < text.index('"$PROJECT_DIR/deploy/aws/deploy.sh"'), step
     assert text.rstrip().endswith('"$PROJECT_DIR/deploy/aws/deploy.sh"')
+
+
+def test_deploy_runs_the_published_image_of_the_commit_and_builds_nothing():
+    with open(SCRIPT) as script:
+        text = script.read()
+
+    # The digest of the commit's own published image, resolved first.
+    assert 'published=$(docker buildx imagetools inspect "$REGISTRY_IMAGE:$commit"' in text
+    assert "REGISTRY_IMAGE=ghcr.io/pierremakhlouta/psells" in text
+    assert text.index("== image") < text.index("cat > .env.new")
+    # A digest it is sent must be that one, or nothing is deployed.
+    assert '[ "$PSELLS_IMAGE_DIGEST" != "$published" ]; then' in text
+    assert "PSELLS_IMAGE=$image\n" in text
+    # Pulled, never built, on the server.
+    assert "--build" not in text
+    assert "compose up -d --wait" in text
+

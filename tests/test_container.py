@@ -154,15 +154,20 @@ def compose():
 
 
 class ComposeLoader(yaml.SafeLoader):
-    """A safe loader that also reads Compose's !override tag."""
+    """A safe loader that also reads Compose's !override and !reset tags."""
 
 
 ComposeLoader.add_constructor(
     "!override", lambda loader, node: Override(loader.construct_sequence(node)))
+ComposeLoader.add_constructor("!reset", lambda loader, node: RESET)
 
 
 class Override(list):
     """A list compose.aws.yaml marks !override: it replaces, not extends."""
+
+
+# What compose.aws.yaml marks !reset: removed from the merged service.
+RESET = object()
 
 
 def compose_aws():
@@ -698,6 +703,16 @@ def test_the_server_swaps_the_site_and_certificate_and_adds_the_webroot():
     assert server["/etc/nginx/site"] == "./nginx/sites/aws:/etc/nginx/site:ro"
     assert server["/etc/nginx/tls"] == "./data/letsencrypt:/etc/nginx/tls:ro"
     assert server["/var/www/acme"] == "./data/acme:/var/www/acme:ro"
+
+
+def test_the_server_runs_the_published_image_by_digest_and_builds_nothing():
+    app = compose_aws()["services"]["app"]
+
+    assert app["build"] is RESET
+    # Required, never defaulted: deploy.sh writes the digest it resolved.
+    assert app["image"].startswith("${PSELLS_IMAGE:?")
+    # The Mac still builds its own.
+    assert compose()["services"]["app"]["build"] == "."
 
 
 def test_certbot_writes_where_nginx_reads_as_nginx_own_user():

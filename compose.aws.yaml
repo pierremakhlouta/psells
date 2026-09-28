@@ -4,12 +4,20 @@
 #
 # The Mac never reads this file. Compose merges it into compose.yaml: a
 # volume here replaces the one in compose.yaml with the same path inside the
-# container, a new one is added, and !override replaces a list outright where
-# Compose would otherwise add the two lists together.
+# container, a new one is added, !override replaces a list outright where
+# Compose would otherwise add the two lists together, and !reset removes a
+# setting altogether.
 #
 # The server holds the invented sample data only, never the real records.
 
 services:
+  app:
+    # The image CI built, scanned and published to GHCR, by digest, so the
+    # server runs exactly what was scanned and builds nothing. deploy.sh
+    # resolves the digest for the commit it deploys and writes it into .env.
+    image: "${PSELLS_IMAGE:?set PSELLS_IMAGE in .env; deploy/aws/deploy.sh writes it}"
+    build: !reset null
+
   proxy:
     # On every address, because this server is public: its security group
     # lets in 80 and 443 and nothing else. compose.yaml publishes on
