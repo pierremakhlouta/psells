@@ -1,0 +1,14 @@
+# Once a day, at a random moment within half an hour of 08:00 UTC, early
+# morning in Toronto. Persistent runs a backup the server was off for as soon
+# as it starts again.
+
+[Unit]
+Description=Back up the PSells demo database to S3 once a day
+
+[Timer]
+OnCalendar=*-*-* 08:00:00
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

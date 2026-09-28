@@ -13,8 +13,8 @@
 #
 # Writes .env from Parameter Store, builds and starts the stack with
 # compose.aws.yaml laid over compose.yaml, loads sample_data/seed.sql into a
-# database that has no products yet, and installs the timer that renews the
-# certificate. Safe to run again: .env is rewritten, the stack is brought up
+# database that has no products yet, and installs the timers that renew the
+# certificate and back the database up to S3. Safe to run again: .env is rewritten, the stack is brought up
 # to date, and a database with records in it is left alone.
 #
 # The server never sees the real records or the real partner percentage:
@@ -100,11 +100,12 @@ else
     echo "the database has $products products; left as it is"
 fi
 
-echo "== certificate renewal"
+echo "== timers: certificate renewal and the daily backup to S3"
 install -m 644 deploy/aws/psells-certbot-renew.service deploy/aws/psells-certbot-renew.timer \
+    deploy/aws/psells-backup.service deploy/aws/psells-backup.timer \
     /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable --now psells-certbot-renew.timer
-systemctl list-timers psells-certbot-renew.timer --no-pager
+systemctl enable --now psells-certbot-renew.timer psells-backup.timer
+systemctl list-timers psells-certbot-renew.timer psells-backup.timer --no-pager
 
 echo "== deployed $(git log --oneline -1)"

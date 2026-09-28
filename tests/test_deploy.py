@@ -2,7 +2,8 @@
 
 deploy.sh rewrites .env, so what matters most is where it refuses to run: on
 the Mac, where .env holds the real database's password, and anywhere but the
-server's /opt/psells. Those refusals are tested by running a copy of the
+server's /opt/psells. backup-to-s3.sh must refuse on the Mac too, or the real
+records could be copied to S3. Those refusals are tested by running a copy of the
 script in a temporary folder, never the real one, with stand-in docker and aws
 commands that record being called, so a refusal is shown to happen before
 anything is touched.
@@ -25,8 +26,11 @@ import psells
 
 DEPLOY_DIR = os.path.join(psells.PROJECT_DIR, "deploy", "aws")
 SCRIPT = os.path.join(DEPLOY_DIR, "deploy.sh")
+BACKUP = os.path.join(DEPLOY_DIR, "backup-to-s3.sh")
 SERVICE = os.path.join(DEPLOY_DIR, "psells-certbot-renew.service")
 TIMER = os.path.join(DEPLOY_DIR, "psells-certbot-renew.timer")
+BACKUP_SERVICE = os.path.join(DEPLOY_DIR, "psells-backup.service")
+BACKUP_TIMER = os.path.join(DEPLOY_DIR, "psells-backup.timer")
 
 ORIGINAL_ENV = "POSTGRES_PASSWORD=the-real-one\n"
 
@@ -39,6 +43,7 @@ def project(tmp_path):
     folder = tmp_path / "psells"
     (folder / "deploy" / "aws").mkdir(parents=True)
     shutil.copy(SCRIPT, folder / "deploy" / "aws" / "deploy.sh")
+    shutil.copy(BACKUP, folder / "deploy" / "aws" / "backup-to-s3.sh")
     (folder / ".env").write_text(ORIGINAL_ENV)
 
     bin_dir = tmp_path / "bin"
@@ -51,11 +56,11 @@ def project(tmp_path):
     return folder, bin_dir, calls
 
 
-def run(folder, bin_dir):
+def run(folder, bin_dir, script="deploy.sh"):
     environment = dict(os.environ,
                        PATH=f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
     return subprocess.run(
-        ["bash", str(folder / "deploy" / "aws" / "deploy.sh")],
+        ["bash", str(folder / "deploy" / "aws" / script)],
         capture_output=True, text=True, env=environment)
 
 
@@ -134,3 +139,60 @@ def test_renewal_is_tried_twice_a_day_and_survives_the_server_being_off():
     assert timer["Timer"]["OnCalendar"] == "*-*-* 03,15:00:00"
     assert timer["Timer"]["Persistent"] == "true"
     assert timer["Install"]["WantedBy"] == "timers.target"
+
+
+# The daily backup to S3 ------------------------------------------------------
+
+def test_the_backup_refuses_where_the_real_records_are(project):
+    folder, bin_dir, calls = project
+    (folder / "data").mkdir()
+    (folder / "data" / "config.json").write_text("{}")
+
+    result = run(folder, bin_dir, "backup-to-s3.sh")
+
+    assert result.returncode == 1
+    assert "the real data never leaves the Mac" in result.stderr
+    # Refused before docker or aws is ever called: nothing dumped, nothing sent.
+    assert not calls.exists()
+
+
+def test_the_backup_is_proved_before_it_is_sent_and_only_under_daily():
+    with open(BACKUP) as script:
+        text = script.read()
+
+    # The one copy to S3 comes after the restore check and the counts.
+    copies = [line for line in text.splitlines() if "aws s3 cp" in line]
+    assert len(copies) == 1
+    assert text.index("aws s3 cp") > text.index("pg_restore")
+    assert text.index("aws s3 cp") > text.index('[ "$RESTORED" = "$LIVE" ]')
+    assert '"s3://$bucket/daily/$NAME"' in text
+
+
+def test_the_backup_runs_daily_from_where_deploy_puts_it():
+    service = unit(BACKUP_SERVICE)["Service"]
+    timer = unit(BACKUP_TIMER)
+
+    assert service["Type"] == "oneshot"
+    assert service["ExecStart"] == "/opt/psells/deploy/aws/backup-to-s3.sh"
+    assert os.access(BACKUP, os.X_OK)
+    assert timer["Timer"]["OnCalendar"] == "*-*-* 08:00:00"
+    assert timer["Timer"]["Persistent"] == "true"
+    assert timer["Install"]["WantedBy"] == "timers.target"
+
+
+def test_deploy_installs_and_enables_every_unit_in_the_folder():
+    with open(SCRIPT) as script:
+        text = script.read()
+    units = sorted(name for name in os.listdir(DEPLOY_DIR)
+                   if name.endswith((".service", ".timer")))
+    install = text[text.index("install -m 644"):text.index("/etc/systemd/system/")]
+    enable = [line for line in text.splitlines()
+              if line.startswith("systemctl enable --now")]
+
+    assert units == ["psells-backup.service", "psells-backup.timer",
+                     "psells-certbot-renew.service", "psells-certbot-renew.timer"]
+    for name in units:
+        assert f"deploy/aws/{name}" in install, name
+    assert len(enable) == 1
+    assert set(enable[0].split()[3:]) == {
+        name for name in units if name.endswith(".timer")}

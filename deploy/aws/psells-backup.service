@@ -1,0 +1,12 @@
+# Backs up the demo database to S3. Started by psells-backup.timer;
+# deploy/aws/deploy.sh installs both into /etc/systemd/system. What it
+# printed, and any failure, is in journalctl -u psells-backup.service.
+
+[Unit]
+Description=Back up the PSells demo database to S3
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/psells/deploy/aws/backup-to-s3.sh
