@@ -15,6 +15,7 @@ runs and where the challenge files go.
 
 import configparser
 import os
+import re
 import shutil
 import subprocess
 
@@ -196,3 +197,57 @@ def test_deploy_installs_and_enables_every_unit_in_the_folder():
     assert len(enable) == 1
     assert set(enable[0].split()[3:]) == {
         name for name in units if name.endswith(".timer")}
+
+
+# A server that sets itself up ------------------------------------------------
+
+FIRST_BOOT = os.path.join(DEPLOY_DIR, "first-boot.sh")
+
+
+def test_deploy_reads_the_certificates_name_from_the_file_nginx_reads():
+    with open(SCRIPT) as script:
+        line = [line for line in script.read().splitlines()
+                if line.startswith("NAME=$(")][0]
+    with open(os.path.join(psells.PROJECT_DIR, "nginx", "sites", "aws",
+                           "https.conf")) as site:
+        served = re.search(r"^server_name (\S+);$", site.read(), re.M).group(1)
+
+    # Run the script's own line against the real file.
+    found = subprocess.run(["bash", "-c", f'{line}; echo "$NAME"'],
+                           cwd=psells.PROJECT_DIR, capture_output=True,
+                           text=True).stdout.strip()
+
+    assert found == served == "psells.lakeshorefreight.me"
+
+
+def test_a_certificate_is_fetched_only_when_missing_and_before_the_stack():
+    with open(SCRIPT) as script:
+        text = script.read()
+    fetch = text.index("certonly --standalone")
+
+    # Only when none exists, so a redeploy never asks Let's Encrypt again.
+    assert re.search(r'if \[ -e "data/letsencrypt/live/\$NAME/fullchain.pem" \]',
+                     text)
+    # Before nginx holds port 80, then renewals switched to nginx's webroot.
+    assert fetch < text.index("compose up -d --build --wait") \
+        < text.index("reconfigure")
+    # Through the pinned certbot service, as nginx's user, into its folders.
+    assert "compose run --rm -p 80:80 certbot certonly" in text
+    assert "install -d -o 101 -g 101 -m 700 data/letsencrypt" in text
+    # Staging only when asked for.
+    assert '[ "${PSELLS_ACME_STAGING:-0}" = 1 ] && staging=(--staging)' in text
+
+
+def test_first_boot_prepares_the_host_then_deploys_the_public_repository():
+    with open(FIRST_BOOT) as script:
+        text = script.read()
+
+    assert os.access(FIRST_BOOT, os.X_OK)
+    assert text.startswith("#!/bin/bash\n")
+    assert "REPOSITORY=https://github.com/pierremakhlouta/psells.git" in text
+    assert "PROJECT_DIR=/opt/psells" in text
+    # Every host step comes before the deploy, and the deploy is last.
+    for step in ("fallocate -l 2G /swapfile", "docker-compose-plugin",
+                 "snap install aws-cli", "git clone"):
+        assert text.index(step) < text.index('"$PROJECT_DIR/deploy/aws/deploy.sh"'), step
+    assert text.rstrip().endswith('"$PROJECT_DIR/deploy/aws/deploy.sh"')

@@ -17,6 +17,15 @@ resource "aws_instance" "server" {
 
   instance_initiated_shutdown_behavior = "stop"
 
+  # What the server does the first time it starts: prepare the host, clone
+  # the repository and deploy. The one line added after the shebang chooses
+  # Let's Encrypt's staging service for trial rebuilds (acme_staging).
+  user_data = replace(
+    file("${path.module}/../../deploy/aws/first-boot.sh"),
+    "#!/bin/bash\n",
+    "#!/bin/bash\nexport PSELLS_ACME_STAGING=${var.acme_staging ? "1" : "0"}\n",
+  )
+
   # Standard, not t4g's default of unlimited, which bills for bursts.
   credit_specification {
     cpu_credits = "standard"
@@ -46,8 +55,10 @@ resource "aws_instance" "server" {
     Name = "psells"
   }
 
+  # A newer image or an edited first-boot script does not replace a running
+  # server; both are used when it is rebuilt (terraform apply -replace).
   lifecycle {
-    ignore_changes = [ami]
+    ignore_changes = [ami, user_data]
   }
 }
 

@@ -196,3 +196,15 @@ def test_ci_formats_and_validates_every_configuration_with_the_pinned_release():
         == CONFIGURATIONS
     assert "-backend=false" in steps
     assert "-lockfile=readonly" in steps
+
+
+def test_a_new_server_sets_itself_up_and_a_running_one_is_left_alone():
+    server = re.search(r'resource "aws_instance" "server" \{(.*?)\n\}',
+                       without_comments(main_text()), re.S).group(1)
+    variables = read(os.path.join(MAIN, "variables.tf"))
+
+    assert 'file("${path.module}/../../deploy/aws/first-boot.sh")' in server
+    assert re.search(r"ignore_changes = \[ami, user_data\]", server)
+    # The real Let's Encrypt service unless a trial rebuild asks otherwise.
+    assert re.search(r'variable "acme_staging" \{[^}]*default\s*= false', variables,
+                     re.S)

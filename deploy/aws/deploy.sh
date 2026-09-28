@@ -11,11 +11,17 @@
 #     git -C /opt/psells checkout --quiet --detach <commit>
 #     /opt/psells/deploy/aws/deploy.sh
 #
-# Writes .env from Parameter Store, builds and starts the stack with
-# compose.aws.yaml laid over compose.yaml, loads sample_data/seed.sql into a
-# database that has no products yet, and installs the timers that renew the
-# certificate and back the database up to S3. Safe to run again: .env is rewritten, the stack is brought up
-# to date, and a database with records in it is left alone.
+# Writes .env from Parameter Store, gets a certificate from Let's Encrypt if
+# the server has none yet, builds and starts the stack with compose.aws.yaml
+# laid over compose.yaml, loads sample_data/seed.sql into a database that has
+# no products yet, and installs the timers that renew the certificate and back
+# the database up to S3. Safe to run again: .env is rewritten, an existing
+# certificate is kept, the stack is brought up to date, and a database with
+# records in it is left alone.
+#
+# A new server runs it from first-boot.sh. PSELLS_ACME_STAGING=1 asks Let's
+# Encrypt's staging service for the certificate instead, which no browser
+# trusts and which has no weekly limit: for trying a rebuild.
 #
 # The server never sees the real records or the real partner percentage:
 # .env points the app at sample_data/config.json.
@@ -82,8 +88,39 @@ EOF
 mv .env.new .env
 umask 022
 
+echo "== certificate"
+# The one name the server answers to, read from the file nginx reads it from.
+NAME=$(sed -n 's/^server_name \([^;]*\);$/\1/p' nginx/sites/aws/https.conf)
+[ -n "$NAME" ] || fail "no server_name in nginx/sites/aws/https.conf"
+
+# certbot and nginx both run as user 101, which owns these folders, so the
+# key is readable by its owner only and its owner is nginx.
+install -d -o 101 -g 101 -m 700 data/letsencrypt
+install -d -o 101 -g 101 -m 755 data/acme
+
+new_certificate=no
+if [ -e "data/letsencrypt/live/$NAME/fullchain.pem" ]; then
+    echo "kept the certificate for $NAME"
+else
+    # nginx cannot start without a certificate, so the first one is fetched
+    # before the stack starts, by certbot answering Let's Encrypt on port 80
+    # itself. Renewals go through nginx instead; see below.
+    staging=()
+    [ "${PSELLS_ACME_STAGING:-0}" = 1 ] && staging=(--staging)
+    compose run --rm -p 80:80 certbot certonly --standalone "${staging[@]}" \
+        --non-interactive --agree-tos --register-unsafely-without-email -d "$NAME"
+    new_certificate=yes
+fi
+
 echo "== stack"
 compose up -d --build --wait
+
+if [ "$new_certificate" = yes ]; then
+    # Now nginx holds port 80, renewals must come through its webroot. This
+    # records that, after a trial renewal to prove it works.
+    compose run --rm certbot reconfigure --non-interactive --cert-name "$NAME" \
+        --webroot --webroot-path /var/www/acme
+fi
 
 echo "== sample data"
 # The single quotes are deliberate: $POSTGRES_USER and $POSTGRES_DB are
