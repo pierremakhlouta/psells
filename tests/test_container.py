@@ -271,9 +271,11 @@ def test_the_test_database_starts_only_when_asked_for_and_keeps_nothing():
 
 NGINX_CONF = os.path.join(PROJECT_DIR, "nginx", "nginx.conf")
 NGINX_SITES = os.path.join(PROJECT_DIR, "nginx", "sites")
+NGINX_SNIPPETS = os.path.join(PROJECT_DIR, "nginx", "snippets")
 SITES = sorted(os.listdir(NGINX_SITES))
-# Where compose.yaml mounts the chosen site's folder.
+# Where compose.yaml mounts the chosen site's folder, and the snippets.
 SITE_MOUNT = "/etc/nginx/site/"
+SNIPPET_MOUNT = "/etc/nginx/snippets/"
 
 TOKEN = re.compile(r'"(?:[^"\\]|\\.)*"|[{};]|[^\s{};]+')
 INCLUDE = re.compile(r"^\s*include\s+(\S+);", re.M)
@@ -284,8 +286,27 @@ def without_comments(path):
         return "\n".join(line.split("#", 1)[0] for line in conf)
 
 
+def expand(text, site):
+    """Each include in text replaced by the file, or files, it names, as
+    nginx would read them with that site's folder mounted. A pattern that
+    matches nothing, as a site with no servers of its own gives, adds nothing.
+    """
+    def included(match):
+        path = match.group(1)
+        if path.startswith(SNIPPET_MOUNT):
+            files = [os.path.join(NGINX_SNIPPETS, path[len(SNIPPET_MOUNT):])]
+        else:
+            assert path.startswith(SITE_MOUNT), path
+            files = sorted(glob.glob(os.path.join(NGINX_SITES, site,
+                                                  path[len(SITE_MOUNT):])))
+            if "*" not in path:
+                assert files, path
+        return "\n".join(expand(without_comments(name), site) for name in files)
+    return INCLUDE.sub(included, text)
+
+
 def nginx_text(site):
-    """nginx.conf without comments, each site include replaced by its file.
+    """nginx.conf without comments, every include replaced by its files.
 
     With site None the includes are left as they are, which is how the tests
     see what nginx.conf itself says.
@@ -293,13 +314,7 @@ def nginx_text(site):
     text = without_comments(NGINX_CONF)
     if site is None:
         return text
-
-    def included(match):
-        path = match.group(1)
-        assert path.startswith(SITE_MOUNT), path
-        return without_comments(
-            os.path.join(NGINX_SITES, site, path[len(SITE_MOUNT):]))
-    return INCLUDE.sub(included, text)
+    return expand(text, site)
 
 
 def nginx_directives(site="localhost"):
@@ -464,8 +479,10 @@ def test_nginx_sends_the_host_as_sent_and_sets_both_forwarded_headers():
     assert headers == {
         # As the browser sent it, port and all, to match its Origin.
         "Host": "$http_host",
-        # Set, so a client's own X-Forwarded-Proto is replaced.
-        "X-Forwarded-Proto": "$scheme",
+        # Set, so a client's own X-Forwarded-Proto is replaced, and written
+        # out: every visitor used HTTPS, even when TLS ended at a load
+        # balancer and nginx was reached over plain HTTP.
+        "X-Forwarded-Proto": "https",
         # Set, not appended, so a client cannot choose the address recorded.
         "X-Forwarded-For": "$remote_addr",
     }
@@ -620,12 +637,14 @@ def test_the_nginx_config_is_mounted_read_only_and_readable_by_nginx():
     mounts = compose()["services"]["proxy"]["volumes"]
 
     assert mounts == ["./nginx/nginx.conf:/etc/nginx/nginx.conf:ro",
+                      "./nginx/snippets:/etc/nginx/snippets:ro",
                       "./nginx/sites/localhost:/etc/nginx/site:ro",
                       "./data/tls:/etc/nginx/tls:ro"]
     # nginx reads them as user 101, not as the files' owner. A file readable
     # by its owner only is refused at startup on Linux, the trap of Phase 04
     # in another form.
-    site_files = glob.glob(os.path.join(NGINX_SITES, "*", "*.conf"))
+    site_files = (glob.glob(os.path.join(NGINX_SITES, "**", "*.conf"), recursive=True)
+                  + glob.glob(os.path.join(NGINX_SNIPPETS, "*.conf")))
     assert site_files
     for path in [NGINX_CONF, *site_files]:
         assert os.stat(path).st_mode & stat.S_IROTH, path
@@ -664,7 +683,13 @@ def test_nginx_conf_itself_names_no_place():
     assert [w for w in words if w[0] == "include"] == [
         ["include", SITE_MOUNT + "http.conf"],
         ["include", SITE_MOUNT + "https.conf"],
+        ["include", SNIPPET_MOUNT + "headers.conf"],
+        ["include", SNIPPET_MOUNT + "app.conf"],
+        ["include", SITE_MOUNT + "servers/*.conf"],
     ]
+    # And no header or proxy rule of its own: those are in the snippets.
+    assert not [w for w in words if w[0] in {"add_header", "proxy_pass",
+                                            "proxy_set_header", "limit_req"}]
 
 
 def test_there_is_a_site_for_the_mac_and_one_for_the_server():
@@ -681,16 +706,17 @@ def mounts_by_target(volumes):
     return {volume.split(":")[1]: volume for volume in volumes}
 
 
-def test_the_server_publishes_both_ports_on_every_address_and_nothing_else():
+def test_the_server_publishes_its_ports_on_every_address_and_nothing_else():
     ports = compose_aws()["services"]["proxy"]["ports"]
 
     # !override, or Compose would add these to the 127.0.0.1 ones and fail to
-    # bind the same port twice.
+    # bind the same port twice. 8090 is the load balancer's, which the
+    # server's security group admits from the load balancer alone.
     assert isinstance(ports, Override)
-    assert list(ports) == ["443:8443", "80:8080"]
-    # And nginx listens where they lead, as on the Mac.
+    assert list(ports) == ["443:8443", "80:8080", "8090:8090"]
+    # And nginx listens where they lead.
     listening = {listen[0] for listen, _, _ in servers("aws")}
-    assert listening == {"8443", "8080", "127.0.0.1:8081"}
+    assert listening == {"8443", "8080", "8090", "127.0.0.1:8081"}
 
 
 def test_the_server_swaps_the_site_and_certificate_and_adds_the_webroot():
@@ -776,15 +802,59 @@ def test_every_site_answers_one_name_and_redirects_only_to_it(site):
 @pytest.mark.parametrize("site", SITES)
 def test_every_site_gives_nginx_the_same_servers(site):
     # Included, each site's files make the same three servers, the one for
-    # its name carrying every header and the proxy.
+    # its name carrying every header and the proxy; a site may add servers of
+    # its own after them.
     https = [words for _, words in site_directives(site, "https.conf")]
     name = [w[1] for w in https if w[0] == "server_name"][0]
+    own = sorted(os.path.basename(path) for path in glob.glob(
+        os.path.join(NGINX_SITES, site, "servers", "*.conf")))
 
-    assert sorted(listen[0] for listen, _, _ in servers(site)) == [
-        "127.0.0.1:8081", "8080", "8443", "8443"]
+    listening = sorted(listen[0] for listen, _, _ in servers(site))
+    common = ["127.0.0.1:8081", "8080", "8443", "8443"]
+    assert listening == sorted(common + (["8090"] if own == ["lb.conf"] else []))
+    assert own in ([], ["lb.conf"]), own
     served = top_level(server("8443", name, site))
     assert ["listen", "8443", "ssl"] in served
     assert sum(1 for w in served if w[0] == "add_header") == 4
+
+
+def headers_of(directives):
+    return {words[1]: words[2] for inner, words in directives
+            if inner == () and words[0] == "add_header"}
+
+
+def proxy_of(directives):
+    return [words for inner, words in directives if inner == (("location", "/"),)]
+
+
+def test_the_load_balancer_listener_serves_psells_exactly_as_the_main_one():
+    main = server("8443", "psells.lakeshorefreight.me", "aws")
+    lb = server("8090", "lb.psells.lakeshorefreight.me", "aws")
+
+    # The same four headers and the same way to the app, from the same files.
+    assert headers_of(lb) == headers_of(main)
+    assert proxy_of(lb) == proxy_of(main)
+    assert ["listen", "8090", "default_server"] in top_level(lb)
+
+
+def test_the_load_balancer_listener_believes_only_the_vpc_and_the_last_hop():
+    lb = top_level(server("8090", "lb.psells.lakeshorefreight.me", "aws"))
+
+    # Only from the VPC's private range, where the load balancer is.
+    assert [w for w in lb if w[0] == "set_real_ip_from"] == [
+        ["set_real_ip_from", "172.31.0.0/16"]]
+    assert ["real_ip_header", "X-Forwarded-For"] in lb
+    # Recursive would walk back past the load balancer's own entry to
+    # addresses the client wrote; off, only the last one is taken.
+    assert not [w for w in lb if w[0] == "real_ip_recursive"]
+    # And the main HTTPS server believes no forwarded address at all.
+    main = [words for _, words in server("8443", "psells.lakeshorefreight.me", "aws")]
+    assert not [w for w in main if w[0].startswith("set_real_ip") or w[0] == "real_ip_header"]
+
+
+def test_the_mac_has_no_load_balancer_listener():
+    assert "8090" not in {listen[0] for listen, _, _ in servers("localhost")}
+    assert not glob.glob(os.path.join(NGINX_SITES, "localhost", "servers", "*"))
 
 
 def test_the_stack_comes_back_whenever_docker_starts():

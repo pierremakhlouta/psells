@@ -58,6 +58,7 @@ jobs:
         run: >-
           docker run --rm --user 101:101 --add-host app:127.0.0.1
           --volume "$PWD/nginx/nginx.conf:/etc/nginx/nginx.conf:ro"
+          --volume "$PWD/nginx/snippets:/etc/nginx/snippets:ro"
           --volume "$PWD/nginx/sites/localhost:/etc/nginx/site:ro"
           --volume "$RUNNER_TEMP/tls:/etc/nginx/tls:ro"
           "$NGINX_IMAGE" nginx -t
@@ -74,6 +75,7 @@ jobs:
           chmod -R a+rX "$RUNNER_TEMP/letsencrypt"
           docker run --rm --user 101:101 --add-host app:127.0.0.1 \
             --volume "$PWD/nginx/nginx.conf:/etc/nginx/nginx.conf:ro" \
+            --volume "$PWD/nginx/snippets:/etc/nginx/snippets:ro" \
             --volume "$PWD/nginx/sites/aws:/etc/nginx/site:ro" \
             --volume "$RUNNER_TEMP/letsencrypt:/etc/nginx/tls:ro" \
             --volume "$RUNNER_TEMP/acme:/var/www/acme:ro" \

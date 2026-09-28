@@ -25,6 +25,10 @@ services:
     ports: !override
       - "443:8443"
       - "80:8080"
+      # For the load balancer, when infra/aws switches it on. The server's
+      # security group lets this port in from the load balancer alone; with
+      # the switch off nothing may reach it.
+      - "8090:8090"
     volumes:
       # The server's name and its certificate's paths, in place of the Mac's.
       - "./nginx/sites/aws:/etc/nginx/site:ro"

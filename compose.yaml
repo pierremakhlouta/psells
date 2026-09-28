@@ -49,6 +49,9 @@ services:
       - "127.0.0.1:80:8080"
     volumes:
       - "./nginx/nginx.conf:/etc/nginx/nginx.conf:ro"
+      # The security headers and the way to the app, which every server that
+      # serves PSells includes, so they are written once.
+      - "./nginx/snippets:/etc/nginx/snippets:ro"
       # What differs from place to place: the name, the certificate's paths
       # and what plain HTTP does. nginx.conf includes the two files in this
       # folder. On the AWS server compose.aws.yaml puts nginx/sites/aws here
