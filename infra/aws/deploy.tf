@@ -13,7 +13,10 @@ resource "aws_iam_openid_connect_provider" "github" {
 
 locals {
   # The only workflow runs that may deploy: this repository's main branch.
-  deploy_subject = "repo:pierremakhlouta/psells:ref:refs/heads/main"
+  # GitHub's immutable subject names the owner and the repository by their
+  # numeric IDs as well as their names, so a later account or repository
+  # that takes over either name cannot match it. The IDs are public.
+  deploy_subject = "repo:pierremakhlouta@238794836/psells@1330163843:ref:refs/heads/main"
 }
 
 resource "aws_iam_role" "deploy" {
@@ -46,16 +49,23 @@ resource "aws_iam_role_policy" "deploy" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
+      # SendCommand is authorised on the document and on each instance, and a
+      # condition applies to every resource in its statement, so the two are
+      # separate: the document has no tags to match.
       {
-        # The deploy document, on the server tagged psells, and nothing else:
-        # not the generic shell document, which would run anything as root.
-        Sid    = "RunTheDeployDocumentOnThePsellsServer"
-        Effect = "Allow"
-        Action = "ssm:SendCommand"
-        Resource = [
-          aws_ssm_document.deploy.arn,
-          "arn:aws:ec2:ca-central-1:${data.aws_caller_identity.current.account_id}:instance/*",
-        ]
+        # The deploy document, and not the generic shell document, which
+        # would run anything as root.
+        Sid      = "SendOnlyTheDeployDocument"
+        Effect   = "Allow"
+        Action   = "ssm:SendCommand"
+        Resource = aws_ssm_document.deploy.arn
+      },
+      {
+        # To the server tagged psells, and no other.
+        Sid      = "SendOnlyToThePsellsServer"
+        Effect   = "Allow"
+        Action   = "ssm:SendCommand"
+        Resource = "arn:aws:ec2:ca-central-1:${data.aws_caller_identity.current.account_id}:instance/*"
         Condition = {
           StringEquals = { "ssm:resourceTag/Name" = "psells" }
         }

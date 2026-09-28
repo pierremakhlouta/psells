@@ -129,8 +129,9 @@ def test_no_secret_and_no_personal_value_is_in_the_configuration():
     # value into the state in plain text.
     assert "/psells/postgres/password" not in code
     assert "SecureString" not in code
-    # The alert address comes from terraform.tfvars, which git ignores.
-    assert "@" not in code
+    # The alert address comes from terraform.tfvars, which git ignores. (An @
+    # alone is allowed: GitHub's subject uses it between a name and an ID.)
+    assert not re.search(r"[\w.+-]+@[\w-]+\.[\w.-]+", code)
     assert ignored("infra/aws/terraform.tfvars")
     # No import block, and no account number or resource id written in.
     assert not re.search(r"^\s*import \{", code, re.M)
@@ -222,7 +223,9 @@ def test_only_main_of_this_repository_can_take_the_deploy_role():
     code = deploy_text()
 
     assert 'url            = "https://token.actions.githubusercontent.com"' in code
-    assert 'deploy_subject = "repo:pierremakhlouta/psells:ref:refs/heads/main"' in code
+    # GitHub's immutable subject: names and numeric IDs, which a recycled
+    # name cannot reproduce.
+    assert 'deploy_subject = "repo:pierremakhlouta@238794836/psells@1330163843:ref:refs/heads/main"' in code
     assert '"token.actions.githubusercontent.com:sub" = local.deploy_subject' in code
     assert '"token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"' in code
     # An exact match, never a pattern that other branches or repositories fit.
@@ -238,11 +241,21 @@ def test_the_deploy_role_can_run_the_deploy_document_and_nothing_else():
                                 policy))
 
     assert actions == ["ssm:GetCommandInvocation", "ssm:ListCommandInvocations",
-                       "ssm:SendCommand"]
-    # Sent with the deploy document only, to the server tagged psells.
-    assert "aws_ssm_document.deploy.arn" in policy
+                       "ssm:SendCommand", "ssm:SendCommand"]
     assert "AWS-RunShellScript" not in code
-    assert '"ssm:resourceTag/Name" = "psells"' in policy
+    # SendCommand is authorised on the document and on the instance, and a
+    # condition covers every resource in its statement. So the document is
+    # alone in a statement with no condition (it has no tags to match), and
+    # the instances are alone in one that requires the psells tag.
+    sends = re.findall(r'\{\s*(?:#[^\n]*\n\s*)*Sid\s*=\s*"(\w+)"(.*?)\n      \}',
+                       policy, re.S)
+    statements = {sid: body for sid, body in sends if "ssm:SendCommand" in body}
+    document = statements["SendOnlyTheDeployDocument"]
+    instances = statements["SendOnlyToThePsellsServer"]
+    assert re.search(r"Resource\s*= aws_ssm_document\.deploy\.arn$", document, re.M)
+    assert "Condition" not in document
+    assert re.search(r'Resource\s*= "arn:aws:ec2:[^"]+:instance/\*"', instances)
+    assert '"ssm:resourceTag/Name" = "psells"' in instances
 
 
 def test_the_deploy_document_takes_only_a_commit_hash_and_a_digest():
