@@ -94,8 +94,12 @@ services:
     environment:
       # Assembled from the same values the database is created with, so the
       # password is written once, in .env. "db" is the database service's
-      # name, which Compose's network resolves to its container.
-      PSELLS_DATABASE_URL: "postgresql://${POSTGRES_USER:?set POSTGRES_USER in .env}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:?set POSTGRES_DB in .env}"
+      # name, which Compose's network resolves to its container. On the AWS
+      # server, while RDS is switched on, deploy/aws/deploy.sh sets
+      # POSTGRES_HOST to RDS's address and POSTGRES_URL_OPTIONS to the TLS
+      # settings RDS is reached with; unset, as on the Mac, the address is the
+      # container's, exactly as before.
+      PSELLS_DATABASE_URL: "postgresql://${POSTGRES_USER:?set POSTGRES_USER in .env}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@${POSTGRES_HOST:-db}:5432/${POSTGRES_DB:?set POSTGRES_DB in .env}${POSTGRES_URL_OPTIONS:-}"
       PSELLS_CONFIG: /config/config.json
       # uvicorn reads X-Forwarded-Proto (http or https) and X-Forwarded-For
       # (the client's address) from these addresses only, and from anyone else

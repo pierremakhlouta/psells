@@ -248,9 +248,11 @@ def test_the_database_address_is_built_from_the_environment():
     environment = compose()["services"]["app"]["environment"]
     address = environment["PSELLS_DATABASE_URL"]
 
-    # No password in the file, and the host is the database service itself.
+    # No password in the file, and the host is the database service itself
+    # unless POSTGRES_HOST names another, which only the AWS server's deploy
+    # sets, for RDS.
     assert "${POSTGRES_PASSWORD:?" in address
-    assert "@db:5432/" in address
+    assert "@${POSTGRES_HOST:-db}:5432/" in address
     assert environment["PSELLS_CONFIG"] == "/config/config.json"
 
 
@@ -739,6 +741,17 @@ def test_the_server_runs_the_published_image_by_digest_and_builds_nothing():
     assert app["image"].startswith("${PSELLS_IMAGE:?")
     # The Mac still builds its own.
     assert compose()["services"]["app"]["build"] == "."
+
+
+def test_the_database_host_defaults_to_the_container_and_rds_is_verified():
+    url = compose()["services"]["app"]["environment"]["PSELLS_DATABASE_URL"]
+    mounts = mounts_by_target(compose_aws()["services"]["app"]["volumes"])
+
+    # Unset, as on the Mac, the address is the container's, as it always was.
+    assert "@${POSTGRES_HOST:-db}:5432/" in url
+    assert url.endswith("${POSTGRES_URL_OPTIONS:-}")
+    # On the server the app can check RDS's certificate against AWS's CAs.
+    assert mounts["/config/rds-ca.pem"] == "./data/rds-ca.pem:/config/rds-ca.pem:ro"
 
 
 def test_certbot_writes_where_nginx_reads_as_nginx_own_user():

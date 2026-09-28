@@ -42,10 +42,21 @@ compose() {
 # Runs a command inside the database container, where pg_dump, pg_restore and
 # psql are, and where POSTGRES_USER and POSTGRES_DB are already set. The
 # single quotes below are deliberate: those variables are expanded by the
-# container's shell, not by this one.
+# container's shell, not by this one. Every dump is proved here, in a
+# throwaway database in this container, whichever database it came from.
 in_db() {
     compose exec -T db sh -c "$1"
 }
+
+# The settings deploy.sh wrote, readable by root only, which name the live
+# database: the container, or RDS while infra/aws's switch is on. live()
+# reaches whichever it is.
+set -a
+# shellcheck source=/dev/null
+. ./.env
+set +a
+# shellcheck source=deploy/aws/live-database.sh
+. deploy/aws/live-database.sh
 
 bucket=$(aws ssm get-parameters-by-path --region "$REGION" --path /psells/backup \
     --query "Parameters[?Name=='/psells/backup/bucket'].Value" --output text)
@@ -62,9 +73,8 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 DUMP="$WORK/$NAME"
 
-# shellcheck disable=SC2016
-in_db 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom' \
-    > "$DUMP" || fail "pg_dump failed"
+# From the live database, wherever it is.
+live pg_dump --format=custom > "$DUMP" || fail "pg_dump failed"
 [ -s "$DUMP" ] || fail "pg_dump wrote nothing"
 
 # A dump nobody has restored is not a backup.
@@ -74,8 +84,7 @@ in_db "pg_restore -U \"\$POSTGRES_USER\" -d $CHECK_DB --no-owner --exit-on-error
     < "$DUMP" || fail "the new dump does not restore"
 RESTORED="$(in_db "psql -U \"\$POSTGRES_USER\" -d $CHECK_DB -tAc 'SELECT count(*) FROM products'")" \
     || fail "could not count products in the restored copy"
-# shellcheck disable=SC2016
-LIVE="$(in_db 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT count(*) FROM products"')" \
+LIVE="$(live psql -tAc "SELECT count(*) FROM products")" \
     || fail "could not count products in the live database"
 in_db "dropdb -U \"\$POSTGRES_USER\" $CHECK_DB" \
     || fail "could not drop the $CHECK_DB database"

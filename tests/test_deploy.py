@@ -278,3 +278,82 @@ def test_deploy_ends_by_naming_the_image_the_app_runs():
         last = script.read().rstrip().splitlines()[-1]
 
     assert last == """echo "running $(docker inspect -f '{{.Config.Image}}' "$(compose ps -q app)")\""""
+
+
+# The live database: the container, or RDS -----------------------------------
+
+LIVE_DATABASE = os.path.join(DEPLOY_DIR, "live-database.sh")
+
+
+def call_live(host, *arguments):
+    """Runs live() from live-database.sh with stand-in compose and docker
+    that print their arguments and the PGPASSWORD they were given."""
+    script = f"""
+        compose() {{ if [ "$1 $2" = "config --images" ]; then echo postgres:18.6@sha256:abc; else echo "compose $*"; fi; }}
+        docker() {{ echo "docker $*"; echo "PGPASSWORD=${{PGPASSWORD:-unset}}"; }}
+        POSTGRES_USER=psells POSTGRES_PASSWORD=not-a-real-password POSTGRES_DB=psells POSTGRES_HOST={host}
+        . "{LIVE_DATABASE}"
+        live {" ".join(arguments)}
+    """
+    return subprocess.run(["bash", "-c", script], capture_output=True,
+                          text=True, check=True).stdout
+
+
+def test_live_uses_the_database_container_when_there_is_no_host():
+    out = call_live("", "psql", "-tA")
+
+    assert out.strip() == "compose exec -T db psql -U psells -d psells -tA"
+
+
+def test_live_reaches_rds_over_verified_tls_and_keeps_the_password_off_the_command():
+    out = call_live("psells.abc.ca-central-1.rds.amazonaws.com", "pg_dump",
+                    "--format=custom")
+    command, password = out.strip().splitlines()
+
+    # The pinned PostgreSQL image, since the server has no client of its own.
+    assert command.startswith("docker run --rm -i -e PGPASSWORD ")
+    assert " postgres:18.6@sha256:abc pg_dump " in command
+    # RDS's certificate checked against AWS's authorities, by name.
+    assert "sslmode=verify-full sslrootcert=/rds-ca.pem" in command
+    assert "host=psells.abc.ca-central-1.rds.amazonaws.com" in command
+    assert command.endswith("--format=custom")
+    # The password reaches the container through the environment only.
+    assert "not-a-real-password" not in command
+    assert password == "PGPASSWORD=not-a-real-password"
+
+
+def test_deploy_points_the_app_at_rds_only_when_the_switch_made_a_host():
+    with open(SCRIPT) as script:
+        text = script.read()
+
+    # A host may hold dots; nothing else may.
+    assert '"$PARAMETERS/host") [[ "$value" =~ ^[A-Za-z0-9.-]+$ ]] ;;' in text
+    # AWS's authorities for RDS, over HTTPS, refused unless a certificate.
+    assert "https://truststore.pki.rds.amazonaws.com/ca-central-1/ca-central-1-bundle.pem" in text
+    assert 'openssl x509 -noout -in data/rds-ca.pem.new || fail' in text
+    # Verified TLS settings only when there is a host.
+    settings = text[text.index('rds_settings=""'):text.index("umask 077")]
+    assert 'if [ -n "$host" ]; then' in settings
+    assert "sslmode=verify-full&sslrootcert=/config/rds-ca.pem" in settings
+
+
+def test_an_empty_database_gets_the_schema_then_the_sample_data():
+    with open(SCRIPT) as script:
+        text = script.read()
+    data = text[text.index('echo "== sample data"'):text.index('echo "== timers')]
+
+    assert "live psql -q -v ON_ERROR_STOP=1 --single-transaction < schema.sql" in data
+    assert data.index("schema.sql") < data.index("sample_data/seed.sql")
+    assert "compose exec" not in data
+
+
+def test_the_backup_dumps_the_live_database_and_proves_it_in_the_container():
+    with open(BACKUP) as script:
+        text = script.read()
+
+    assert "live pg_dump --format=custom > \"$DUMP\"" in text
+    assert 'LIVE="$(live psql -tAc "SELECT count(*) FROM products")"' in text
+    # The restore check stays in the local container's throwaway database.
+    assert 'in_db "pg_restore -U' in text
+    # And the Mac guard still comes before .env is read.
+    assert text.index("[ ! -e data/config.json ]") < text.index(". ./.env")

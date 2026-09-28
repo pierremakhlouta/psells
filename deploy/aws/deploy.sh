@@ -79,19 +79,45 @@ echo "== .env from Parameter Store ($PARAMETERS)"
 values=$(aws ssm get-parameters-by-path --region "$REGION" --path "$PARAMETERS" \
     --with-decryption --query 'Parameters[].[Name,Value]' --output text)
 
-user="" password="" database=""
+user="" password="" database="" host=""
 while IFS=$'\t' read -r name value; do
-    # Letters, digits, _ and - only, so nothing in a value can break .env or
-    # the database address the app builds from it.
-    [[ "$value" =~ ^[A-Za-z0-9_-]+$ ]] || fail "$name holds characters .env cannot take"
+    # Letters, digits, _ and - only, and dots in a host name, so nothing in a
+    # value can break .env or the database address the app builds from it.
+    case "$name" in
+        "$PARAMETERS/host") [[ "$value" =~ ^[A-Za-z0-9.-]+$ ]] ;;
+        *) [[ "$value" =~ ^[A-Za-z0-9_-]+$ ]] ;;
+    esac || fail "$name holds characters .env cannot take"
     case "$name" in
         "$PARAMETERS/user") user="$value" ;;
         "$PARAMETERS/password") password="$value" ;;
         "$PARAMETERS/db") database="$value" ;;
+        # Only while infra/aws's managed_services switch is on: RDS's address.
+        "$PARAMETERS/host") host="$value" ;;
     esac
 done <<< "$values"
 if [ -z "$user" ] || [ -z "$password" ] || [ -z "$database" ]; then
     fail "expected user, password and db under $PARAMETERS"
+fi
+
+# AWS's certificate authorities for RDS in this region, which the app and
+# live() check RDS's certificate against. Fetched on every deploy, whether or
+# not RDS is on, so the file the app mounts always exists, and refused unless
+# it is a certificate.
+curl -fsS https://truststore.pki.rds.amazonaws.com/ca-central-1/ca-central-1-bundle.pem \
+    -o data/rds-ca.pem.new
+openssl x509 -noout -in data/rds-ca.pem.new || fail "the RDS certificate bundle is not a certificate"
+mv data/rds-ca.pem.new data/rds-ca.pem
+chmod 644 data/rds-ca.pem
+
+# With RDS switched on, the app reaches it by its address, over TLS with its
+# certificate verified; otherwise, the database container, as before.
+rds_settings=""
+if [ -n "$host" ]; then
+    rds_settings="POSTGRES_HOST=$host
+POSTGRES_URL_OPTIONS='?sslmode=verify-full&sslrootcert=/config/rds-ca.pem'"
+    echo "the database is RDS, at $host"
+else
+    echo "the database is the container"
 fi
 
 # Readable by root only, written whole and then moved into place, so a
@@ -105,9 +131,15 @@ POSTGRES_PASSWORD=$password
 POSTGRES_DB=$database
 PSELLS_CONFIG_FILE=./sample_data/config.json
 PSELLS_IMAGE=$image
+$rds_settings
 EOF
 mv .env.new .env
 umask 022
+
+# For live(), which reaches whichever database the app now uses.
+POSTGRES_USER=$user POSTGRES_PASSWORD=$password POSTGRES_DB=$database POSTGRES_HOST=$host
+# shellcheck source=deploy/aws/live-database.sh
+. deploy/aws/live-database.sh
 
 echo "== certificate"
 # The one name the server answers to, read from the file nginx reads it from.
@@ -145,15 +177,17 @@ if [ "$new_certificate" = yes ]; then
 fi
 
 echo "== sample data"
-# The single quotes are deliberate: $POSTGRES_USER and $POSTGRES_DB are
-# expanded by the shell inside the database container, from its environment.
-# shellcheck disable=SC2016
-products=$(compose exec -T db sh -c \
-    'psql -tA -U "$POSTGRES_USER" "$POSTGRES_DB" -c "SELECT count(*) FROM products"')
+# The database container builds its tables from schema.sql when its volume is
+# first made. RDS starts empty, so a database without them gets schema.sql
+# first, in one transaction that stops at the first error.
+tables=$(live psql -tA -c "SELECT to_regclass('public.products') IS NOT NULL")
+if [ "$tables" != t ]; then
+    live psql -q -v ON_ERROR_STOP=1 --single-transaction < schema.sql
+    echo "built the tables from schema.sql"
+fi
+products=$(live psql -tA -c "SELECT count(*) FROM products")
 if [ "$products" = "0" ]; then
-    # shellcheck disable=SC2016
-    compose exec -T db sh -c \
-        'psql -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" "$POSTGRES_DB"' < sample_data/seed.sql
+    live psql -q -v ON_ERROR_STOP=1 < sample_data/seed.sql
     echo "loaded sample_data/seed.sql"
 else
     echo "the database has $products products; left as it is"

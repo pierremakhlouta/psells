@@ -17,6 +17,12 @@ services:
     # resolves the digest for the commit it deploys and writes it into .env.
     image: "${PSELLS_IMAGE:?set PSELLS_IMAGE in .env; deploy/aws/deploy.sh writes it}"
     build: !reset null
+    volumes:
+      # AWS's certificate authorities for RDS in this region, which deploy.sh
+      # fetches on every deploy. With RDS switched on, the app checks RDS's
+      # certificate against them (sslmode=verify-full), so it cannot be
+      # talking to anything but RDS. Unused while RDS is off.
+      - "./data/rds-ca.pem:/config/rds-ca.pem:ro"
 
   proxy:
     # On every address, because this server is public: its security group
