@@ -1,0 +1,21 @@
+# Renews PSells' Let's Encrypt certificate if it is due, then has nginx load
+# whatever certificate is now on disk. Started by psells-certbot-renew.timer;
+# deploy/aws/deploy.sh installs both into /etc/systemd/system.
+#
+# certbot renews only in the last 30 days of the certificate's 90, so most
+# runs change nothing. It proves the name through the webroot nginx serves on
+# port 80 (nginx/sites/aws/http.conf), since nginx holds that port. It runs as
+# nginx's own user; see the certbot service in compose.aws.yaml.
+
+[Unit]
+Description=Renew PSells' Let's Encrypt certificate
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/psells
+ExecStart=/usr/bin/docker compose -f compose.yaml -f compose.aws.yaml run --rm certbot renew --non-interactive --webroot --webroot-path /var/www/acme
+# A reload, not a restart: nginx starts new workers with the new certificate
+# and lets the old ones finish their requests.
+ExecStartPost=/usr/bin/docker compose -f compose.yaml -f compose.aws.yaml exec -T proxy nginx -s reload

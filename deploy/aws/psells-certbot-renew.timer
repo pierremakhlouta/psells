@@ -1,0 +1,14 @@
+# Twice a day, as Let's Encrypt suggests, at a random moment within the hour
+# so this server is not one of thousands asking on the hour. Persistent runs
+# a check the server was off for as soon as it starts again.
+
+[Unit]
+Description=Renew PSells' Let's Encrypt certificate twice a day
+
+[Timer]
+OnCalendar=*-*-* 03,15:00:00
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
