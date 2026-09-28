@@ -17,6 +17,7 @@ import re
 import subprocess
 
 import pytest
+import yaml
 
 import psells
 
@@ -173,3 +174,25 @@ def test_the_server_role_may_only_read_two_paths_and_add_backups():
     assert '"${aws_s3_bucket.backups.arn}/daily/*"' in code
     assert re.search(r"parameter/psells/postgres\",", code)
     assert re.search(r"parameter/psells/backup\",", code)
+
+
+# Checked on every push ---------------------------------------------------------
+
+def test_ci_formats_and_validates_every_configuration_with_the_pinned_release():
+    with open(os.path.join(psells.PROJECT_DIR, ".github", "workflows",
+                           "lint.yml")) as workflow:
+        job = yaml.safe_load(workflow)["jobs"]["terraform"]
+    image = job["env"]["TERRAFORM_IMAGE"]
+    steps = "\n".join(step.get("run", "") for step in job["steps"])
+    validated = re.search(r"for dir in ([^;]+);", steps).group(1).split()
+
+    # Pinned by digest, and a release every required_version allows.
+    assert re.fullmatch(r"hashicorp/terraform:1\.(\d+)\.\d+@sha256:[0-9a-f]{64}",
+                        image)
+    assert int(re.match(r"hashicorp/terraform:1\.(\d+)", image).group(1)) >= 16
+    assert "fmt -check -recursive" in steps
+    # Every configuration, without touching AWS, holding to the lock file.
+    assert sorted(os.path.join(psells.PROJECT_DIR, d) for d in validated) \
+        == CONFIGURATIONS
+    assert "-backend=false" in steps
+    assert "-lockfile=readonly" in steps

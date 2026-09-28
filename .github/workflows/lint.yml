@@ -78,3 +78,38 @@ jobs:
             --volume "$RUNNER_TEMP/letsencrypt:/etc/nginx/tls:ro" \
             --volume "$RUNNER_TEMP/acme:/var/www/acme:ro" \
             "$NGINX_IMAGE" nginx -t
+
+  terraform:
+    runs-on: ubuntu-latest
+
+    # The Terraform release the configurations are written for, pinned by
+    # digest. Dependabot does not update an image named in a workflow, so
+    # test_infra.py holds it to the version required_version allows.
+    env:
+      TERRAFORM_IMAGE: hashicorp/terraform:1.16.4@sha256:985cdc6c1d9b0a65b83377f666efd2f740b47f02ac55be1ced3d18f7d3b0e829
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      # Formatting, in every configuration.
+      - name: Check the Terraform formatting
+        run: >-
+          docker run --rm --user "$(id -u):$(id -g)" --volume "$PWD:/repo:ro"
+          --workdir /repo/infra/aws "$TERRAFORM_IMAGE" fmt -check -recursive -diff
+
+      # Each configuration parses, names attributes that exist, and fits the
+      # provider its lock file pins. No AWS account is reached: -backend=false
+      # skips the state bucket, and validate reads nothing from AWS. The copy
+      # is writable because init downloads the provider into it.
+      - name: Validate each Terraform configuration
+        run: |
+          cp -r infra "$RUNNER_TEMP/infra"
+          for dir in infra/aws infra/aws/bootstrap; do
+            docker run --rm --user "$(id -u):$(id -g)" --env HOME=/tmp \
+              --volume "$RUNNER_TEMP/infra:/repo/infra" --workdir "/repo/$dir" \
+              "$TERRAFORM_IMAGE" init -backend=false -input=false -lockfile=readonly
+            docker run --rm --user "$(id -u):$(id -g)" --env HOME=/tmp \
+              --volume "$RUNNER_TEMP/infra:/repo/infra" --workdir "/repo/$dir" \
+              "$TERRAFORM_IMAGE" validate
+          done
