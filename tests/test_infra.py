@@ -164,7 +164,9 @@ def test_the_server_has_no_key_imdsv2_only_and_cannot_burst_into_a_bill():
 
 
 def test_the_server_role_may_only_read_two_paths_and_add_backups():
-    code = without_comments(main_text())
+    # The server's role and the backup bucket; the deploy role is in deploy.tf.
+    code = without_comments(read(os.path.join(MAIN, "iam.tf"))
+                            + read(os.path.join(MAIN, "storage.tf")))
     actions = sorted(re.findall(r'Action\s*= "([^"]+)"', code))
 
     # The backup bucket's Deny s3:* over plain HTTP, and the role's trust, are
@@ -208,3 +210,49 @@ def test_a_new_server_sets_itself_up_and_a_running_one_is_left_alone():
     # The real Let's Encrypt service unless a trial rebuild asks otherwise.
     assert re.search(r'variable "acme_staging" \{[^}]*default\s*= false', variables,
                      re.S)
+
+
+# Deploying from GitHub ---------------------------------------------------------
+
+def deploy_text():
+    return without_comments(read(os.path.join(MAIN, "deploy.tf")))
+
+
+def test_only_main_of_this_repository_can_take_the_deploy_role():
+    code = deploy_text()
+
+    assert 'url            = "https://token.actions.githubusercontent.com"' in code
+    assert 'deploy_subject = "repo:pierremakhlouta/psells:ref:refs/heads/main"' in code
+    assert '"token.actions.githubusercontent.com:sub" = local.deploy_subject' in code
+    assert '"token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"' in code
+    # An exact match, never a pattern that other branches or repositories fit.
+    assert "StringLike" not in code
+    assert "*" not in re.search(r'deploy_subject = "([^"]+)"', code).group(1)
+
+
+def test_the_deploy_role_can_run_the_deploy_document_and_nothing_else():
+    code = deploy_text()
+    policy = re.search(r'resource "aws_iam_role_policy" "deploy" \{(.*?)\n\}',
+                       code, re.S).group(1)
+    actions = sorted(re.findall(r'"(ssm:[A-Za-z]+|ec2:[A-Za-z]+|s3:[A-Za-z*]+|iam:[A-Za-z*]+)"',
+                                policy))
+
+    assert actions == ["ssm:GetCommandInvocation", "ssm:ListCommandInvocations",
+                       "ssm:SendCommand"]
+    # Sent with the deploy document only, to the server tagged psells.
+    assert "aws_ssm_document.deploy.arn" in policy
+    assert "AWS-RunShellScript" not in code
+    assert '"ssm:resourceTag/Name" = "psells"' in policy
+
+
+def test_the_deploy_document_takes_only_a_commit_hash_and_a_digest():
+    code = deploy_text()
+
+    assert 'allowedPattern = "^[0-9a-f]{40}$"' in code
+    assert 'allowedPattern = "^sha256:[0-9a-f]{64}$"' in code
+    assert len(re.findall(r"allowedPattern", code)) == 2
+    # Quoted where they reach the shell, and the script stops at an error.
+    assert '"set -eu",' in code
+    assert "checkout --quiet --detach '{{ commit }}'" in code
+    assert "PSELLS_IMAGE_DIGEST='{{ digest }}' /opt/psells/deploy/aws/deploy.sh" in code
+
