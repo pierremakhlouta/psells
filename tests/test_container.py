@@ -248,12 +248,43 @@ def test_the_test_database_starts_only_when_asked_for_and_keeps_nothing():
 # nginx in front ----------------------------------------------------------------
 
 NGINX_CONF = os.path.join(PROJECT_DIR, "nginx", "nginx.conf")
+NGINX_SITES = os.path.join(PROJECT_DIR, "nginx", "sites")
+SITES = sorted(os.listdir(NGINX_SITES))
+# Where compose.yaml mounts the chosen site's folder.
+SITE_MOUNT = "/etc/nginx/site/"
 
 TOKEN = re.compile(r'"(?:[^"\\]|\\.)*"|[{};]|[^\s{};]+')
+INCLUDE = re.compile(r"^\s*include\s+(\S+);", re.M)
 
 
-def nginx_directives():
+def without_comments(path):
+    with open(path) as conf:
+        return "\n".join(line.split("#", 1)[0] for line in conf)
+
+
+def nginx_text(site):
+    """nginx.conf without comments, each site include replaced by its file.
+
+    With site None the includes are left as they are, which is how the tests
+    see what nginx.conf itself says.
+    """
+    text = without_comments(NGINX_CONF)
+    if site is None:
+        return text
+
+    def included(match):
+        path = match.group(1)
+        assert path.startswith(SITE_MOUNT), path
+        return without_comments(
+            os.path.join(NGINX_SITES, site, path[len(SITE_MOUNT):]))
+    return INCLUDE.sub(included, text)
+
+
+def nginx_directives(site="localhost"):
     """nginx.conf as (enclosing blocks, words) pairs, one per directive.
+
+    Read as nginx reads it with that site's folder mounted: psells.localhost
+    unless another is named.
 
     Enclosing blocks is a tuple with one entry per block the directive sits
     in, outermost first. Each entry is (n, opening words), where n numbers the
@@ -263,8 +294,7 @@ def nginx_directives():
     ["proxy_set_header", ...]. Comments are dropped, and a block's own opening
     line is not a directive here.
     """
-    with open(NGINX_CONF) as conf:
-        text = "\n".join(line.split("#", 1)[0] for line in conf)
+    text = nginx_text(site)
 
     result = []
     blocks = []
@@ -286,7 +316,7 @@ def nginx_directives():
     return result
 
 
-def servers():
+def servers(site="localhost"):
     """Each server block as (listen words, server names, directives).
 
     Listen words are the words after "listen", such as ["8443", "ssl",
@@ -295,7 +325,7 @@ def servers():
     (("location", "/"),).
     """
     by_number = {}
-    for blocks, words in nginx_directives():
+    for blocks, words in nginx_directives(site):
         names = [name for _, name in blocks]
         if names[:2] != [("http",), ("server",)]:
             continue
@@ -313,9 +343,9 @@ def servers():
     return result
 
 
-def server(port, name=None):
+def server(port, name=None, site="localhost"):
     """The one server listening on port with that server_name, or none."""
-    found = [directives for listen, names, directives in servers()
+    found = [directives for listen, names, directives in servers(site)
              if listen[0] == port and (names == [name] if name else not names)]
     assert len(found) == 1, (port, name, len(found))
     return found[0]
@@ -568,11 +598,89 @@ def test_the_nginx_config_is_mounted_read_only_and_readable_by_nginx():
     mounts = compose()["services"]["proxy"]["volumes"]
 
     assert mounts == ["./nginx/nginx.conf:/etc/nginx/nginx.conf:ro",
+                      "./nginx/sites/${PSELLS_SITE:-localhost}:/etc/nginx/site:ro",
                       "./data/tls:/etc/nginx/tls:ro"]
-    # nginx reads it as user 101, not as the file's owner. A file readable by
-    # its owner only is refused at startup on Linux, the trap of Phase 04 in
-    # another form.
-    assert os.stat(NGINX_CONF).st_mode & stat.S_IROTH
+    # nginx reads them as user 101, not as the files' owner. A file readable
+    # by its owner only is refused at startup on Linux, the trap of Phase 04
+    # in another form.
+    site_files = glob.glob(os.path.join(NGINX_SITES, "*", "*.conf"))
+    assert site_files
+    for path in [NGINX_CONF, *site_files]:
+        assert os.stat(path).st_mode & stat.S_IROTH, path
+
+
+# One file for every place, and a folder for each place -----------------------
+
+def site_directives(site, name):
+    """One site file's directives, as nginx_directives gives them."""
+    text = without_comments(os.path.join(NGINX_SITES, site, name))
+    result, blocks, words = [], [], []
+    for token in TOKEN.findall(text):
+        if token == "{":
+            blocks.append(tuple(words))
+            words = []
+        elif token == "}":
+            blocks.pop()
+        elif token == ";":
+            result.append((tuple(blocks), words))
+            words = []
+        else:
+            words.append(token)
+    assert not blocks and not words, f"{site}/{name} did not parse"
+    return result
+
+
+def test_nginx_conf_itself_names_no_place():
+    # Every name, certificate and redirect lives in a site's folder, so
+    # nginx.conf is the same file wherever PSells runs, and a rule added to
+    # it reaches every place at once.
+    words = [words for _, words in nginx_directives(site=None)]
+
+    assert not [w for w in words if w[0] in
+                {"server_name", "ssl_certificate", "ssl_certificate_key"}]
+    assert "localhost" not in nginx_text(None)
+    assert [w for w in words if w[0] == "include"] == [
+        ["include", SITE_MOUNT + "http.conf"],
+        ["include", SITE_MOUNT + "https.conf"],
+    ]
+
+
+def test_the_stack_uses_the_localhost_site_unless_told_otherwise():
+    assert "localhost" in SITES
+    mount = compose()["services"]["proxy"]["volumes"][1]
+    assert with_defaults(mount) == "./nginx/sites/localhost:/etc/nginx/site:ro"
+
+
+@pytest.mark.parametrize("site", SITES)
+def test_every_site_answers_one_name_and_redirects_only_to_it(site):
+    https = [words for _, words in site_directives(site, "https.conf")]
+    names = [w[1:] for w in https if w[0] == "server_name"]
+
+    # One name, and nothing in https.conf but that name and its certificate:
+    # every other rule for the server is in nginx.conf.
+    assert len(names) == 1 and len(names[0]) == 1, names
+    assert sorted(w[0] for w in https) == [
+        "server_name", "ssl_certificate", "ssl_certificate_key"]
+
+    # Plain HTTP sends everyone to that name and nowhere else.
+    redirects = [w for _, w in site_directives(site, "http.conf")
+                 if w[0] == "return"]
+    assert redirects == [["return", "301",
+                          f"https://{names[0][0]}$request_uri"]]
+
+
+@pytest.mark.parametrize("site", SITES)
+def test_every_site_gives_nginx_the_same_servers(site):
+    # Included, each site's files make the same three servers, the one for
+    # its name carrying every header and the proxy.
+    https = [words for _, words in site_directives(site, "https.conf")]
+    name = [w[1] for w in https if w[0] == "server_name"][0]
+
+    assert sorted(listen[0] for listen, _, _ in servers(site)) == [
+        "127.0.0.1:8081", "8080", "8443", "8443"]
+    served = top_level(server("8443", name, site))
+    assert ["listen", "8443", "ssl"] in served
+    assert sum(1 for w in served if w[0] == "add_header") == 4
 
 
 def test_nginx_starts_after_the_app_is_healthy_and_restarts_with_it():
