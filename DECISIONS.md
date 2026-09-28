@@ -533,9 +533,12 @@ calls only, not every detail, and no specific business figures.
   library's scrypt, because the salt, the stored parameters, the constant-time
   comparison and the upgrade path are all easy to get subtly wrong. Its
   parameters travel inside each hash, so a hash made with weaker ones is
-  replaced at the next login. A password must be at least ten characters and
-  nothing else: rules demanding digits or symbols push people towards
-  predictable patterns. An unknown username still costs one full check, so a
+  replaced at the next login. A password must be at least fifteen characters
+  and nothing else: rules demanding digits or symbols push people towards
+  predictable patterns. Fifteen is what NIST SP 800-63B asks of a password
+  that is the only factor; the first version allowed ten, raised when Phase 06
+  put the login on a public address. A shorter password set before then still
+  logs in; the rule applies when a password is set. An unknown username still costs one full check, so a
   refusal takes as long whether or not the name exists.
 
 - **Sessions live in the database, and the database keeps only their hash.**

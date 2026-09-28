@@ -68,7 +68,7 @@ Then:
 
 The first start creates the database and builds its tables from `schema.sql`.
 Then create the account, once. It asks for a username and for the password
-twice, without showing it; the password must be at least ten characters:
+twice, without showing it; the password must be at least fifteen characters:
 
     docker compose exec app python set_password.py
 

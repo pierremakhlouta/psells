@@ -60,10 +60,10 @@ def test_a_damaged_hash_is_a_refusal_not_a_crash():
 
 
 @pytest.mark.parametrize("password, refused", [
-    ("a" * 9, True),
-    ("a" * 10, False),
+    ("a" * 14, True),
+    ("a" * 15, False),
     # Length is the only rule: no digits or symbols required.
-    ("abcdefghij", False),
+    ("abcdefghijklmno", False),
     ("", True),
 ])
 def test_a_password_needs_the_minimum_length_and_nothing_else(
@@ -318,7 +318,7 @@ def test_the_script_creates_the_account(db, capsys):
 
 @pytest.mark.parametrize("username, passwords, message", [
     (USERNAME, (PASSWORD, PASSWORD + "x"), "were different"),
-    (USERNAME, ("too short",), "at least 10"),
+    (USERNAME, ("too short",), "at least 15"),
     ("", (), "must not be blank"),
 ])
 def test_the_script_refuses_and_changes_nothing(

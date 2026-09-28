@@ -37,10 +37,11 @@ from argon2.exceptions import InvalidHashError, VerificationError
 IDLE_LIMIT = datetime.timedelta(hours=2)
 ABSOLUTE_LIMIT = datetime.timedelta(hours=12)
 
-# Pierre's decision, 27 September 2026. Length only: no required digits or
-# symbols, which push people to predictable patterns rather than stronger
-# passwords.
-MINIMUM_PASSWORD_LENGTH = 10
+# Pierre's decision, 27 September 2026: 15, as NIST SP 800-63B asks for a
+# password that is the only factor, raised from 10 when the login went public
+# in Phase 06. Length only: no required digits or symbols, which push people
+# to predictable patterns rather than stronger passwords.
+MINIMUM_PASSWORD_LENGTH = 15
 
 _hasher = PasswordHasher()
 
