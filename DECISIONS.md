@@ -767,3 +767,40 @@ calls only, not every detail, and no specific business figures.
   which reuses that commit's scanned image. An automatic rollback was more
   logic to test, and could not undo a change to the database anyway.
 
+- **The managed database and the load balancer run on a switch.** Priced
+  before anything was built, RDS and an Application Load Balancer come to
+  about USD 50 a month together, against credits that had to last six months
+  for everything else. Running them all the time would have closed the free
+  account early. So both are described in Terraform behind one variable,
+  switched on while they were built and proved, and switched off again; the
+  code is the evidence, and the switch shows them again when needed. RDS on
+  its own all the time, or skipping the phase, were the alternatives.
+
+- **While on, the demo really runs on RDS.** A copy that only held a restored
+  backup would not have proved the application on a managed database. The
+  deploy finds RDS's address in Parameter Store, builds the tables from the
+  schema on an empty database and loads the sample records; without the
+  address it uses the database container, as before, so switching off needs
+  nothing but a deploy after the address is removed.
+
+- **RDS's password never reaches the state.** Terraform reads the existing
+  Parameter Store secret ephemerally and passes it write-only, so the state,
+  which keeps every other value in plain text, never holds it. Letting RDS
+  generate and rotate its own password in Secrets Manager was rejected: it
+  costs, and a rotation mid-run would have cut the demo's connection.
+
+- **The app checks RDS's certificate.** The connection uses verify-full
+  against AWS's authorities for the region, fetched on every deploy, so the app
+  cannot be talking to anything but RDS; encrypted without checking would have
+  been easier and would not have known.
+
+- **The load balancer reaches nginx, not the app, and has a name of its own.**
+  TLS ends at the load balancer with AWS's free certificate, and it forwards to
+  a listener of nginx's own, open to the load balancer alone, so every header,
+  limit and rule still applies. That listener believes the visitor's address
+  only from the VPC's range and only the last one given, so the login limit
+  counts visitors; the application still believes nginx alone. The load
+  balancer answers its own name, set by hand when it is switched on, so the
+  main demo address never moves. nginx's shared rules moved into snippets first,
+  so the two servers use one copy.
+

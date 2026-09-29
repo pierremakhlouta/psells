@@ -286,8 +286,11 @@ certificate and key mounted read-only from `data/tls/`.
 What differs from one place PSells runs to another is not in `nginx.conf`: the
 name it answers to, its certificate, and what plain HTTP does live in a folder
 per place under `nginx/sites/`, `localhost` on the Mac and `aws` on the server,
-and `nginx.conf` includes the two files of whichever folder is mounted. Every
-header, limit and rule is in `nginx.conf` once, the same everywhere.
+and `nginx.conf` includes the two files of whichever folder is mounted, and any
+servers the folder adds of its own. The four security headers and the way a
+request reaches the application (the login limit and the forwarded headers)
+are in `nginx/snippets/`, included by every server that serves PSells, so each
+is written once and is the same everywhere.
 
 HTTPS ends at nginx, TLS 1.3 only. It answers for `psells.localhost` and no
 other name: an HTTPS handshake for another name is refused, a request that
@@ -560,6 +563,51 @@ The Lint workflow checks the formatting of every configuration and validates
 each one against the provider the lock file pins, without reaching AWS. The
 deploy role and the `psells-deploy` document are in `infra/aws/deploy.tf`.
 
+### A managed database and a load balancer, on a switch
+
+`infra/aws/database.tf` and `loadbalancer.tf` describe a managed PostgreSQL on
+RDS and an Application Load Balancer in front of the server. Together they
+cost about USD 50 a month, which would end AWS's free plan months early, so
+they exist only while the variable `managed_services` is on. It is off: the
+demo runs on its own database container, behind nginx alone, and the plan
+reports no changes. They were switched on, proved and switched off again, and
+can be switched on to show them.
+
+While on:
+
+- **RDS** is PostgreSQL 18.6, the version the containers run, private (it has
+  no public address, and its security group admits the server alone),
+  encrypted, and holding the demo's records. Its password is the existing
+  Parameter Store secret, read by Terraform only for the moment and sent
+  write-only, so it is never stored in the state. Terraform writes its address
+  to `/psells/postgres/host`, and the next deploy points the app at it over TLS
+  with RDS's certificate verified against AWS's authorities, builds its tables
+  from `schema.sql` and loads the sample records. The daily backup dumps it
+  and proves the dump in the database container.
+- **The load balancer** answers `https://lb.psells.lakeshorefreight.me` with a
+  free certificate from AWS, TLS 1.3 only, and forwards to a listener of
+  nginx's own on port 8090, which the server's security group opens to the load
+  balancer alone. That listener believes the visitor's address the load
+  balancer adds, and only from the VPC's private range, so the login limit
+  still counts visitors; a request for any other name is refused at the load
+  balancer.
+
+On, in this order:
+
+    AWS_PROFILE=psells terraform apply -var managed_services=true
+    gh workflow run deploy.yml -f commit=<head of main>
+
+then a CNAME at the registrar from `lb.psells` to the `lb_address` output,
+and the demo's password set again, since RDS starts empty. Off, so the app
+leaves RDS before RDS goes:
+
+    AWS_PROFILE=psells terraform destroy -var managed_services=true -target='aws_ssm_parameter.postgres_host[0]'
+    gh workflow run deploy.yml -f commit=<head of main>
+    AWS_PROFILE=psells terraform apply
+
+and the CNAME removed. The certificate and the record that proves the name to
+AWS stay; both are free.
+
 ## Running the tests
 
 The suite needs a PostgreSQL to run against: `db-test` in `compose.yaml`, a
@@ -652,7 +700,10 @@ server gets the sample configuration only, that a backup is proved before it
 is sent, and that the systemd timers agree with `compose.aws.yaml` and with
 the script that installs them. It also checks that a certificate is fetched
 only when there is none, before the stack starts, and that `first-boot.sh`
-deploys only after every step that prepares the host.
+deploys only after every step that prepares the host. And it runs
+`live-database.sh` with stand-ins, checking the database container is reached
+as before and RDS only with its certificate verified and the password kept off
+every command line.
 
 `test_infra.py` reads the Terraform in `infra/aws/` and fails if a state or
 variables file could be committed, if the provider is not pinned to one exact
@@ -662,7 +713,12 @@ a resource ID or a leftover import block, if the firewall would let in
 anything but 80 and 443, if the server could have a key pair, reach IMDS from
 a container or run up CPU charges, if its role could do more than it does, or
 if the deploy role could be taken by another branch or repository, send
-anything but the deploy document or reach any server but PSells'.
+anything but the deploy document or reach any server but PSells'. For the
+managed services it fails if anything that costs money would exist with the
+switch off, if RDS could be public, unencrypted or given a password the state
+would keep, if the database admitted anything but the server, if the load
+balancer allowed less than TLS 1.3 or served another name, or if a security
+group description held a character AWS refuses.
 
 `test_container.py` reads the `Dockerfile`, `.dockerignore`, `compose.yaml`,
 `compose.aws.yaml`, `nginx/nginx.conf` with each site's files, and the
@@ -776,7 +832,8 @@ anything else, is covered by an automated test suite that runs on every push
 against a real PostgreSQL, and is backed up on a schedule. A copy with
 invented records runs on AWS behind a publicly trusted certificate, described
 in Terraform and rebuilt from it, and a push to `main` ships itself there once
-every check passes. Planned next is monitoring: a dashboard of the server and
+every check passes. A managed database and a load balancer are described in
+Terraform too, and run behind a switch. Planned next is monitoring: a dashboard of the server and
 the application, service level objectives, an alert, and a deliberate failure
 written up as an incident, carrying the same data model and business rules
 through each step.
