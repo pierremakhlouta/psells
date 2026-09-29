@@ -70,7 +70,7 @@ resource "aws_vpc_security_group_egress_rule" "lb_to_server" {
   count = var.managed_services ? 1 : 0
 
   security_group_id            = aws_security_group.lb[0].id
-  description                  = "nginx's load balancer listener"
+  description                  = "The nginx load balancer listener"
   ip_protocol                  = "tcp"
   from_port                    = 8090
   to_port                      = 8090
@@ -82,7 +82,7 @@ resource "aws_vpc_security_group_ingress_rule" "server_from_lb" {
   count = var.managed_services ? 1 : 0
 
   security_group_id            = aws_security_group.web.id
-  description                  = "nginx's load balancer listener, from the load balancer only"
+  description                  = "The nginx load balancer listener, from the load balancer only"
   ip_protocol                  = "tcp"
   from_port                    = 8090
   to_port                      = 8090

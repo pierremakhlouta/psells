@@ -350,3 +350,15 @@ def test_the_load_balancer_is_tls_1_3_and_reaches_only_the_server_listener():
     assert lb[("aws_lb", "lb")].count("drop_invalid_header_fields = true") == 1
     # The health check asks nginx's own path on the listener.
     assert 'path    = "/lb-health"' in lb[("aws_lb_target_group", "server")]
+
+
+def test_security_group_descriptions_use_only_what_aws_accepts():
+    # AWS refuses a security group or rule description with any other
+    # character; "nginx's", with its apostrophe, failed a switch-on halfway.
+    allowed = re.compile(r"^[A-Za-z0-9. _\-:/()#,@\[\]+=&;{}!$*]*$")
+    code = without_comments(main_text())
+    for kind in ("aws_security_group", "aws_vpc_security_group_ingress_rule",
+                 "aws_vpc_security_group_egress_rule"):
+        for body in re.findall(rf'resource "{kind}" "\w+" \{{(.*?)\n\}}', code, re.S):
+            for description in re.findall(r'description\s*=\s*"([^"]*)"', body):
+                assert allowed.match(description), (kind, description)
