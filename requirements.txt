@@ -7,7 +7,7 @@
 # Development and testing tools live in requirements-dev.txt, so a deployment
 # installs what it needs to run and nothing else.
 fastapi==0.141.1
-uvicorn==0.53.0
+uvicorn==0.54.0
 
 # The template engine for the web pages. FastAPI does not install it, because
 # not every FastAPI application renders HTML.
