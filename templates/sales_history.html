@@ -9,7 +9,14 @@
 {#- Each sale arrives with sale_total_cents, partner_cut_cents and profit_cents
     worked out by psells.sales_history from the sale's own columns. This file
     only formats them. -#}
-{% if sales %}
+{% if edited %}
+<p class="notice" role="status">Saved changes to the sale of {{ edited.name }} dated {{ edited.date }}.</p>
+{% endif %}
+{% if deleted %}
+<p class="notice" role="status">Deleted the sale dated {{ deleted.date }}. It is kept in the corrections log.</p>
+{% endif %}
+
+{% if rows %}
 <table>
   <thead>
     <tr>
@@ -21,10 +28,11 @@
       <th class="num">Sale total</th>
       <th class="num">Partner cut</th>
       <th class="num">Profit</th>
+      <th><span class="visually-hidden">Actions</span></th>
     </tr>
   </thead>
   <tbody>
-    {% for sale in sales %}
+    {% for sale in rows %}
     <tr>
       <td>{{ sale.date }}</td>
       <td>{{ sale.name }}</td>
@@ -34,6 +42,8 @@
       <td class="num">{{ sale.sale_total_cents|money }}</td>
       <td class="num">{{ sale.partner_cut_cents|money }}</td>
       <td class="num">{{ sale.profit_cents|money }}</td>
+      <td class="row-actions"><a href="{{ url_for('edit_sale_page', record_id=sale.id) }}">Edit</a>
+        <a href="{{ url_for('delete_sale_page', record_id=sale.id) }}">Delete</a></td>
     </tr>
     {% endfor %}
   </tbody>

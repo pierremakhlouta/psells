@@ -7,21 +7,31 @@
 <p class="lead">Every payment to the partner, newest first. <a href="{{ url_for('add_payment_page') }}">Record a payment</a></p>
 
 {#- The rows of psells.payments_history, shown as they come back. -#}
-{% if payments %}
+{% if edited %}
+<p class="notice" role="status">Saved changes to the payment dated {{ edited.date }}.</p>
+{% endif %}
+{% if deleted %}
+<p class="notice" role="status">Deleted the payment dated {{ deleted.date }}. It is kept in the corrections log.</p>
+{% endif %}
+
+{% if rows %}
 <table>
   <thead>
     <tr>
       <th>Date</th>
       <th class="num">Amount</th>
       <th>Notes</th>
+      <th><span class="visually-hidden">Actions</span></th>
     </tr>
   </thead>
   <tbody>
-    {% for payment in payments %}
+    {% for payment in rows %}
     <tr>
       <td>{{ payment.date }}</td>
       <td class="num">{{ payment.amount_cents|money }}</td>
       <td>{{ payment.notes }}</td>
+      <td class="row-actions"><a href="{{ url_for('edit_payment_page', record_id=payment.id) }}">Edit</a>
+        <a href="{{ url_for('delete_payment_page', record_id=payment.id) }}">Delete</a></td>
     </tr>
     {% endfor %}
   </tbody>

@@ -184,28 +184,45 @@ def out_of_stock_page(request: Request, connection: Connection, q: str = ""):
 # edit to a product never changes a row here. With nothing recorded, each page
 # says so instead of showing an empty table.
 
-@router.get("/sales-history", response_class=HTMLResponse)
-def sales_history_page(request: Request, connection: Connection):
-    """Every sale, with what it came to."""
+#
+# edited and deleted are the id of a record just corrected, carried by the
+# redirect after the form, as the inventory's notices are. An edited id is
+# looked for among the rows shown, and a deleted one in the corrections log,
+# so a typed id that names nothing shows nothing.
+
+def history_page(request, connection, template, kind, rows, edited, deleted):
+    edited_row = next((row for row in rows if str(row["id"]) == edited), None)
+    deleted_row = (psells.deleted_record(connection, kind, int(deleted))
+                   if deleted.isdigit() else None)
+
     return templates.TemplateResponse(
-        request, "sales_history.html",
-        {"sales": psells.sales_history(connection)})
+        request, template,
+        {"rows": rows, "edited": edited_row, "deleted": deleted_row})
+
+
+@router.get("/sales-history", response_class=HTMLResponse)
+def sales_history_page(request: Request, connection: Connection,
+                       edited: str = "", deleted: str = ""):
+    """Every sale, with what it came to."""
+    return history_page(request, connection, "sales_history.html", "sale",
+                        psells.sales_history(connection), edited, deleted)
 
 
 @router.get("/returns-history", response_class=HTMLResponse)
-def returns_history_page(request: Request, connection: Connection):
+def returns_history_page(request: Request, connection: Connection,
+                         edited: str = "", deleted: str = ""):
     """Every return to the partner, with its notes."""
-    return templates.TemplateResponse(
-        request, "returns_history.html",
-        {"returns": psells.returns_history(connection)})
+    return history_page(request, connection, "returns_history.html", "return",
+                        psells.returns_history(connection), edited, deleted)
 
 
 @router.get("/payments-history", response_class=HTMLResponse)
-def payments_history_page(request: Request, connection: Connection):
+def payments_history_page(request: Request, connection: Connection,
+                          edited: str = "", deleted: str = ""):
     """Every payment to the partner, with its notes."""
-    return templates.TemplateResponse(
-        request, "payments_history.html",
-        {"payments": psells.payments_history(connection)})
+    return history_page(request, connection, "payments_history.html",
+                        "payment", psells.payments_history(connection),
+                        edited, deleted)
 
 
 # Adding a product ------------------------------------------------------------
@@ -613,6 +630,221 @@ def delete_product_submit(request: Request, connection: Connection,
 
     return RedirectResponse(request.url_for("inventory_page"),
                             status_code=303)
+
+
+# Correcting a sale, return or payment -------------------------------------------
+#
+# Edit and Delete from each row of a history page. The rules are psells':
+# what may change, the stock rule, the frozen cut, and the corrections log the
+# change is written to. These routes only read the form, call the one psells
+# function, and choose the answer: 303 back to the history with a notice on
+# success, 422 for text wrong in itself, 409 when the stock disagrees, 404 for
+# an id that names nothing. A delete happens only when its confirmation page
+# posts, as a product's does.
+
+# What differs between the three kinds, so one set of routes serves them all.
+CORRECTABLE = {
+    "sale": {
+        "find": psells.find_sale, "form_text": psells.sale_form_text,
+        "update": psells.update_sale_from_text, "delete": psells.delete_sale,
+        "input_error": psells.SaleInputError, "error": psells.SaleError,
+        "not_found": psells.SaleNotFound, "conflict_field": "quantity",
+        "history": "sales_history_page",
+    },
+    "return": {
+        "find": psells.find_return, "form_text": psells.return_form_text,
+        "update": psells.update_return_from_text,
+        "delete": psells.delete_return,
+        "input_error": psells.ReturnInputError, "error": psells.ReturnError,
+        "not_found": psells.ReturnNotFound, "conflict_field": "quantity",
+        "history": "returns_history_page",
+    },
+    "payment": {
+        "find": psells.find_payment, "form_text": psells.payment_form_text,
+        "update": psells.update_payment_from_text,
+        "delete": psells.delete_payment,
+        "input_error": psells.PaymentInputError, "error": psells.PaymentError,
+        "not_found": psells.PaymentNotFound, "conflict_field": "amount",
+        "history": "payments_history_page",
+    },
+}
+
+
+def record_not_found(request, kind, record_id):
+    return templates.TemplateResponse(
+        request, "record_not_found.html",
+        {"kind": kind, "record_id": record_id,
+         "history": CORRECTABLE[kind]["history"]},
+        status_code=404,
+    )
+
+
+def record_page(request, connection, template, kind, record, values=None,
+                problems=None, status_code=200):
+    """The edit form or the delete confirmation for one record.
+
+    A sale or return is shown with its product as products_view has it now,
+    for the units available, which bound how far its quantity can rise.
+    """
+    product = (find_product(connection, record["item_id"])
+               if "item_id" in record else None)
+
+    return templates.TemplateResponse(
+        request, template,
+        {"kind": kind, "record": record, "product": product,
+         "values": values or {}, "errors": problems or {},
+         "history": CORRECTABLE[kind]["history"]},
+        status_code=status_code,
+    )
+
+
+def edit_record_page(request, connection, kind, record_id):
+    rules = CORRECTABLE[kind]
+    record = rules["find"](connection, record_id)
+
+    if record is None:
+        return record_not_found(request, kind, record_id)
+
+    return record_page(request, connection, "record_edit.html", kind, record,
+                       rules["form_text"](record))
+
+
+def edit_record_submit(request, connection, kind, record_id, fields):
+    rules = CORRECTABLE[kind]
+    record = rules["find"](connection, record_id)
+
+    if record is None:
+        return record_not_found(request, kind, record_id)
+
+    try:
+        rules["update"](connection, record_id, fields)
+    except rules["input_error"] as refused:
+        return record_page(request, connection, "record_edit.html", kind,
+                           record, fields, refused.problems, status_code=422)
+    except rules["not_found"]:
+        return record_not_found(request, kind, record_id)
+    except rules["error"] as refused:
+        return record_page(request, connection, "record_edit.html", kind,
+                           record, fields,
+                           {rules["conflict_field"]: str(refused)},
+                           status_code=409)
+
+    return RedirectResponse(
+        request.url_for(rules["history"]).include_query_params(
+            edited=record_id),
+        status_code=303,
+    )
+
+
+def delete_record_page(request, connection, kind, record_id):
+    record = CORRECTABLE[kind]["find"](connection, record_id)
+
+    if record is None:
+        return record_not_found(request, kind, record_id)
+
+    return record_page(request, connection, "record_delete.html", kind,
+                       record)
+
+
+def delete_record_submit(request, connection, kind, record_id):
+    rules = CORRECTABLE[kind]
+
+    try:
+        rules["delete"](connection, record_id)
+    except rules["not_found"]:
+        return record_not_found(request, kind, record_id)
+
+    return RedirectResponse(
+        request.url_for(rules["history"]).include_query_params(
+            deleted=record_id),
+        status_code=303,
+    )
+
+
+@router.get("/sales-history/{record_id:int}/edit",
+            response_class=HTMLResponse)
+def edit_sale_page(request: Request, connection: Connection, record_id: int):
+    return edit_record_page(request, connection, "sale", record_id)
+
+
+@router.post("/sales-history/{record_id:int}/edit",
+             response_class=HTMLResponse)
+def edit_sale_submit(request: Request, connection: Connection, record_id: int,
+                     form: Annotated[SaleForm, Form()]):
+    return edit_record_submit(request, connection, "sale", record_id,
+                              form.model_dump())
+
+
+@router.get("/sales-history/{record_id:int}/delete",
+            response_class=HTMLResponse)
+def delete_sale_page(request: Request, connection: Connection,
+                     record_id: int):
+    return delete_record_page(request, connection, "sale", record_id)
+
+
+@router.post("/sales-history/{record_id:int}/delete",
+             response_class=HTMLResponse)
+def delete_sale_submit(request: Request, connection: Connection,
+                       record_id: int):
+    return delete_record_submit(request, connection, "sale", record_id)
+
+
+@router.get("/returns-history/{record_id:int}/edit",
+            response_class=HTMLResponse)
+def edit_return_page(request: Request, connection: Connection,
+                     record_id: int):
+    return edit_record_page(request, connection, "return", record_id)
+
+
+@router.post("/returns-history/{record_id:int}/edit",
+             response_class=HTMLResponse)
+def edit_return_submit(request: Request, connection: Connection,
+                       record_id: int, form: Annotated[ReturnForm, Form()]):
+    return edit_record_submit(request, connection, "return", record_id,
+                              form.model_dump())
+
+
+@router.get("/returns-history/{record_id:int}/delete",
+            response_class=HTMLResponse)
+def delete_return_page(request: Request, connection: Connection,
+                       record_id: int):
+    return delete_record_page(request, connection, "return", record_id)
+
+
+@router.post("/returns-history/{record_id:int}/delete",
+             response_class=HTMLResponse)
+def delete_return_submit(request: Request, connection: Connection,
+                         record_id: int):
+    return delete_record_submit(request, connection, "return", record_id)
+
+
+@router.get("/payments-history/{record_id:int}/edit",
+            response_class=HTMLResponse)
+def edit_payment_page(request: Request, connection: Connection,
+                      record_id: int):
+    return edit_record_page(request, connection, "payment", record_id)
+
+
+@router.post("/payments-history/{record_id:int}/edit",
+             response_class=HTMLResponse)
+def edit_payment_submit(request: Request, connection: Connection,
+                        record_id: int, form: Annotated[PaymentForm, Form()]):
+    return edit_record_submit(request, connection, "payment", record_id,
+                              form.model_dump())
+
+
+@router.get("/payments-history/{record_id:int}/delete",
+            response_class=HTMLResponse)
+def delete_payment_page(request: Request, connection: Connection,
+                        record_id: int):
+    return delete_record_page(request, connection, "payment", record_id)
+
+
+@router.post("/payments-history/{record_id:int}/delete",
+             response_class=HTMLResponse)
+def delete_payment_submit(request: Request, connection: Connection,
+                          record_id: int):
+    return delete_record_submit(request, connection, "payment", record_id)
 
 
 # Logging in and out ------------------------------------------------------------

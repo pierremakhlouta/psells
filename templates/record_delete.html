@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+
+{% block title %}Delete {{ kind }} {{ record.id }} · PSells{% endblock %}
+
+{% from "macros.html" import form_token with context %}
+
+{#- The confirmation: the delete happens only when this page's form is posted.
+    It says what the delete changes, from the record's own figures. -#}
+{% block content %}
+<h1>Delete {{ kind }} {{ record.id }}</h1>
+
+<section class="dashboard" aria-label="{{ kind }}">
+  <dl>
+    <div><dt>Date</dt><dd>{{ record.date }}</dd></div>
+    {% if kind == "payment" %}
+    <div><dt>Amount</dt><dd class="num">{{ record.amount_cents|money }}</dd></div>
+    {% else %}
+    <div><dt>Product</dt><dd>{{ record.name }}, id {{ record.item_id }}</dd></div>
+    <div><dt>Quantity</dt><dd class="num">{{ record.quantity }}</dd></div>
+    {% endif %}
+    {% if kind == "sale" %}
+    <div><dt>Sale total</dt><dd class="num">{{ record.sale_total_cents|money }}</dd></div>
+    <div><dt>Partner cut</dt><dd class="num">{{ record.partner_cut_cents|money }}</dd></div>
+    <div><dt>Profit</dt><dd class="num">{{ record.profit_cents|money }}</dd></div>
+    {% endif %}
+    {% if kind != "sale" %}
+    <div><dt>Notes</dt><dd>{{ record.notes }}</dd></div>
+    {% endif %}
+  </dl>
+</section>
+
+<p class="lead">
+{%- if kind == "sale" %}Deleting it gives its {{ record.quantity }} sold back to
+  {{ record.name }}'s stock, and lowers revenue by {{ record.sale_total_cents|money }},
+  the partner share earned by {{ record.partner_cut_cents|money }} and profit by
+  {{ record.profit_cents|money }}.
+{%- elif kind == "return" %}Deleting it gives its {{ record.quantity }} returned
+  back to {{ record.name }}'s stock. No money figure changes.
+{%- else %}Deleting it lowers total paid by {{ record.amount_cents|money }}, so the
+  balance owing rises by the same.
+{%- endif %} The {{ kind }} as it was is kept in the corrections log.</p>
+
+{#- method="post" and a button, never a link, as for a product. -#}
+<form class="actions" action="{{ url_for('delete_' ~ kind ~ '_submit', record_id=record.id) }}" method="post">
+  {{ form_token() }}
+  <button type="submit" class="danger">Delete {{ kind }}</button>
+  <a href="{{ url_for(history) }}">Cancel</a>
+</form>
+{% endblock %}

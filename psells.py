@@ -1697,6 +1697,19 @@ def _delete(connection, record_type, record_id, not_found):
         _log_correction(connection, record_type, record_id, "delete", before)
 
 
+def deleted_record(connection, record_type, record_id):
+    """The record as it was before it was deleted, from corrections, or None
+    if no record of that kind and id was ever deleted. Lets a page confirm a
+    delete with what was deleted, from the log rather than from the address."""
+    row = connection.execute(
+        "SELECT before FROM corrections WHERE record_type = %s "
+        "AND record_id = %s AND action = 'delete'",
+        (record_type, record_id)
+    ).fetchone()
+
+    return None if row is None else row["before"]
+
+
 def delete_sale(connection, sale_id):
     """Remove a sale, giving its units back to stock. Raises SaleNotFound."""
     _delete(connection, "sale", sale_id, SaleNotFound)

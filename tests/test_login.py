@@ -28,7 +28,7 @@ def every_route(router):
     """(method, path) for every route on one router, with a real id in paths
     that take one, so the route itself answers rather than a 404."""
     return [
-        (method, route.path.replace("{product_id:int}", "1"))
+        (method, re.sub(r"\{\w+:int\}", "1", route.path))
         for route in router.routes
         for method in sorted(route.methods)
     ]
@@ -45,7 +45,8 @@ def sessions(db):
 def rows(db):
     return {table: db.execute(f"SELECT COUNT(*) AS n FROM {table}")
             .fetchone()["n"]
-            for table in ("products", "sales", "returns", "payments")}
+            for table in ("products", "sales", "returns", "payments",
+                          "corrections")}
 
 
 def log_in_through_the_page(client, username=TEST_USERNAME,

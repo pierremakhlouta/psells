@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+
+{% block title %}Not found · PSells{% endblock %}
+
+{% block content %}
+<h1>No {{ kind }} {{ record_id }}</h1>
+<p>There is no {{ kind }} with that id. It may have been deleted.
+  <a href="{{ url_for(history) }}">Back to the list</a></p>
+{% endblock %}

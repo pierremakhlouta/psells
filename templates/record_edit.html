@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+
+{% block title %}Edit {{ kind }} {{ record.id }} · PSells{% endblock %}
+
+{% from "macros.html" import field, form_token with context %}
+
+{#- One form for the three kinds of record. kind is "sale", "return" or
+    "payment"; record is the row its history lists; product, for a sale or a
+    return, is the product as products_view has it now. Every figure arrives
+    worked out. The rules, and the corrections log the change is written to,
+    are psells'. -#}
+{% block content %}
+<h1>Edit {{ kind }} {{ record.id }}</h1>
+<p class="lead">For correcting a mistake. The record as it was is kept in the
+  corrections log.{% if kind == "sale" %} The product and the partner cut per
+  unit frozen when it sold stay as they are; to move a sale to another product,
+  delete it and record it again.{% elif kind == "return" %} The product stays
+  as it is; to move a return to another product, delete it and record it
+  again.{% endif %}</p>
+
+{% if product %}
+<section class="dashboard" aria-label="Product">
+  <dl>
+    <div><dt>Product</dt><dd>{{ product.name }}, id {{ product.id }}</dd></div>
+    <div><dt>Available now</dt><dd class="num">{{ product.quantity_available }}</dd></div>
+    {% if kind == "sale" %}
+    <div><dt>Partner cut per unit, frozen</dt><dd class="num">{{ record.partner_share_cents|money }}</dd></div>
+    {% endif %}
+  </dl>
+</section>
+{% endif %}
+
+{% if errors %}
+<p class="form-error" role="alert">Nothing was changed. Fix the fields marked below.</p>
+{% endif %}
+
+<form class="product-form" action="{{ url_for('edit_' ~ kind ~ '_submit', record_id=record.id) }}" method="post">
+  {{ form_token() }}
+  {% if kind == "payment" %}
+  {{ field("amount", "Amount ($)", hint="Zero is allowed.", inputmode="decimal", required=true) }}
+  {% else %}
+  {{ field("quantity", "Quantity", hint="It can rise by at most the units available now.", inputmode="numeric", required=true) }}
+  {% endif %}
+  {% if kind == "sale" %}
+  {{ field("sale_price", "Sale price per unit ($)", inputmode="decimal", required=true) }}
+  {% endif %}
+  {{ field("date", "Date", type="date") }}
+  {% if kind != "sale" %}
+  {{ field("notes", "Notes", wide=true) }}
+  {% endif %}
+
+  <div class="actions">
+    <button type="submit">Save changes</button>
+    <a href="{{ url_for(history) }}">Cancel</a>
+  </div>
+</form>
+
+<p><a href="{{ url_for('delete_' ~ kind ~ '_page', record_id=record.id) }}">Delete this {{ kind }}</a></p>
+{% endblock %}

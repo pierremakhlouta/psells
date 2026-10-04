@@ -19,7 +19,8 @@ import api
 import auth
 import dependencies
 import web
-from helpers import add_product, forms, log_in
+from helpers import (add_payment, add_product, add_return, add_sale, forms,
+                     log_in)
 
 
 TEMPLATES = os.path.join(os.path.dirname(os.path.abspath(web.__file__)),
@@ -34,12 +35,12 @@ def rows(db):
     return {table: db.execute(f"SELECT COUNT(*) AS n FROM {table}")
             .fetchone()["n"]
             for table in ("products", "sales", "returns", "payments",
-                          "sessions")}
+                          "sessions", "corrections")}
 
 
 def routes(router, methods):
     return [
-        (method, route.path.replace("{product_id:int}", "1"))
+        (method, re.sub(r"\{\w+:int\}", "1", route.path))
         for route in router.routes
         for method in sorted(route.methods)
         if method in methods
@@ -53,7 +54,13 @@ PAGES = routes(web.router, {"GET"})
 
 @pytest.fixture
 def stock(db):
+    """Product 1 with units left, and sale 1, return 1 and payment 1, so every
+    page with an id in its path has a record to show, and every write one to
+    change."""
     add_product(db, 1, quantity_received=5)
+    add_sale(db, 1, item_id=1, quantity=1)
+    add_return(db, 1, item_id=1, quantity=1)
+    add_payment(db, 1, 100)
 
 
 @pytest.fixture
@@ -130,6 +137,9 @@ def test_the_walk_finds_the_writes_it_should():
     assert ("POST", "/products/1/sell") in WRITES
     assert ("POST", "/logout") in WRITES
     assert ("POST", "/sales") in WRITES
+    for kind in ("sales", "returns", "payments"):
+        assert ("POST", f"/{kind}-history/1/edit") in WRITES
+        assert ("POST", f"/{kind}-history/1/delete") in WRITES
 
 
 @pytest.mark.parametrize("method, path", WRITES)
@@ -169,11 +179,12 @@ def test_a_page_form_goes_through_with_its_hidden_field(browser, db, stock):
     data = {field["name"]: field.get("value") or ""
             for field in form["inputs"] if "name" in field}
     data.update(quantity="1", sale_price="90")
+    before = rows(db)["sales"]
 
     response = browser.post(form["action"], data=data, follow_redirects=False)
 
     assert response.status_code == 303
-    assert rows(db)["sales"] == 1
+    assert rows(db)["sales"] == before + 1
 
 
 def test_a_program_gets_the_token_and_sends_it_as_a_header(browser, db, stock):
@@ -188,12 +199,13 @@ def test_a_program_gets_the_token_and_sends_it_as_a_header(browser, db, stock):
 
 
 def test_the_token_in_a_json_body_is_not_enough(browser, db, stock):
+    before = rows(db)
     response = browser.post("/sales", json={
         "item_id": 1, "quantity": 1, "sale_price_cents": 9000,
         "form_token": browser.form_token})
 
     assert response.status_code == 403
-    assert rows(db)["sales"] == 0
+    assert rows(db) == before
 
 
 def test_reading_needs_no_token(browser, stock):

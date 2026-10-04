@@ -504,11 +504,11 @@ def test_the_sales_page_shows_sales_history_newest_first(client, db):
 
     assert rows == [
         ["2026-09-10", "Box Logo Hoodie", "Hoodies", "3",
-         "$125.50", "$376.50", "$120.60", "$255.90"],
+         "$125.50", "$376.50", "$120.60", "$255.90", "Edit Delete"],
         ["2026-09-03", "Jordan 1 Chicago", "Shoes", "2",
-         "$88.00", "$176.00", "$66.66", "$109.34"],
+         "$88.00", "$176.00", "$66.66", "$109.34", "Edit Delete"],
         ["2026-09-03", "Jordan 1 Chicago", "Shoes", "1",
-         "$90.00", "$90.00", "$35.00", "$55.00"],
+         "$90.00", "$90.00", "$35.00", "$55.00", "Edit Delete"],
     ]
 
 
@@ -522,7 +522,7 @@ def test_the_sales_page_shows_what_sales_history_returns(client, db):
          str(sale["quantity"]), psells.format_cents(sale["sale_price_cents"]),
          psells.format_cents(sale["sale_total_cents"]),
          psells.format_cents(sale["partner_cut_cents"]),
-         psells.format_cents(sale["profit_cents"])]
+         psells.format_cents(sale["profit_cents"]), "Edit Delete"]
         for sale in psells.sales_history(db)
     ]
 
@@ -547,9 +547,9 @@ def test_the_returns_page_shows_returns_newest_first_with_notes(client, db):
     rows = table_rows(client.get("/returns-history").text)
 
     assert rows == [
-        ["2026-09-12", "Jordan 1 Chicago", "Shoes", "2", ""],
-        ["2026-09-12", "Box Logo Hoodie", "Hoodies", "1", "Torn seam"],
-        ["2026-09-05", "Jordan 1 Chicago", "Shoes", "1", "Wrong size"],
+        ["2026-09-12", "Jordan 1 Chicago", "Shoes", "2", "", "Edit Delete"],
+        ["2026-09-12", "Box Logo Hoodie", "Hoodies", "1", "Torn seam", "Edit Delete"],
+        ["2026-09-05", "Jordan 1 Chicago", "Shoes", "1", "Wrong size", "Edit Delete"],
     ]
 
 
@@ -559,9 +559,9 @@ def test_the_payments_page_shows_payments_newest_first(client, db):
     rows = table_rows(client.get("/payments-history").text)
 
     assert rows == [
-        ["2026-09-20", "$123.45", ""],
-        ["2026-09-15", "$0.00", "Nothing owed"],
-        ["2026-09-15", "$50.00", "First transfer"],
+        ["2026-09-20", "$123.45", "", "Edit Delete"],
+        ["2026-09-15", "$0.00", "Nothing owed", "Edit Delete"],
+        ["2026-09-15", "$50.00", "First transfer", "Edit Delete"],
     ]
 
 
@@ -572,15 +572,17 @@ def test_the_history_pages_show_what_the_api_serves(client, db):
     assert table_rows(client.get("/sales-history").text) == [
         [s["date"], s["name"], s["category"], str(s["quantity"]),
          money(s["sale_price_cents"]), money(s["sale_total_cents"]),
-         money(s["partner_cut_cents"]), money(s["profit_cents"])]
+         money(s["partner_cut_cents"]), money(s["profit_cents"]),
+         "Edit Delete"]
         for s in client.get("/sales").json()
     ]
     assert table_rows(client.get("/returns-history").text) == [
-        [r["date"], r["name"], r["category"], str(r["quantity"]), r["notes"]]
+        [r["date"], r["name"], r["category"], str(r["quantity"]), r["notes"],
+         "Edit Delete"]
         for r in client.get("/returns").json()
     ]
     assert table_rows(client.get("/payments-history").text) == [
-        [p["date"], money(p["amount_cents"]), p["notes"]]
+        [p["date"], money(p["amount_cents"]), p["notes"], "Edit Delete"]
         for p in client.get("/payments").json()
     ]
 
@@ -593,7 +595,7 @@ def test_a_payment_recorded_on_the_page_appears_in_the_history(client, db):
 
     rows = table_rows(client.get("/payments-history").text)
 
-    assert rows == [["2026-09-30", "$75.25", "Cash"]]
+    assert rows == [["2026-09-30", "$75.25", "Cash", "Edit Delete"]]
 
 
 def test_markup_in_history_text_is_escaped(client, db):
@@ -609,6 +611,205 @@ def test_markup_in_history_text_is_escaped(client, db):
 
         assert "<script>" not in page, path
         assert table_rows(page)[0][column] == name, path
+
+
+# Correcting a sale, return or payment ---------------------------------------------
+
+def posting_form(page):
+    (form,) = [form for form in forms(page) if form["method"] == "post"]
+    return form
+
+
+def submit_served_form(client, path, **typed):
+    """Open a page, fill in its one posting form as served, and submit it."""
+    form = posting_form(client.get(path).text)
+    data = form_data(form)
+    data.update(typed)
+    return client.post(form["action"], data=data, follow_redirects=False)
+
+
+def corrections(db):
+    return db.execute("SELECT record_type, record_id, action FROM corrections "
+                      "ORDER BY id").fetchall()
+
+
+def test_every_history_row_links_to_its_edit_and_delete_pages(client, db):
+    add_history(db)
+
+    for path, kind in [("/sales-history", "sales"),
+                       ("/returns-history", "returns"),
+                       ("/payments-history", "payments")]:
+        page = client.get(path).text
+        for record_id in (1, 2, 3):
+            assert f'href="http://testserver/{kind}-history/{record_id}/edit"' in page
+            assert f'href="http://testserver/{kind}-history/{record_id}/delete"' in page
+
+
+def test_a_sale_edit_form_starts_from_the_sale_and_shows_what_stays(client,
+                                                                    db):
+    add_history(db)
+
+    page = client.get("/sales-history/3/edit").text
+    form = posting_form(page)
+
+    assert form["action"].endswith("/sales-history/3/edit")
+    assert form_data(form) == {"quantity": "2", "sale_price": "88.00",
+                               "date": "2026-09-03"}
+    assert figures(page)["Product"] == "Jordan 1 Chicago, id 1"
+    assert figures(page)["Partner cut per unit, frozen"] == "$33.33"
+    assert figures(page)["Available now"] == str(
+        web.find_product(db, 1)["quantity_available"])
+
+
+def test_editing_a_sale_from_its_form_saves_logs_and_says_so(client, db):
+    add_history(db)
+
+    response = submit_served_form(client, "/sales-history/3/edit",
+                                  quantity="1", sale_price="80.00")
+
+    assert response.status_code == 303
+    assert response.headers["location"].endswith("/sales-history?edited=3")
+    page = client.get(response.headers["location"]).text
+    assert paragraphs(page, "notice") == [
+        ("Saved changes to the sale of Jordan 1 Chicago dated 2026-09-03.", [])]
+    edited = psells.find_sale(db, 3)
+    assert (edited["quantity"], edited["sale_price_cents"],
+            edited["partner_share_cents"]) == (1, 8000, 3333)
+    assert corrections(db) == [{"record_type": "sale", "record_id": 3,
+                                "action": "edit"}]
+
+
+def test_a_sale_edit_with_wrong_text_is_shown_again_and_changes_nothing(
+        client, db):
+    add_history(db)
+
+    response = submit_served_form(client, "/sales-history/3/edit",
+                                  quantity="two", sale_price="-1")
+
+    assert response.status_code == 422
+    assert "Nothing was changed." in response.text
+    assert posting_form(response.text)["inputs"][1]["value"] == "two"
+    assert psells.find_sale(db, 3)["quantity"] == 2
+    assert corrections(db) == []
+
+
+def test_a_sale_edit_past_the_stock_is_a_409_with_the_reason(client, db):
+    add_history(db)
+    most = web.find_product(db, 1)["quantity_available"] + 2
+
+    response = submit_served_form(client, "/sales-history/3/edit",
+                                  quantity=str(most + 1))
+
+    assert response.status_code == 409
+    assert f"can be at most {most}, not {most + 1}." in response.text
+    assert corrections(db) == []
+
+
+def test_the_delete_page_says_what_deleting_a_sale_changes(client, db):
+    add_history(db)
+
+    page = client.get("/sales-history/2/delete").text
+
+    assert paragraphs(page, "lead") == [(
+        "Deleting it gives its 3 sold back to Box Logo Hoodie's stock, and "
+        "lowers revenue by $376.50, the partner share earned by $120.60 and "
+        "profit by $255.90. The sale as it was is kept in the corrections "
+        "log.", [])]
+    assert psells.find_sale(db, 2) is not None
+
+
+def test_deleting_a_sale_from_its_confirmation(client, db):
+    add_history(db)
+    before = psells.dashboard_totals(db)
+
+    response = submit_served_form(client, "/sales-history/2/delete")
+
+    assert response.status_code == 303
+    assert response.headers["location"].endswith("/sales-history?deleted=2")
+    page = client.get(response.headers["location"]).text
+    assert paragraphs(page, "notice") == [
+        ("Deleted the sale dated 2026-09-10. It is kept in the corrections "
+         "log.", [])]
+    assert psells.find_sale(db, 2) is None
+    after = psells.dashboard_totals(db)
+    assert before["total_revenue"] - after["total_revenue"] == 37650
+    assert corrections(db) == [{"record_type": "sale", "record_id": 2,
+                                "action": "delete"}]
+
+
+def test_a_notice_names_only_a_record_the_log_or_the_list_has(client, db):
+    """deleted=3 names a sale that was edited, not deleted: the log has a row
+    for it, but not a delete."""
+    add_history(db)
+    psells.update_sale(db, 3, 1, 8800, "2026-09-03")
+
+    for query in ["?deleted=2", "?deleted=3", "?deleted=99", "?deleted=abc",
+                  "?edited=99", "?edited=abc"]:
+        page = client.get("/sales-history" + query).text
+        assert paragraphs(page, "notice") == [], query
+
+
+def test_editing_and_deleting_a_return_from_its_pages(client, db):
+    add_history(db)
+
+    edited = submit_served_form(client, "/returns-history/1/edit",
+                                quantity="2", notes="Both torn")
+    deleted = submit_served_form(client, "/returns-history/2/delete")
+
+    assert edited.headers["location"].endswith("/returns-history?edited=1")
+    assert deleted.headers["location"].endswith("/returns-history?deleted=2")
+    assert (psells.find_return(db, 1)["quantity"],
+            psells.find_return(db, 1)["notes"]) == (2, "Both torn")
+    assert psells.find_return(db, 2) is None
+    assert [c["action"] for c in corrections(db)] == ["edit", "delete"]
+
+
+def test_editing_and_deleting_a_payment_from_its_pages(client, db):
+    add_history(db)
+
+    edit_page = client.get("/payments-history/1/edit").text
+    edited = submit_served_form(client, "/payments-history/1/edit",
+                                amount="45.00")
+    deleted = submit_served_form(client, "/payments-history/2/delete")
+
+    assert form_data(posting_form(edit_page)) == {
+        "amount": "50.00", "date": "2026-09-15", "notes": "First transfer"}
+    assert edited.headers["location"].endswith("/payments-history?edited=1")
+    assert deleted.headers["location"].endswith("/payments-history?deleted=2")
+    assert psells.dashboard_totals(db)["total_paid"] == 4500
+    assert paragraphs(client.get(deleted.headers["location"]).text,
+                      "notice") == [
+        ("Deleted the payment dated 2026-09-20. It is kept in the corrections "
+         "log.", [])]
+
+
+@pytest.mark.parametrize("kind", ["sales", "returns", "payments"])
+@pytest.mark.parametrize("action", ["edit", "delete"])
+def test_a_record_that_does_not_exist_is_a_404_page(client, db, kind, action):
+    path = f"/{kind}-history/99/{action}"
+
+    for response in (client.get(path), client.post(path)):
+        assert response.status_code == 404
+        assert "There is no" in response.text
+
+
+def test_opening_a_delete_page_deletes_nothing(client, db):
+    add_history(db)
+
+    for kind in ("sales", "returns", "payments"):
+        assert client.get(f"/{kind}-history/1/delete").status_code == 200
+
+    assert corrections(db) == []
+    assert psells.find_sale(db, 1) is not None
+
+
+def test_markup_in_notes_is_escaped_on_the_correction_pages(client, db):
+    name = '<script>alert("x")</script>'
+    add_product(db, 1, quantity_received=5)
+    add_return(db, 1, item_id=1, quantity=1, notes=name)
+
+    for path in ["/returns-history/1/edit", "/returns-history/1/delete"]:
+        assert "<script>" not in client.get(path).text, path
 
 
 # Adding a product ------------------------------------------------------------
@@ -1790,6 +1991,9 @@ def test_there_are_templates_to_check():
     assert "sales_history.html" in names
     assert "returns_history.html" in names
     assert "payments_history.html" in names
+    assert "record_edit.html" in names
+    assert "record_delete.html" in names
+    assert "record_not_found.html" in names
     assert "macros.html" in names
 
 
