@@ -7,6 +7,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 import psycopg
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 
 
 # Where the data lives.
@@ -157,25 +158,34 @@ def sales_history(connection):
     Sales on the same date come newest id first.
     """
     return connection.execute(
-        "SELECT s.id, s.date, s.item_id, p.name, p.category, s.quantity, "
-        "       s.sale_price_cents, s.partner_share_cents, "
-        "       s.quantity * s.sale_price_cents AS sale_total_cents, "
-        "       s.quantity * s.partner_share_cents AS partner_cut_cents, "
-        "       s.quantity * s.sale_price_cents "
-        "         - s.quantity * s.partner_share_cents AS profit_cents "
-        "FROM sales s JOIN products p ON p.id = s.item_id "
-        "ORDER BY s.date DESC, s.id DESC"
+        SALE_ROWS + "ORDER BY s.date DESC, s.id DESC"
     ).fetchall()
+
+
+# The rows each history lists, written once, so that one record read on its
+# own, for an edit form or a confirmation, is exactly the row the list shows.
+SALE_ROWS = (
+    "SELECT s.id, s.date, s.item_id, p.name, p.category, s.quantity, "
+    "       s.sale_price_cents, s.partner_share_cents, "
+    "       s.quantity * s.sale_price_cents AS sale_total_cents, "
+    "       s.quantity * s.partner_share_cents AS partner_cut_cents, "
+    "       s.quantity * s.sale_price_cents "
+    "         - s.quantity * s.partner_share_cents AS profit_cents "
+    "FROM sales s JOIN products p ON p.id = s.item_id "
+)
+RETURN_ROWS = (
+    "SELECT r.id, r.date, r.item_id, p.name, p.category, r.quantity, "
+    "       r.notes "
+    "FROM returns r JOIN products p ON p.id = r.item_id "
+)
+PAYMENT_ROWS = "SELECT * FROM payments "
 
 
 def returns_history(connection):
     """Every return to the partner, newest first, with its product's name and
     category. Returns on the same date come newest id first."""
     return connection.execute(
-        "SELECT r.id, r.date, r.item_id, p.name, p.category, r.quantity, "
-        "       r.notes "
-        "FROM returns r JOIN products p ON p.id = r.item_id "
-        "ORDER BY r.date DESC, r.id DESC"
+        RETURN_ROWS + "ORDER BY r.date DESC, r.id DESC"
     ).fetchall()
 
 
@@ -183,8 +193,26 @@ def payments_history(connection):
     """Every payment to the partner, newest first; on the same date, newest
     id first."""
     return connection.execute(
-        "SELECT * FROM payments ORDER BY date DESC, id DESC"
+        PAYMENT_ROWS + "ORDER BY date DESC, id DESC"
     ).fetchall()
+
+
+def find_sale(connection, sale_id):
+    """One sale as sales_history lists it, or None."""
+    return connection.execute(SALE_ROWS + "WHERE s.id = %s",
+                              (sale_id,)).fetchone()
+
+
+def find_return(connection, return_id):
+    """One return as returns_history lists it, or None."""
+    return connection.execute(RETURN_ROWS + "WHERE r.id = %s",
+                              (return_id,)).fetchone()
+
+
+def find_payment(connection, payment_id):
+    """One payment as payments_history lists it, or None."""
+    return connection.execute(PAYMENT_ROWS + "WHERE id = %s",
+                              (payment_id,)).fetchone()
 
 
 def format_cents(cents, *, symbol=True):
@@ -1389,24 +1417,33 @@ class ReturnInputError(ReturnError):
         super().__init__(" ".join(self.problems.values()))
 
 
-def create_return_from_text(connection, product_id, fields):
-    """Record a return from a form's text and return the new return's id.
-
-    Quantity and date are read exactly as a sale form's are. Notes are free
-    text and may be empty. Raises ReturnInputError when the text is wrong in
-    itself, and otherwise whatever create_return raises.
-    """
+def read_return_text(fields):
+    """Turn a return form's text into create_return's values, as
+    (values, problems). Quantity and date are read exactly as a sale form's
+    are. Notes are free text and may be empty."""
     text = {key: (fields.get(key) or "").strip() for key in RETURN_FORM_FIELDS}
     problems = {}
 
-    quantity = _read_quantity_text(text["quantity"], problems)
-    return_date = _read_date_text(text["date"], problems)
+    values = {"quantity": _read_quantity_text(text["quantity"], problems),
+              "return_date": _read_date_text(text["date"], problems),
+              "notes": text["notes"]}
+
+    return values, problems
+
+
+def create_return_from_text(connection, product_id, fields):
+    """Record a return from a form's text and return the new return's id.
+
+    Raises ReturnInputError when the text is wrong in itself, and otherwise
+    whatever create_return raises.
+    """
+    values, problems = read_return_text(fields)
 
     if problems:
         raise ReturnInputError(problems)
 
-    return create_return(connection, product_id, quantity, return_date,
-                         text["notes"])
+    return create_return(connection, product_id, values["quantity"],
+                         values["return_date"], values["notes"])
 
 
 def all_payments(connection):
@@ -1428,13 +1465,12 @@ class PaymentInputError(PaymentError):
         super().__init__(" ".join(self.problems.values()))
 
 
-def create_payment_from_text(connection, fields):
-    """Record a payment from a form's text and return the new payment's id.
+def read_payment_text(fields):
+    """Turn a payment form's text into create_payment's values, as
+    (values, problems).
 
     The amount is read by parse_money and may be zero, as on the command line.
-    The date is read as every form's date is. Raises PaymentInputError with a
-    sentence per field when anything is wrong; a payment has no stock to
-    disagree with, so there is no second kind of refusal.
+    The date is read as every form's date is.
     """
     text = {key: (fields.get(key) or "").strip() for key in PAYMENT_FORM_FIELDS}
     problems = {}
@@ -1454,11 +1490,279 @@ def create_payment_from_text(connection, fields):
 
     payment_date = _read_date_text(text["date"], problems)
 
+    values = {"amount_cents": amount_cents, "payment_date": payment_date,
+              "notes": text["notes"]}
+
+    return values, problems
+
+
+def create_payment_from_text(connection, fields):
+    """Record a payment from a form's text and return the new payment's id.
+
+    Raises PaymentInputError with a sentence per field when anything is wrong;
+    a payment has no stock to disagree with, so there is no second kind of
+    refusal.
+    """
+    values, problems = read_payment_text(fields)
+
     if problems:
         raise PaymentInputError(problems)
 
-    return create_payment(connection, amount_cents, payment_date,
-                          text["notes"])
+    return create_payment(connection, values["amount_cents"],
+                          values["payment_date"], values["notes"])
+
+
+# Correcting a sale, return or payment ----------------------------------------
+#
+# A record entered wrongly can be edited, to fix a typo, or deleted, when it
+# should never have existed. Either way the change and a row in corrections,
+# holding the whole record before and, for an edit, after, are written in one
+# transaction, so the figures can be corrected and what was corrected is still
+# known. The rules are the ones that held when the record was entered:
+#
+#   A sale keeps its product and the per-unit partner cut frozen when it sold.
+#   Only its date, quantity and price each can change, so its partner cut is
+#   still quantity times the cut agreed at the time.
+#
+#   A return keeps its product; its date, quantity and notes can change. A
+#   payment's date, amount and notes can change.
+#
+#   A sale's or return's new quantity may be anything from 1 up to what is
+#   available plus the record's own units, so no product is ever left with
+#   less than none available. Zero is refused: that is a delete.
+#
+#   A delete gives a sale's or return's units back to stock, which can never
+#   break the stock rule, and lowers what a deleted payment paid.
+#
+# Saving an edit that changes nothing writes nothing, not even a correction:
+# nothing was corrected.
+
+class SaleNotFound(SaleError):
+    """No sale with that id: correct the id, not the sale."""
+
+
+class ReturnNotFound(ReturnError):
+    """No return with that id."""
+
+
+class PaymentNotFound(PaymentError):
+    """No payment with that id."""
+
+
+# The table behind each kind of record, under the name corrections uses.
+CORRECTED_TABLES = {"sale": "sales", "return": "returns",
+                    "payment": "payments"}
+
+
+def _stored_record(connection, record_type, record_id):
+    """The record as stored, as JSON, locked until the transaction ends, or
+    None. to_jsonb writes every column, dates as YYYY-MM-DD."""
+    row = connection.execute(
+        f"SELECT to_jsonb(t) AS record FROM {CORRECTED_TABLES[record_type]} t "
+        "WHERE id = %s FOR UPDATE",
+        (record_id,)
+    ).fetchone()
+
+    return None if row is None else row["record"]
+
+
+def _log_correction(connection, record_type, record_id, action, before,
+                    after=None):
+    connection.execute(
+        "INSERT INTO corrections (record_type, record_id, action, before, "
+        "after) VALUES (%s, %s, %s, %s, %s)",
+        (record_type, record_id, action, Jsonb(before),
+         None if after is None else Jsonb(after))
+    )
+
+
+def _checked_date(text, error):
+    """A YYYY-MM-DD date written back zero-padded, or error raised."""
+    try:
+        return datetime.strptime(text, "%Y-%m-%d").strftime("%Y-%m-%d")
+    except (ValueError, TypeError):
+        raise error(f"{text!r} is not a date in YYYY-MM-DD form.")
+
+
+def _check_new_quantity(connection, product_id, old_quantity, new_quantity,
+                        error, kind):
+    """Refuse a quantity that would leave the product with less than none.
+
+    What is available now plus this record's own units is the most the record
+    can hold: the stock create_sale or create_return would have seen had the
+    record never been entered.
+    """
+    if not _is_whole_number(new_quantity) or new_quantity < 1:
+        raise error("Quantity must be at least 1.")
+
+    product = connection.execute(
+        "SELECT name, quantity_available FROM products_view WHERE id = %s",
+        (product_id,)
+    ).fetchone()
+    most = product["quantity_available"] + old_quantity
+
+    if new_quantity > most:
+        raise error(
+            f"{product['name']} has {product['quantity_available']} more "
+            f"available, so this {kind} can be at most {most}, "
+            f"not {new_quantity}."
+        )
+
+
+def _edit(connection, record_type, record_id, update, values, before):
+    """Apply one UPDATE and log it, unless it changed nothing."""
+    connection.execute(update, (*values, record_id))
+    after = _stored_record(connection, record_type, record_id)
+
+    if after != before:
+        _log_correction(connection, record_type, record_id, "edit", before,
+                        after)
+
+
+def update_sale(connection, sale_id, quantity, sale_price_cents, sale_date):
+    """Correct a sale's quantity, price each and date.
+
+    The product and the frozen per-unit partner cut are not touched. Raises
+    SaleNotFound for an id that does not exist and SaleError for the rest.
+    """
+    if not _is_whole_number(sale_price_cents) or sale_price_cents < 0:
+        raise SaleError("Sale price cannot be negative.")
+
+    sale_date = _checked_date(sale_date, SaleError)
+
+    with connection.transaction():
+        before = _stored_record(connection, "sale", sale_id)
+
+        if before is None:
+            raise SaleNotFound(f"No sale with id {sale_id}.")
+
+        _check_new_quantity(connection, before["item_id"], before["quantity"],
+                            quantity, SaleError, "sale")
+        _edit(connection, "sale", sale_id,
+              "UPDATE sales SET date = %s, quantity = %s, "
+              "sale_price_cents = %s WHERE id = %s",
+              (sale_date, quantity, sale_price_cents), before)
+
+
+def update_return(connection, return_id, quantity, return_date, notes):
+    """Correct a return's quantity, date and notes. The product is not
+    touched. Raises ReturnNotFound or ReturnError."""
+    return_date = _checked_date(return_date, ReturnError)
+
+    with connection.transaction():
+        before = _stored_record(connection, "return", return_id)
+
+        if before is None:
+            raise ReturnNotFound(f"No return with id {return_id}.")
+
+        _check_new_quantity(connection, before["item_id"], before["quantity"],
+                            quantity, ReturnError, "return")
+        _edit(connection, "return", return_id,
+              "UPDATE returns SET date = %s, quantity = %s, notes = %s "
+              "WHERE id = %s",
+              (return_date, quantity, (notes or "").strip()), before)
+
+
+def update_payment(connection, payment_id, amount_cents, payment_date, notes):
+    """Correct a payment's amount, date and notes. Raises PaymentNotFound or
+    PaymentError. Zero is accepted, as when a payment is recorded."""
+    if not _is_whole_number(amount_cents) or amount_cents < 0:
+        raise PaymentError("Amount cannot be negative.")
+
+    payment_date = _checked_date(payment_date, PaymentError)
+
+    with connection.transaction():
+        before = _stored_record(connection, "payment", payment_id)
+
+        if before is None:
+            raise PaymentNotFound(f"No payment with id {payment_id}.")
+
+        _edit(connection, "payment", payment_id,
+              "UPDATE payments SET date = %s, amount_cents = %s, notes = %s "
+              "WHERE id = %s",
+              (payment_date, amount_cents, (notes or "").strip()), before)
+
+
+def _delete(connection, record_type, record_id, not_found):
+    with connection.transaction():
+        before = _stored_record(connection, record_type, record_id)
+
+        if before is None:
+            raise not_found(f"No {record_type} with id {record_id}.")
+
+        connection.execute(
+            f"DELETE FROM {CORRECTED_TABLES[record_type]} WHERE id = %s",
+            (record_id,)
+        )
+        _log_correction(connection, record_type, record_id, "delete", before)
+
+
+def delete_sale(connection, sale_id):
+    """Remove a sale, giving its units back to stock. Raises SaleNotFound."""
+    _delete(connection, "sale", sale_id, SaleNotFound)
+
+
+def delete_return(connection, return_id):
+    """Remove a return, giving its units back to stock. Raises
+    ReturnNotFound."""
+    _delete(connection, "return", return_id, ReturnNotFound)
+
+
+def delete_payment(connection, payment_id):
+    """Remove a payment. Raises PaymentNotFound."""
+    _delete(connection, "payment", payment_id, PaymentNotFound)
+
+
+# The same corrections from a form's text, and the text an edit form starts
+# from. Reading that text back gives the record's own values, so saving an
+# edit form unchanged changes nothing.
+
+def sale_form_text(sale):
+    return {"quantity": str(sale["quantity"]),
+            "sale_price": format_cents(sale["sale_price_cents"], symbol=False),
+            "date": str(sale["date"])}
+
+
+def return_form_text(item_return):
+    return {"quantity": str(item_return["quantity"]),
+            "date": str(item_return["date"]), "notes": item_return["notes"]}
+
+
+def payment_form_text(payment):
+    return {"amount": format_cents(payment["amount_cents"], symbol=False),
+            "date": str(payment["date"]), "notes": payment["notes"]}
+
+
+def update_sale_from_text(connection, sale_id, fields):
+    """Raises SaleInputError for text wrong in itself, and otherwise what
+    update_sale raises."""
+    values, problems = read_sale_text(fields)
+
+    if problems:
+        raise SaleInputError(problems)
+
+    update_sale(connection, sale_id, values["quantity"],
+                values["sale_price_cents"], values["sale_date"])
+
+
+def update_return_from_text(connection, return_id, fields):
+    values, problems = read_return_text(fields)
+
+    if problems:
+        raise ReturnInputError(problems)
+
+    update_return(connection, return_id, values["quantity"],
+                  values["return_date"], values["notes"])
+
+
+def update_payment_from_text(connection, payment_id, fields):
+    values, problems = read_payment_text(fields)
+
+    if problems:
+        raise PaymentInputError(problems)
+
+    update_payment(connection, payment_id, values["amount_cents"],
+                   values["payment_date"], values["notes"])
 
 def view_dashboard(connection):
     totals = dashboard_totals(connection)
