@@ -463,6 +463,20 @@ def ask_edit_choice(prompt, current, options):
         print("Invalid choice. Please try again.")
 
 
+def ask_edit_date(prompt, current):
+    """A date, with Enter keeping the current one."""
+    while True:
+        text = input(f"{prompt} [{current}]: ").strip()
+
+        if text == "":
+            return current
+
+        try:
+            return datetime.strptime(text, "%Y-%m-%d").strftime("%Y-%m-%d")
+        except ValueError:
+            print("Please enter a valid date in YYYY-MM-DD format.")
+
+
 def ask_partner_share(retail_discontinued):
     """Ask how the partner's cut is set for one product.
 
@@ -1610,17 +1624,21 @@ def _check_new_quantity(connection, product_id, old_quantity, new_quantity,
 
 
 def _edit(connection, record_type, record_id, update, values, before):
-    """Apply one UPDATE and log it, unless it changed nothing."""
+    """Apply one UPDATE and log it, unless it changed nothing. Returns whether
+    it changed anything."""
     connection.execute(update, (*values, record_id))
     after = _stored_record(connection, record_type, record_id)
 
-    if after != before:
-        _log_correction(connection, record_type, record_id, "edit", before,
-                        after)
+    if after == before:
+        return False
+
+    _log_correction(connection, record_type, record_id, "edit", before, after)
+    return True
 
 
 def update_sale(connection, sale_id, quantity, sale_price_cents, sale_date):
-    """Correct a sale's quantity, price each and date.
+    """Correct a sale's quantity, price each and date, and return whether
+    anything changed.
 
     The product and the frozen per-unit partner cut are not touched. Raises
     SaleNotFound for an id that does not exist and SaleError for the rest.
@@ -1638,7 +1656,7 @@ def update_sale(connection, sale_id, quantity, sale_price_cents, sale_date):
 
         _check_new_quantity(connection, before["item_id"], before["quantity"],
                             quantity, SaleError, "sale")
-        _edit(connection, "sale", sale_id,
+        return _edit(connection, "sale", sale_id,
               "UPDATE sales SET date = %s, quantity = %s, "
               "sale_price_cents = %s WHERE id = %s",
               (sale_date, quantity, sale_price_cents), before)
@@ -1657,7 +1675,7 @@ def update_return(connection, return_id, quantity, return_date, notes):
 
         _check_new_quantity(connection, before["item_id"], before["quantity"],
                             quantity, ReturnError, "return")
-        _edit(connection, "return", return_id,
+        return _edit(connection, "return", return_id,
               "UPDATE returns SET date = %s, quantity = %s, notes = %s "
               "WHERE id = %s",
               (return_date, quantity, (notes or "").strip()), before)
@@ -1677,7 +1695,7 @@ def update_payment(connection, payment_id, amount_cents, payment_date, notes):
         if before is None:
             raise PaymentNotFound(f"No payment with id {payment_id}.")
 
-        _edit(connection, "payment", payment_id,
+        return _edit(connection, "payment", payment_id,
               "UPDATE payments SET date = %s, amount_cents = %s, notes = %s "
               "WHERE id = %s",
               (payment_date, amount_cents, (notes or "").strip()), before)
@@ -1978,6 +1996,7 @@ def view_sales_history(connection):
         return
 
     for sale in sales:
+        print(f"ID: {sale['id']}")
         print(f"Date: {sale['date']}")
         print(f"Product: {sale['name']}")
         print(f"Category: {sale['category']}")
@@ -1998,6 +2017,7 @@ def view_returns_history(connection):
         return
 
     for item_return in returns:
+        print(f"ID: {item_return['id']}")
         print(f"Date: {item_return['date']}")
         print(f"Product: {item_return['name']}")
         print(f"Category: {item_return['category']}")
@@ -2015,6 +2035,7 @@ def view_payments_history(connection):
         return
 
     for payment in payments:
+        print(f"ID: {payment['id']}")
         print(f"Date: {payment['date']}")
         print(f"Amount: {format_cents(payment['amount_cents'])}")
         print(f"Notes: {payment['notes']}")
@@ -2325,6 +2346,155 @@ def record_payment(connection):
     print("Payment recorded.")
 
 
+# Fixing a sale, return or payment --------------------------------------------
+#
+# Options 15 to 17. Each lists its history with ids, asks which record, then
+# edit or delete. An edit asks every field that can change, Enter keeping the
+# current value, as product Edit does; a delete says what it changes and asks
+# yes or no. The rules, and the corrections log, are the functions' above.
+
+def choose_record(connection, history, view, find, kind, empty):
+    """List the records, ask for an id, and return that record, or None."""
+    if not history(connection):
+        print(empty)
+        return None
+
+    view(connection)
+    record_id = ask_int(f"{kind.capitalize()} ID: ", min_value=1)
+    record = find(connection, record_id)
+
+    if record is None:
+        print(f"No {kind} with id {record_id}.")
+
+    return record
+
+
+def confirm_delete(kind, consequence):
+    print(consequence)
+    print(f"The {kind} as it was is kept in the corrections log.")
+
+    return ask_choice(f"Delete this {kind}? (yes/no): ", ["yes", "no"]) == "yes"
+
+
+def report_edit(kind, changed):
+    if changed:
+        print(f"{kind.capitalize()} updated. The {kind} as it was is kept in "
+              "the corrections log.")
+    else:
+        print("Nothing changed.")
+
+
+def fix_sale(connection):
+    sale = choose_record(connection, sales_history, view_sales_history,
+                         find_sale, "sale", "No sales recorded yet.")
+
+    if sale is None:
+        return
+
+    if ask_choice("Edit or delete? (edit/delete): ",
+                  ["edit", "delete"]) == "edit":
+        print("The product and the partner cut per unit frozen when it sold "
+              "stay as they are.")
+        quantity = ask_edit_number("Quantity", sale["quantity"], int,
+                                   min_value=1)
+        price = ask_edit_money("Sale price per unit ($)",
+                               sale["sale_price_cents"], min_cents=0)
+        sale_date = ask_edit_date("Date", str(sale["date"]))
+
+        try:
+            changed = update_sale(connection, sale["id"], quantity, price,
+                                  sale_date)
+        except SaleError as refused:
+            print(refused)
+            return
+
+        report_edit("sale", changed)
+        return
+
+    if not confirm_delete("sale", (
+            f"Deleting it gives its {sale['quantity']} sold back to "
+            f"{sale['name']}'s stock, and lowers revenue by "
+            f"{format_cents(sale['sale_total_cents'])}, the partner share "
+            f"earned by {format_cents(sale['partner_cut_cents'])} and profit "
+            f"by {format_cents(sale['profit_cents'])}.")):
+        print("Cancelled.")
+        return
+
+    delete_sale(connection, sale["id"])
+    print("Sale deleted.")
+
+
+def fix_return(connection):
+    item_return = choose_record(connection, returns_history,
+                                view_returns_history, find_return, "return",
+                                "No returns recorded yet.")
+
+    if item_return is None:
+        return
+
+    if ask_choice("Edit or delete? (edit/delete): ",
+                  ["edit", "delete"]) == "edit":
+        quantity = ask_edit_number("Quantity", item_return["quantity"], int,
+                                   min_value=1)
+        return_date = ask_edit_date("Date", str(item_return["date"]))
+        notes = ask_edit_text("Notes", item_return["notes"])
+
+        try:
+            changed = update_return(connection, item_return["id"], quantity,
+                                    return_date, notes)
+        except ReturnError as refused:
+            print(refused)
+            return
+
+        report_edit("return", changed)
+        return
+
+    if not confirm_delete("return", (
+            f"Deleting it gives its {item_return['quantity']} returned back "
+            f"to {item_return['name']}'s stock. No money figure changes.")):
+        print("Cancelled.")
+        return
+
+    delete_return(connection, item_return["id"])
+    print("Return deleted.")
+
+
+def fix_payment(connection):
+    payment = choose_record(connection, payments_history,
+                            view_payments_history, find_payment, "payment",
+                            "No payments recorded yet.")
+
+    if payment is None:
+        return
+
+    if ask_choice("Edit or delete? (edit/delete): ",
+                  ["edit", "delete"]) == "edit":
+        amount = ask_edit_money("Amount ($)", payment["amount_cents"],
+                                min_cents=0)
+        payment_date = ask_edit_date("Date", str(payment["date"]))
+        notes = ask_edit_text("Notes", payment["notes"])
+
+        try:
+            changed = update_payment(connection, payment["id"], amount,
+                                     payment_date, notes)
+        except PaymentError as refused:
+            print(refused)
+            return
+
+        report_edit("payment", changed)
+        return
+
+    if not confirm_delete("payment", (
+            f"Deleting it lowers total paid by "
+            f"{format_cents(payment['amount_cents'])}, so the balance owing "
+            "rises by the same.")):
+        print("Cancelled.")
+        return
+
+    delete_payment(connection, payment["id"])
+    print("Payment deleted.")
+
+
 def main():
     try:
         default_partner_share_percent()
@@ -2356,6 +2526,9 @@ def main():
             "12: Sales History\n"
             "13: Returns History\n"
             "14: Payments History\n"
+            "15: Fix Sale\n"
+            "16: Fix Return\n"
+            "17: Fix Payment\n"
         )
 
         if choice == "0":
@@ -2402,6 +2575,15 @@ def main():
 
         elif choice == "14":
             view_payments_history(connection)
+
+        elif choice == "15":
+            fix_sale(connection)
+
+        elif choice == "16":
+            fix_return(connection)
+
+        elif choice == "17":
+            fix_payment(connection)
 
         else:
             print("Invalid input try again!\n")

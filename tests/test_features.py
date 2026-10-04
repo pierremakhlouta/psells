@@ -1238,6 +1238,7 @@ def test_sales_history_prints_newest_first_with_its_figures(db, capsys,
     assert [b["Date"] for b in blocks] == ["2026-09-10", "2026-09-03",
                                            "2026-09-03"]
     assert blocks[1] == {
+        "ID": "3",
         "Date": "2026-09-03", "Product": "Jordan 4 Bred", "Category": "Shoes",
         "Quantity": "2", "Price Each": "$140.00", "Sale Total": "$280.00",
         "Partner Cut": "$112.00", "Profit": "$168.00",
@@ -1262,9 +1263,11 @@ def test_payments_history_prints_newest_first(db, capsys, partner_rate):
     psells.view_payments_history(db)
 
     assert printed_blocks(capsys.readouterr().out) == [
-        {"Date": "2026-09-20", "Amount": "$123.45", "Notes": ""},
-        {"Date": "2026-09-15", "Amount": "$0.00", "Notes": "Nothing owed"},
-        {"Date": "2026-09-15", "Amount": "$50.00", "Notes": "First transfer"},
+        {"ID": "2", "Date": "2026-09-20", "Amount": "$123.45", "Notes": ""},
+        {"ID": "3", "Date": "2026-09-15", "Amount": "$0.00",
+         "Notes": "Nothing owed"},
+        {"ID": "1", "Date": "2026-09-15", "Amount": "$50.00",
+         "Notes": "First transfer"},
     ]
 
 
@@ -1295,20 +1298,21 @@ def test_the_terminal_lists_what_the_api_serves(db, capsys, client):
         product_block(p, p["reason"])
         for p in client.get("/products/out-of-stock").json()]
     assert shown(psells.view_sales_history) == [
-        {"Date": s["date"], "Product": s["name"], "Category": s["category"],
-         "Quantity": str(s["quantity"]),
+        {"ID": str(s["id"]), "Date": s["date"], "Product": s["name"],
+         "Category": s["category"], "Quantity": str(s["quantity"]),
          "Price Each": money(s["sale_price_cents"]),
          "Sale Total": money(s["sale_total_cents"]),
          "Partner Cut": money(s["partner_cut_cents"]),
          "Profit": money(s["profit_cents"])}
         for s in client.get("/sales").json()]
     assert shown(psells.view_returns_history) == [
-        {"Date": r["date"], "Product": r["name"], "Category": r["category"],
-         "Quantity": str(r["quantity"]), "Notes": r["notes"]}
+        {"ID": str(r["id"]), "Date": r["date"], "Product": r["name"],
+         "Category": r["category"], "Quantity": str(r["quantity"]),
+         "Notes": r["notes"]}
         for r in client.get("/returns").json()]
     assert shown(psells.view_payments_history) == [
-        {"Date": p["date"], "Amount": money(p["amount_cents"]),
-         "Notes": p["notes"]}
+        {"ID": str(p["id"]), "Date": p["date"],
+         "Amount": money(p["amount_cents"]), "Notes": p["notes"]}
         for p in client.get("/payments").json()]
 
 
@@ -1344,11 +1348,162 @@ def test_the_menu_offers_and_runs_options_11_to_14(db, capsys, partner_rate,
 
     for line in ["2: View Inventory (in stock)", "4: Search (in stock)",
                  "11: View Out of Stock", "12: Sales History",
-                 "13: Returns History", "14: Payments History"]:
+                 "13: Returns History", "14: Payments History",
+                 "15: Fix Sale", "16: Fix Return", "17: Fix Payment"]:
         assert line in prompts[0].splitlines(), line
     assert "Reason: 2 sold, 1 returned of 3" in printed
     assert "Sale Total: $280.00" in printed
     assert "Notes: Torn seam" in printed
     assert "Notes: Nothing owed" in printed
     assert "Invalid input" not in printed
+
+
+# Fixing a sale, return or payment --------------------------------------------
+
+def corrections(db):
+    return db.execute("SELECT record_type, record_id, action FROM corrections "
+                      "ORDER BY id").fetchall()
+
+
+def test_fixing_a_sale_by_editing_it(db, capsys, answers, partner_rate):
+    """Sale 3: 2 of Jordan 4 Bred at 140.00, with a 56.00 cut frozen."""
+    add_shop(db)
+
+    answers("3", "edit", "1", "130.00", "2026-9-4")
+    psells.fix_sale(db)
+
+    printed = capsys.readouterr().out
+    sale = psells.find_sale(db, 3)
+    assert (sale["quantity"], sale["sale_price_cents"], str(sale["date"]),
+            sale["partner_share_cents"]) == (1, 13000, "2026-09-04", 5600)
+    assert "Sale updated. The sale as it was is kept in the corrections log." in (
+        printed)
+    assert corrections(db) == [{"record_type": "sale", "record_id": 3,
+                                "action": "edit"}]
+
+
+def test_pressing_enter_at_every_field_changes_nothing(db, capsys, answers,
+                                                       partner_rate):
+    add_shop(db)
+
+    answers("3", "edit", "", "", "")
+    psells.fix_sale(db)
+
+    assert capsys.readouterr().out.endswith("Nothing changed.\n")
+    assert corrections(db) == []
+
+
+def test_a_sale_edit_past_the_stock_is_refused_with_the_reason(
+        db, capsys, answers, partner_rate):
+    """Product 5 has 0 available and sale 3 holds 2, so 3 is one too many."""
+    add_shop(db)
+
+    answers("3", "edit", "3", "", "")
+    psells.fix_sale(db)
+
+    assert ("Jordan 4 Bred has 0 more available, so this sale can be at most "
+            "2, not 3.") in capsys.readouterr().out
+    assert psells.find_sale(db, 3)["quantity"] == 2
+    assert corrections(db) == []
+
+
+def test_fixing_a_sale_by_deleting_it_says_what_changes(db, capsys, answers,
+                                                        partner_rate):
+    add_shop(db)
+
+    answers("2", "delete", "yes")
+    psells.fix_sale(db)
+
+    printed = capsys.readouterr().out
+    assert ("Deleting it gives its 2 sold back to Chicago Bulls Cap's stock, "
+            "and lowers revenue by $51.00, the partner share earned by $20.40 "
+            "and profit by $30.60.") in printed
+    assert "Sale deleted." in printed
+    assert psells.find_sale(db, 2) is None
+    assert corrections(db)[0]["action"] == "delete"
+
+
+def test_answering_no_keeps_the_sale(db, capsys, answers, partner_rate):
+    add_shop(db)
+
+    answers("2", "delete", "no")
+    psells.fix_sale(db)
+
+    assert "Cancelled." in capsys.readouterr().out
+    assert psells.find_sale(db, 2) is not None
+    assert corrections(db) == []
+
+
+def test_an_id_that_names_no_sale_says_so(db, capsys, answers, partner_rate):
+    add_shop(db)
+
+    answers("99")
+    psells.fix_sale(db)
+
+    assert capsys.readouterr().out.endswith("No sale with id 99.\n")
+
+
+@pytest.mark.parametrize("fix, message", [
+    (psells.fix_sale, "No sales recorded yet."),
+    (psells.fix_return, "No returns recorded yet."),
+    (psells.fix_payment, "No payments recorded yet."),
+])
+def test_fixing_with_nothing_recorded_says_so_and_asks_nothing(
+        db, capsys, answers, fix, message):
+    answers()
+    fix(db)
+
+    assert capsys.readouterr().out == message + "\n"
+
+
+def test_fixing_a_return_by_editing_then_deleting(db, capsys, answers,
+                                                  partner_rate):
+    add_shop(db)
+
+    answers("1", "edit", "", "2026-02-30", "2026-09-13", "Seam repaired")
+    psells.fix_return(db)
+    answers("3", "delete", "yes")
+    psells.fix_return(db)
+
+    printed = capsys.readouterr().out
+    assert "Please enter a valid date in YYYY-MM-DD format." in printed
+    assert "No money figure changes." in printed
+    edited = psells.find_return(db, 1)
+    assert (str(edited["date"]), edited["notes"]) == ("2026-09-13",
+                                                      "Seam repaired")
+    assert psells.find_return(db, 3) is None
+    assert [c["action"] for c in corrections(db)] == ["edit", "delete"]
+
+
+def test_fixing_a_payment_by_editing_then_deleting(db, capsys, answers,
+                                                   partner_rate):
+    add_shop(db)
+
+    answers("1", "edit", "45.00", "", "")
+    psells.fix_payment(db)
+    answers("2", "delete", "yes")
+    psells.fix_payment(db)
+
+    printed = capsys.readouterr().out
+    assert "Payment updated." in printed
+    assert ("Deleting it lowers total paid by $123.45, so the balance owing "
+            "rises by the same.") in printed
+    assert psells.dashboard_totals(db)["total_paid"] == 4500
+
+
+def test_the_menu_runs_options_15_to_17(db, capsys, partner_rate,
+                                        monkeypatch):
+    add_shop(db)
+    monkeypatch.setattr(psells, "connect", lambda: Unclosed(db))
+    replies = iter(["15", "1", "delete", "yes",
+                    "16", "2", "delete", "yes",
+                    "17", "3", "delete", "yes", "0"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(replies))
+
+    psells.main()
+
+    printed = capsys.readouterr().out
+    assert "Invalid input" not in printed
+    assert [(c["record_type"], c["record_id"]) for c in corrections(db)] == [
+        ("sale", 1), ("return", 2), ("payment", 3)]
 

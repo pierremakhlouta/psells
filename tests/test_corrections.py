@@ -147,10 +147,10 @@ def test_a_sale_edit_breaking_a_rule_changes_nothing(db, a_sale, quantity,
     assert log(db) == []
 
 
-def test_an_edit_that_changes_nothing_logs_nothing(db, a_sale):
-    psells.update_sale(db, 1, 3, 9000, "2026-09-01")
-
+def test_an_edit_that_changes_nothing_logs_nothing_and_says_so(db, a_sale):
+    assert psells.update_sale(db, 1, 3, 9000, "2026-09-01") is False
     assert log(db) == []
+    assert psells.update_sale(db, 1, 2, 9000, "2026-09-01") is True
 
 
 def test_deleting_a_sale_gives_its_units_back_and_logs_the_whole_row(db,
