@@ -467,19 +467,86 @@ def test_deleting_a_user_ends_their_sessions(db):
     assert count["n"] == 0
 
 
-# The migration -----------------------------------------------------------------
+# The corrections log ---------------------------------------------------------
+
+def insert_correction(db, **changes):
+    values = {"record_type": "sale", "record_id": 1, "action": "edit",
+              "before": '{"quantity": 2}', "after": '{"quantity": 1}'}
+    values.update(changes)
+    return db.execute(
+        "INSERT INTO corrections (record_type, record_id, action, before, "
+        "after) VALUES (%(record_type)s, %(record_id)s, %(action)s, "
+        "%(before)s, %(after)s) RETURNING *",
+        values,
+    ).fetchone()
+
+
+def test_a_good_edit_and_a_good_delete_are_logged(db):
+    edited = insert_correction(db)
+    deleted = insert_correction(db, record_type="payment", action="delete",
+                                after=None)
+
+    assert edited["before"] == {"quantity": 2}
+    assert edited["after"] == {"quantity": 1}
+    assert deleted["after"] is None
+    assert edited["at"] is not None
+
+
+@pytest.mark.parametrize("changes, constraint", [
+    ({"record_type": "product"}, "corrections_record_type_check"),
+    ({"action": "undo", "after": None}, "corrections_action_check"),
+    ({"action": "edit", "after": None}, "after_only_for_an_edit"),
+    ({"action": "delete"}, "after_only_for_an_edit"),
+])
+def test_a_correction_breaking_one_rule_is_refused_by_that_rule(
+        db, changes, constraint):
+    with pytest.raises(errors.IntegrityError) as caught:
+        with db.transaction():
+            insert_correction(db, **changes)
+
+    assert caught.value.diag.constraint_name == constraint
+
+
+def test_a_correction_needs_its_before(db):
+    with pytest.raises(errors.NotNullViolation):
+        with db.transaction():
+            insert_correction(db, before=None)
+
+
+@pytest.mark.parametrize("statement", [
+    "UPDATE corrections SET record_id = 2",
+    "DELETE FROM corrections",
+])
+def test_a_logged_correction_can_never_be_changed_or_removed(db, statement):
+    insert_correction(db)
+
+    with pytest.raises(errors.RaiseException) as caught:
+        with db.transaction():
+            db.execute(statement)
+
+    assert "append-only" in str(caught.value)
+    assert db.execute("SELECT count(*) AS n FROM corrections").fetchone()[
+        "n"] == 1
+
+
+# The migrations ------------------------------------------------------------------
 #
-# A database made before Phase 05b gets the authentication tables from
-# migrations/0001_authentication.sql, and a new one from the end of schema.sql.
-# Both must end up the same, or the live database and every fresh one (the
-# tests, the sample stack, a rebuild from a backup's schema) quietly differ.
+# A database made before a table was added gets it from a file in
+# migrations/, and a new one from the end of schema.sql. Both must end up the
+# same, or the live database and every fresh one (the tests, the sample stack,
+# a rebuild from a backup's schema) quietly differ.
 #
 # Each is built in a schema of its own inside the test's transaction, so the
-# rollback removes both. The older database is schema.sql up to the
-# Authentication heading, which is why that section has to stay last.
+# rollback removes both. The oldest database is schema.sql up to the first
+# migration's heading, with every migration then applied in order, which is why
+# each migration's section sits at the end of schema.sql, in the same order.
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-AUTHENTICATION_HEADING = "-- Authentication ---"
+# Each migration, with the heading of its section in schema.sql.
+MIGRATIONS = [
+    ("0001_authentication.sql", "-- Authentication ---"),
+    ("0002_corrections.sql", "-- Corrections ---"),
+]
 
 
 def read(*path):
@@ -520,16 +587,39 @@ def describe(db, schema):
         "WHERE schemaname = %s ORDER BY 1",
         (schema,),
     ).fetchall()
+    functions = db.execute(
+        "SELECT p.proname, p.prosrc FROM pg_proc p "
+        "JOIN pg_namespace n ON n.oid = p.pronamespace "
+        "WHERE n.nspname = %s ORDER BY 1",
+        (schema,),
+    ).fetchall()
+    triggers = db.execute(
+        "SELECT t.tgname, replace(pg_get_triggerdef(t.oid), %s, '') "
+        "AS definition "
+        "FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
+        "JOIN pg_namespace n ON n.oid = c.relnamespace "
+        "WHERE n.nspname = %s AND NOT t.tgisinternal ORDER BY 1",
+        (f"{schema}.", schema),
+    ).fetchall()
 
-    return columns, constraints, indexes, views
+    return columns, constraints, indexes, views, functions, triggers
 
 
-def test_the_migration_builds_what_schema_sql_builds(db):
+def test_every_migration_is_listed_and_its_section_is_in_order():
     schema = read("schema.sql")
-    migration = read("migrations", "0001_authentication.sql")
+    positions = []
+    for _, heading in MIGRATIONS:
+        assert schema.count(heading) == 1, heading
+        positions.append(schema.index(heading))
 
-    assert schema.count(AUTHENTICATION_HEADING) == 1
-    before_authentication = schema.split(AUTHENTICATION_HEADING)[0]
+    assert positions == sorted(positions)
+    assert sorted(os.listdir(os.path.join(HERE, "migrations"))) == [
+        name for name, _ in MIGRATIONS]
+
+
+def test_the_migrations_build_what_schema_sql_builds(db):
+    schema = read("schema.sql")
+    before_migrations = schema.split(MIGRATIONS[0][1])[0]
 
     db.execute("CREATE SCHEMA fresh")
     db.execute("SET LOCAL search_path TO fresh")
@@ -537,8 +627,9 @@ def test_the_migration_builds_what_schema_sql_builds(db):
 
     db.execute("CREATE SCHEMA migrated")
     db.execute("SET LOCAL search_path TO migrated")
-    db.execute(before_authentication)
-    db.execute(migration)
+    db.execute(before_migrations)
+    for name, _ in MIGRATIONS:
+        db.execute(read("migrations", name))
 
     fresh = describe(db, "fresh")
     migrated = describe(db, "migrated")
@@ -546,16 +637,21 @@ def test_the_migration_builds_what_schema_sql_builds(db):
 
     # Not empty, so two empty descriptions cannot pass as equal.
     assert any(row["table_name"] == "sessions" for row in fresh[0])
+    assert any(row["table_name"] == "corrections" for row in fresh[0])
+    assert [row["tgname"] for row in fresh[5]] == ["corrections_append_only"]
     assert fresh == migrated
 
 
-def test_the_migration_has_no_transaction_of_its_own(db):
+@pytest.mark.parametrize("name", [name for name, _ in MIGRATIONS])
+def test_a_migration_has_no_transaction_of_its_own(name):
     # psql's --single-transaction supplies one. A COMMIT in the file would end
     # the test's transaction above and leave its schemas behind, and a BEGIN
-    # would only draw a warning from psql.
+    # would only draw a warning from psql. A function body between $$ marks
+    # has a BEGIN of its own, which is PL/pgSQL's and not a transaction.
+    outside_bodies = "".join(read("migrations", name).split("$$")[::2])
     statements = [
         line.strip().upper()
-        for line in read("migrations", "0001_authentication.sql").splitlines()
+        for line in outside_bodies.splitlines()
         if line.strip() and not line.strip().startswith("--")
     ]
 
@@ -587,6 +683,6 @@ def test_every_test_starts_with_empty_tables(db):
     # one's rollback is what leaves these tables empty. If the fixture ever
     # committed instead, this is the test that would say so.
     for table in ("products", "sales", "returns", "payments",
-                  "users", "sessions"):
+                  "users", "sessions", "corrections"):
         count = db.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()
         assert count["n"] == 0, table

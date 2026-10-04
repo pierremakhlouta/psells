@@ -266,10 +266,14 @@ after a backup:
 
 `--single-transaction` makes it all or nothing and `ON_ERROR_STOP` stops it at
 the first error, so running one twice stops at "already exists" and changes
-nothing. `0001_authentication.sql` adds the `users` and `sessions` tables and
-touches nothing else; a database created from the current `schema.sql` already
-has them. `tests/test_schema.py` builds a database both ways and fails if the
-two differ.
+nothing. They are applied in order, each once:
+
+- `0001_authentication.sql` adds the `users` and `sessions` tables.
+- `0002_corrections.sql` adds the `corrections` log.
+
+Each touches nothing else, and a database created from the current
+`schema.sql` already has every table they add. `tests/test_schema.py` builds a
+database both ways and fails if the two differ.
 
 ## Moving from SQLite
 

@@ -180,7 +180,8 @@ LEFT JOIN (
 -- Added in Phase 05b. A database created before then gets these tables from
 -- migrations/0001_authentication.sql instead, which must create exactly what
 -- this section does; tests/test_schema.py builds a database both ways and
--- compares them. Keep this section last, because that test takes everything
+-- compares them. Keep this section after every table that came before it,
+-- with only later migrations' sections below, because that test takes everything
 -- above its heading as the schema the migration was written against.
 --
 -- One account today, Pierre's. A table rather than a setting, so a second
@@ -225,3 +226,53 @@ CREATE TABLE sessions (
 -- otherwise scan the whole table.
 
 CREATE INDEX idx_sessions_user_id ON sessions(user_id);
+
+
+-- Corrections ---------------------------------------------------------------
+--
+-- Added for fixing records. A database created before then gets this section
+-- from migrations/0002_corrections.sql instead, which must create exactly what
+-- it does; tests/test_schema.py compares them. Keep it last, after
+-- Authentication, for the same reason.
+--
+-- A sale, return or payment can be edited or deleted to correct a mistake.
+-- Each correction writes one row here, in the same transaction as the change,
+-- so the figures can be corrected and what was corrected is still known.
+--
+-- before is the record as it was and after as it became, each the whole row
+-- as JSON. A delete has no after, and the constraint below holds that. There
+-- is no foreign key to the record: after a delete it no longer exists, and
+-- this row is the only trace of it.
+--
+-- The application never changes or removes a row here, and the trigger makes
+-- that the database's rule too: an UPDATE or DELETE is refused. Restoring a
+-- backup, or TRUNCATE, which no row trigger sees, is still possible to whoever
+-- holds the database itself.
+
+CREATE TABLE corrections (
+    id           integer     GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    at           timestamptz NOT NULL DEFAULT now(),
+    record_type  text        NOT NULL
+                 CHECK (record_type IN ('sale', 'return', 'payment')),
+    record_id    integer     NOT NULL,
+    action       text        NOT NULL CHECK (action IN ('edit', 'delete')),
+    before       jsonb       NOT NULL,
+    after        jsonb,
+    CONSTRAINT after_only_for_an_edit
+        CHECK ((action = 'edit') = (after IS NOT NULL))
+);
+
+CREATE FUNCTION corrections_are_append_only() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'corrections are append-only: % refused', TG_OP;
+END;
+$$;
+
+CREATE TRIGGER corrections_append_only
+    BEFORE UPDATE OR DELETE ON corrections
+    FOR EACH ROW EXECUTE FUNCTION corrections_are_append_only();
+
+-- Every correction of one record, for reading its history.
+
+CREATE INDEX idx_corrections_record ON corrections(record_type, record_id);

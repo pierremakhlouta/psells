@@ -20,7 +20,9 @@ A dashboard presents figures rolled up from all four. Every dashboard figure is
 computed on demand; none of it is stored.
 
 Two more tables, `users` and `sessions`, hold the login. They sit beside the
-business data and never refer to it; they are described at the end.
+business data and never refer to it. A last one, `corrections`, records every
+edit or deletion of a sale, return or payment. All three are described at the
+end.
 
 ## Core principles
 
@@ -410,3 +412,33 @@ is. Expired rows are cleared out at the next login.
 
 An existing database gets both tables from `migrations/0001_authentication.sql`;
 a new one gets them from the end of `schema.sql`.
+
+## The corrections log
+
+Added for fixing records. A sale, return or payment entered wrongly can be
+edited or deleted; each such correction adds one row here, in the same
+transaction as the change, so a correction and its record cannot exist without
+each other.
+
+| Column        | Type        | Notes                                                    |
+|---------------|-------------|----------------------------------------------------------|
+| `id`          | integer     | primary key, from a sequence                             |
+| `at`          | timestamptz | when the correction was made, set by the database       |
+| `record_type` | text        | `sale`, `return` or `payment`                            |
+| `record_id`   | integer     | the id of the record corrected; no foreign key           |
+| `action`      | text        | `edit` or `delete`                                       |
+| `before`      | jsonb       | the whole record as it was                               |
+| `after`       | jsonb       | the whole record as it became; empty for a delete        |
+
+There is no foreign key to the record, because after a delete it no longer
+exists and this row is all that is left of it. `after` is present for an edit
+and absent for a delete, which a constraint holds.
+
+The table only grows. The application never changes or removes a row, and a
+trigger refuses any `UPDATE` or `DELETE`, so that is the database's rule as
+well. Nothing in it is a business figure: the dashboard, stock and every list
+are computed from the four business tables as they now are.
+
+An existing database gets the table from `migrations/0002_corrections.sql`; a
+new one gets it from the end of `schema.sql`.
+
