@@ -240,6 +240,17 @@ def test_a_certificate_is_fetched_only_when_missing_and_before_the_stack():
     assert '[ "${PSELLS_ACME_STAGING:-0}" = 1 ] && staging=(--staging)' in text
 
 
+def test_deploy_reloads_nginx_after_checking_its_configuration():
+    # A changed nginx.conf is a mounted file, which compose up does not see.
+    with open(SCRIPT) as script:
+        text = script.read()
+    up = text.index("compose up -d --wait")
+    check = text.index("compose exec -T proxy nginx -t || fail")
+    reload = text.index("compose exec -T proxy nginx -s reload")
+
+    assert up < check < reload < text.index('echo "== sample data"')
+
+
 def test_first_boot_prepares_the_host_then_deploys_the_public_repository():
     with open(FIRST_BOOT) as script:
         text = script.read()

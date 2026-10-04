@@ -169,6 +169,15 @@ echo "== stack"
 # Pulls the image if the server does not have it yet; builds nothing.
 compose up -d --wait
 
+# nginx reads its configuration from files mounted from this checkout, and
+# Compose recreates a container only when its own definition changes, not
+# when a mounted file does. So nginx is told to read them again: checked
+# first, so a configuration it would refuse leaves the running one in place
+# and stops the deploy, then reloaded, which finishes the requests in hand on
+# the old configuration. Harmless when nothing changed.
+compose exec -T proxy nginx -t || fail "nginx refuses the new configuration; the old one is still running"
+compose exec -T proxy nginx -s reload
+
 if [ "$new_certificate" = yes ]; then
     # Now nginx holds port 80, renewals must come through its webroot. This
     # records that, after a trial renewal to prove it works.

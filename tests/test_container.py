@@ -280,7 +280,10 @@ SITES = sorted(os.listdir(NGINX_SITES))
 SITE_MOUNT = "/etc/nginx/site/"
 SNIPPET_MOUNT = "/etc/nginx/snippets/"
 
-TOKEN = re.compile(r'"(?:[^"\\]|\\.)*"|[{};]|[^\s{};]+')
+# A token is a quoted string, single or double as nginx allows, a brace or a
+# semicolon, or a bare word. Quotes come first, so a brace inside a quoted
+# string, as in the JSON log format, is text and not a block.
+TOKEN = re.compile(r'"(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)*\'|[{};]|[^\s{};]+')
 INCLUDE = re.compile(r"^\s*include\s+(\S+);", re.M)
 
 
@@ -615,6 +618,68 @@ def test_the_style_hash_matches_the_style_block_pages_are_served_with(client):
     # And nothing on any page that the policy would refuse.
     assert "<script" not in page
     assert " style=" not in page
+
+
+LOG_FORMAT = re.compile(r"log_format\s+psells\s+escape=json\s+((?:'[^']*'\s*)+);")
+
+# What a visitor could be identified or tracked by, none of which the access
+# log may carry, because on the server it leaves for Grafana Cloud.
+PERSONAL_VARIABLES = {"$remote_addr", "$binary_remote_addr",
+                      "$http_x_forwarded_for", "$proxy_add_x_forwarded_for",
+                      "$realip_remote_addr", "$request", "$request_uri",
+                      "$args", "$query_string", "$is_args", "$http_user_agent",
+                      "$http_referer", "$http_cookie", "$remote_user"}
+
+
+def access_log_format():
+    """The psells log format's template, its quoted pieces joined."""
+    (pieces,) = LOG_FORMAT.findall(nginx_text(None))
+    return "".join(re.findall(r"'([^']*)'", pieces))
+
+
+def test_every_request_is_logged_as_json_in_the_one_format():
+    directives = [(blocks, words) for site in SITES
+                  for blocks, words in nginx_directives(site)
+                  if words[0] in ("access_log", "log_format")]
+
+    for blocks, words in directives:
+        if words[0] == "access_log":
+            # Logged in the psells format, or not at all (the health checks).
+            assert words[1:] in (["/dev/stdout", "psells"], ["off"]), words
+    assert ["access_log", "/dev/stdout", "psells"] in [
+        words for blocks, words in directives
+        if [b[1] for b in blocks] == [("http",)]]
+
+
+def test_the_log_line_is_json_with_what_the_slos_need():
+    template = access_log_format()
+    # Each variable stands in as a value nginx could give it.
+    sample = {"$time_iso8601": "2026-10-04T12:00:00+00:00",
+              "$host": "psells.localhost", "$request_method": "GET",
+              "$uri": '/a"b\\c', "$status": "200", "$body_bytes_sent": "512",
+              "$request_time": "0.012", "$upstream_response_time": "-"}
+    line = template
+    for name in sorted(sample, key=len, reverse=True):
+        # escape=json escapes inside strings; this does the same here.
+        value = sample[name]
+        if name == "$uri":
+            value = json.dumps(value)[1:-1]
+        line = line.replace(name, value)
+
+    entry = json.loads(line)
+
+    assert set(entry) == {"time", "host", "method", "path", "status", "bytes",
+                          "request_time", "upstream_time"}
+    assert entry["path"] == '/a"b\\c'
+    assert isinstance(entry["status"], int)
+    assert isinstance(entry["request_time"], float)
+
+
+def test_the_log_line_carries_nothing_that_identifies_a_visitor():
+    used = set(re.findall(r"\$[a-z_]+", access_log_format()))
+
+    assert used
+    assert not used & PERSONAL_VARIABLES, used & PERSONAL_VARIABLES
 
 
 def test_nginx_loads_no_modules_because_the_slim_image_has_none():
