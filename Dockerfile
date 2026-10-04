@@ -19,6 +19,18 @@ FROM python:3.14.7-slim@sha256:caaf356f40667c496d405780745b9ac25771c189a51dfcc42
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
+# Debian's security fixes for packages the pinned base image carries in an
+# older, vulnerable version. In October 2026 the base image had libpcre2
+# 10.46-1~deb13u2, with a high-severity flaw fixed in deb13u3, and openssl
+# packages with fixes, before the Python image was rebuilt with them; the scan
+# in image.yml fails on a fixable high one. --only-upgrade changes nothing that
+# is not already installed. The package lists are removed again so they are
+# not carried in the image. Remove a name here once the base image has its fix.
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends --only-upgrade \
+        libpcre2-8-0 libssl3t64 openssl openssl-provider-legacy \
+    && rm -rf /var/lib/apt/lists/*
+
 # The server runs as an ordinary user, not root, so a compromised process gets
 # no more than that user can do.
 RUN useradd --create-home --uid 10001 psells
