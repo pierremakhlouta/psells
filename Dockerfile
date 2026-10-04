@@ -12,7 +12,7 @@
 # exact version and to the digest of its contents, so every build starts from
 # the same bytes and a republished tag cannot change them. Dependabot proposes
 # the next one, and image.yml scans it before it is merged.
-FROM python:3.14.7-slim@sha256:caaf356f40667c496d405780745b9ac25771c189a51dfcc42430d531ea09f8a2
+FROM python:3.14.7-slim@sha256:51dafde81dbdb6ebde285137a295cf18a47ca95234fe388a343719cb97305b3d
 
 # No .pyc files written inside the image, and log lines reach `docker logs` as
 # they are printed rather than when a buffer fills.
