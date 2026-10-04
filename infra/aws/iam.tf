@@ -29,9 +29,9 @@ resource "aws_iam_role_policy_attachment" "session_manager" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
-# The database settings and the backup bucket's name. GetParametersByPath is
-# authorised on the exact path asked for, so these are the two paths the
-# scripts read.
+# The database settings, the backup bucket's name, and where and how the
+# monitoring agent sends. GetParametersByPath is authorised on the exact path
+# asked for, so these are the three paths the scripts read.
 resource "aws_iam_role_policy" "read_parameters" {
   name = "read-psells-parameters"
   role = aws_iam_role.server.id
@@ -40,12 +40,13 @@ resource "aws_iam_role_policy" "read_parameters" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid    = "ReadPsellsDatabaseAndBackupParameters"
+        Sid    = "ReadPsellsDatabaseBackupAndMonitoringParameters"
         Effect = "Allow"
         Action = "ssm:GetParametersByPath"
         Resource = [
           "arn:aws:ssm:ca-central-1:${data.aws_caller_identity.current.account_id}:parameter/psells/postgres",
           "arn:aws:ssm:ca-central-1:${data.aws_caller_identity.current.account_id}:parameter/psells/backup",
+          "arn:aws:ssm:ca-central-1:${data.aws_caller_identity.current.account_id}:parameter/psells/grafana",
         ]
       },
     ]

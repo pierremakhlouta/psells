@@ -1,7 +1,8 @@
 # The settings the server's scripts read from Parameter Store. None is secret.
-# The database password, /psells/postgres/password, is a SecureString made by
-# hand and deliberately not managed here: Terraform would copy its value into
-# the state in plain text.
+# The database password, /psells/postgres/password, and the monitoring agent's
+# token, /psells/grafana/token, are SecureStrings made by hand and deliberately
+# not managed here: Terraform would copy their values into the state in plain
+# text.
 
 resource "aws_ssm_parameter" "postgres_user" {
   name        = "/psells/postgres/user"
@@ -15,6 +16,16 @@ resource "aws_ssm_parameter" "postgres_db" {
   description = "PSells demo database name"
   type        = "String"
   value       = "psells"
+}
+
+# Where the monitoring agent sends metrics and logs, from terraform.tfvars.
+resource "aws_ssm_parameter" "grafana" {
+  for_each = var.grafana
+
+  name        = "/psells/grafana/${each.key}"
+  description = "Grafana Cloud ${replace(each.key, "_", " ")} for the PSells demo's monitoring agent"
+  type        = "String"
+  value       = each.value
 }
 
 resource "aws_ssm_parameter" "backup_bucket" {

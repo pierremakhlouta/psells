@@ -179,7 +179,7 @@ def test_the_server_has_no_key_imdsv2_only_and_cannot_burst_into_a_bill():
     assert re.search(r"encrypted\s*= true", server)
 
 
-def test_the_server_role_may_only_read_two_paths_and_add_backups():
+def test_the_server_role_may_only_read_three_paths_and_add_backups():
     # The server's role and the backup bucket; the deploy role is in deploy.tf.
     code = without_comments(read(os.path.join(MAIN, "iam.tf"))
                             + read(os.path.join(MAIN, "storage.tf")))
@@ -190,8 +190,30 @@ def test_the_server_role_may_only_read_two_paths_and_add_backups():
     assert actions == ["s3:*", "s3:PutObject", "ssm:GetParametersByPath",
                        "sts:AssumeRole"]
     assert '"${aws_s3_bucket.backups.arn}/daily/*"' in code
-    assert re.search(r"parameter/psells/postgres\",", code)
-    assert re.search(r"parameter/psells/backup\",", code)
+    paths = re.findall(r'parameter(/psells/[a-z]+)"', code)
+    assert paths == ["/psells/postgres", "/psells/backup", "/psells/grafana"]
+
+
+def test_no_secret_parameter_is_managed_by_terraform():
+    # Terraform keeps every value it manages in its state, in plain text. The
+    # database password and the monitoring agent's token are made by hand, so
+    # no parameter Terraform manages is a SecureString, and the Grafana ones
+    # can only be the four fields of the grafana variable.
+    code = without_comments("".join(
+        read(path) for path in glob.glob(os.path.join(MAIN, "*.tf"))))
+    names = re.findall(
+        r'resource "aws_ssm_parameter" "\w+" \{[^}]*?name\s*=\s*"([^"]+)"',
+        code, re.S)
+    grafana = re.search(r'variable "grafana" \{.*?object\(\{(.*?)\}\)',
+                        code, re.S).group(1)
+
+    assert "SecureString" not in code
+    assert sorted(names) == ["/psells/backup/bucket",
+                             "/psells/grafana/${each.key}",
+                             "/psells/postgres/db", "/psells/postgres/host",
+                             "/psells/postgres/user"]
+    assert re.findall(r"(\w+)\s*=\s*string", grafana) == [
+        "metrics_url", "metrics_user", "logs_url", "logs_user"]
 
 
 # Checked on every push ---------------------------------------------------------
