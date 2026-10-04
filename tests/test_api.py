@@ -400,3 +400,178 @@ def test_the_schema_documents_the_sales_endpoint(client):
 
     assert "post" in schema["paths"]["/sales"]
     assert "NewSale" in schema["components"]["schemas"]
+
+
+# In stock, out of stock, and the history -------------------------------------
+#
+# Each list is one psells function's answer, served as it comes back. These
+# compare the two directly, then check the figures add up to the dashboard.
+
+def add_shop(db):
+    """In stock: 1 and 2. Out of stock: 3 sold out, 4 returned, 5 a mix.
+    Sales, returns and payments out of date order, two of each on one date."""
+    add_product(db, 1, quantity_received=6, name="Jordan 1 Chicago")
+    add_product(db, 2, quantity_received=2, name="Air Max 90")
+    add_product(db, 3, quantity_received=2, name="Chicago Bulls Cap",
+                category="Hats")
+    add_product(db, 4, quantity_received=1, name="Box Logo Hoodie",
+                category="Hoodies")
+    add_product(db, 5, quantity_received=3, name="Jordan 4 Bred")
+    add_sale(db, 1, item_id=1, quantity=2, sale_price_cents=8800,
+             partner_share_cents=3333, date="2026-09-03")
+    add_sale(db, 2, item_id=3, quantity=2, sale_price_cents=2550,
+             partner_share_cents=1020, date="2026-09-10")
+    add_sale(db, 3, item_id=5, quantity=2, sale_price_cents=14000,
+             partner_share_cents=5600, date="2026-09-03")
+    add_return(db, 1, item_id=4, quantity=1, date="2026-09-12",
+               notes="Torn seam")
+    add_return(db, 2, item_id=5, quantity=1, date="2026-09-05")
+    add_return(db, 3, item_id=1, quantity=1, date="2026-09-12",
+               notes="Wrong size")
+    add_payment(db, 1, 5000, "First transfer", date="2026-09-15")
+    add_payment(db, 2, 12345, "", date="2026-09-20")
+    add_payment(db, 3, 0, "Nothing owed", date="2026-09-15")
+
+
+def as_served(rows):
+    """psells rows as JSON would carry them: dates as YYYY-MM-DD text."""
+    return [{key: value.isoformat() if isinstance(value, date) else value
+             for key, value in dict(row).items()} for row in rows]
+
+
+@pytest.mark.parametrize("path", ["/products/in-stock",
+                                  "/products/out-of-stock", "/sales",
+                                  "/returns", "/payments"])
+def test_every_list_is_empty_to_start_with(client, path):
+    response = client.get(path)
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_every_product_is_in_exactly_one_stock_list(client, db):
+    add_shop(db)
+
+    in_stock = client.get("/products/in-stock").json()
+    out = client.get("/products/out-of-stock").json()
+    every = client.get("/products").json()
+
+    assert [p["id"] for p in in_stock] == [1, 2]
+    assert [p["id"] for p in out] == [3, 4, 5]
+    assert sorted(p["id"] for p in in_stock + out) == [p["id"] for p in every]
+    # The same product, described the same way, whichever list it is in.
+    by_id = {p["id"]: p for p in every}
+    for product in in_stock:
+        assert product == by_id[product["id"]]
+    for product in out:
+        assert {k: v for k, v in product.items() if k != "reason"} == by_id[
+            product["id"]]
+
+
+def test_the_stock_lists_are_the_psells_lists(client, db):
+    add_shop(db)
+
+    assert [p["id"] for p in client.get("/products/in-stock").json()] == [
+        p["id"] for p in psells.in_stock_products(db)]
+    assert [p["id"] for p in client.get("/products/out-of-stock").json()] == [
+        p["id"] for p in psells.out_of_stock_products(db)]
+
+
+def test_each_out_of_stock_product_carries_its_reason(client, db):
+    add_shop(db)
+
+    reasons = {p["id"]: p["reason"]
+               for p in client.get("/products/out-of-stock").json()}
+
+    assert reasons == {3: "Sold out", 4: "Returned",
+                       5: "2 sold, 1 returned of 3"}
+    for product in psells.out_of_stock_products(db):
+        assert reasons[product["id"]] == psells.out_of_stock_reason(product)
+
+
+def test_sales_are_served_newest_first_with_their_figures(client, db):
+    add_shop(db)
+
+    sales = client.get("/sales").json()
+
+    assert [s["id"] for s in sales] == [2, 3, 1]
+    assert sales[1] == {
+        "id": 3, "date": "2026-09-03", "item_id": 5, "name": "Jordan 4 Bred",
+        "category": "Shoes", "quantity": 2, "sale_price_cents": 14000,
+        "partner_share_cents": 5600, "sale_total_cents": 28000,
+        "partner_cut_cents": 11200, "profit_cents": 16800,
+    }
+    assert sales == as_served(psells.sales_history(db))
+
+
+def test_editing_a_product_never_changes_a_served_sale(client, db):
+    add_shop(db)
+    before = client.get("/sales").json()
+
+    db.execute("UPDATE products SET listed_price_cents = 100, "
+               "retail_price_cents = 200, name = 'Renamed' WHERE id = 5")
+    after = client.get("/sales").json()
+
+    assert [{k: v for k, v in s.items() if k != "name"} for s in after] == [
+        {k: v for k, v in s.items() if k != "name"} for s in before]
+
+
+def test_the_served_sales_add_up_to_the_dashboard(client, db):
+    add_shop(db)
+
+    sales = client.get("/sales").json()
+    dashboard = client.get("/dashboard").json()
+
+    assert sum(s["sale_total_cents"] for s in sales) == dashboard[
+        "total_revenue_cents"]
+    assert sum(s["partner_cut_cents"] for s in sales) == dashboard[
+        "total_partner_share_cents"]
+    assert sum(s["profit_cents"] for s in sales) == dashboard[
+        "total_profit_cents"]
+    assert sum(s["quantity"] for s in sales) == dashboard["total_sold"]
+
+
+def test_returns_are_served_newest_first_with_notes(client, db):
+    add_shop(db)
+
+    returns = client.get("/returns").json()
+
+    assert [(r["id"], r["notes"]) for r in returns] == [
+        (3, "Wrong size"), (1, "Torn seam"), (2, "")]
+    assert returns == as_served(psells.returns_history(db))
+
+
+def test_payments_are_served_newest_first_and_add_up_to_total_paid(client,
+                                                                   db):
+    add_shop(db)
+
+    payments = client.get("/payments").json()
+
+    assert payments == [
+        {"id": 2, "date": "2026-09-20", "amount_cents": 12345, "notes": ""},
+        {"id": 3, "date": "2026-09-15", "amount_cents": 0,
+         "notes": "Nothing owed"},
+        {"id": 1, "date": "2026-09-15", "amount_cents": 5000,
+         "notes": "First transfer"},
+    ]
+    assert payments == as_served(psells.payments_history(db))
+    assert sum(p["amount_cents"] for p in payments) == client.get(
+        "/dashboard").json()["total_paid_cents"]
+
+
+def test_the_schema_documents_the_lists(client):
+    schema = client.get("/openapi.json").json()
+
+    for path in ["/products/in-stock", "/products/out-of-stock", "/sales",
+                 "/returns", "/payments"]:
+        assert "get" in schema["paths"][path], path
+    for model in ["OutOfStockProduct", "SaleRecord", "ReturnRecord",
+                  "PaymentRecord"]:
+        assert model in schema["components"]["schemas"], model
+
+
+@pytest.mark.parametrize("path", ["/products/in-stock",
+                                  "/products/out-of-stock", "/sales",
+                                  "/returns", "/payments"])
+def test_every_list_needs_a_session(anonymous, path):
+    assert anonymous.get(path).status_code == 401

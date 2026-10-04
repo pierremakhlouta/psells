@@ -303,21 +303,23 @@ def test_each_out_of_stock_row_gives_the_reason_psells_gives(client, db):
             product)
 
 
-def test_an_out_of_stock_row_shows_the_figures_the_api_serves(client, db):
-    add_product(db, 1, quantity_received=1, name="Typo-free name",
+def test_the_out_of_stock_page_shows_what_the_api_serves(client, db):
+    add_both_kinds(db)
+    add_product(db, 6, quantity_received=1, name="Odd cut",
                 retail_price_cents=10003, partner_share_mode="custom_percent",
                 partner_share_percent=12.5)
-    add_sale(db, 1, item_id=1, quantity=1)
+    add_sale(db, 4, item_id=6, quantity=1)
 
-    (row,) = out_of_stock_rows(client)
-    (served,) = client.get("/products").json()
+    rows = out_of_stock_rows(client)
 
-    assert row[:OUT_REASON] == [
-        "1", served["name"], served["category"], served["condition"],
-        str(served["quantity_available"])]
-    assert row[OUT_LISTED] == psells.format_cents(served["listed_price_cents"])
-    assert row[OUT_PARTNER_CUT] == psells.format_cents(
-        served["partner_share_cents"])
+    assert rows == [
+        [str(p["id"]), p["name"], p["category"], p["condition"],
+         str(p["quantity_available"]), p["reason"],
+         psells.format_cents(p["listed_price_cents"]),
+         psells.format_cents(p["partner_share_cents"]),
+         "Discontinued" if p["retail_discontinued"] else "", "Edit"]
+        for p in client.get("/products/out-of-stock").json()
+    ]
 
 
 def test_each_page_searches_only_its_own_products(client, db):
@@ -560,6 +562,26 @@ def test_the_payments_page_shows_payments_newest_first(client, db):
         ["2026-09-20", "$123.45", ""],
         ["2026-09-15", "$0.00", "Nothing owed"],
         ["2026-09-15", "$50.00", "First transfer"],
+    ]
+
+
+def test_the_history_pages_show_what_the_api_serves(client, db):
+    add_history(db)
+    money = psells.format_cents
+
+    assert table_rows(client.get("/sales-history").text) == [
+        [s["date"], s["name"], s["category"], str(s["quantity"]),
+         money(s["sale_price_cents"]), money(s["sale_total_cents"]),
+         money(s["partner_cut_cents"]), money(s["profit_cents"])]
+        for s in client.get("/sales").json()
+    ]
+    assert table_rows(client.get("/returns-history").text) == [
+        [r["date"], r["name"], r["category"], str(r["quantity"]), r["notes"]]
+        for r in client.get("/returns").json()
+    ]
+    assert table_rows(client.get("/payments-history").text) == [
+        [p["date"], money(p["amount_cents"]), p["notes"]]
+        for p in client.get("/payments").json()
     ]
 
 
@@ -1661,9 +1683,7 @@ def test_the_page_shows_the_figures_the_api_serves(client, db):
     add_sale(db, 2, item_id=5, quantity=1)
     add_return(db, 1, item_id=3, quantity=1)
 
-    in_stock = {p["id"] for p in psells.in_stock_products(db)}
-    served = {p["id"]: p for p in client.get("/products").json()
-              if p["id"] in in_stock}
+    served = {p["id"]: p for p in client.get("/products/in-stock").json()}
     shown = {int(row[ID]): row for row in table_rows(client.get("/").text)}
 
     assert shown.keys() == served.keys() == {1, 2, 3, 4}
@@ -1726,7 +1746,9 @@ def test_pages_are_not_in_the_api_documentation(client):
     paths = client.get("/openapi.json").json()["paths"]
 
     assert "/" not in paths
-    assert set(paths) == {"/products", "/dashboard", "/sales", "/session"}
+    assert set(paths) == {"/products", "/products/in-stock",
+                          "/products/out-of-stock", "/dashboard", "/sales",
+                          "/returns", "/payments", "/session"}
 
 
 # Templates format and never compute -----------------------------------------

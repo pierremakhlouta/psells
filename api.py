@@ -44,7 +44,8 @@ from dependencies import (
 app = FastAPI(
     title="PSells API",
     description=(
-        "Read the inventory and the dashboard, and record a sale. "
+        "Read the inventory, the dashboard and the history of sales, "
+        "returns and payments, and record a sale. "
         "All money is in whole cents."
     ),
     version="0.1.0",
@@ -206,6 +207,53 @@ class Dashboard(BaseModel):
     )
 
 
+class OutOfStockProduct(Product):
+    reason: str = Field(
+        description=(
+            'Why none is available: "Sold out", "Returned", or a mix such as '
+            '"2 sold, 1 returned of 3".'
+        )
+    )
+
+
+class SaleRecord(BaseModel):
+    """A sale as recorded, with what it came to. Every figure is worked out
+    from the sale's own frozen columns, never from the product as it is now."""
+
+    id: int
+    date: datetime.date
+    item_id: int
+    name: str
+    category: str
+    quantity: int
+    sale_price_cents: int = Field(description="Price per unit, in cents.")
+    partner_share_cents: int = Field(
+        description="The partner's cut per unit, frozen onto this sale."
+    )
+    sale_total_cents: int = Field(description="quantity times the price.")
+    partner_cut_cents: int = Field(
+        description="quantity times the frozen per-unit cut."
+    )
+    profit_cents: int = Field(description="Sale total minus partner cut.")
+
+
+class ReturnRecord(BaseModel):
+    id: int
+    date: datetime.date
+    item_id: int
+    name: str
+    category: str
+    quantity: int
+    notes: str
+
+
+class PaymentRecord(BaseModel):
+    id: int
+    date: datetime.date
+    amount_cents: int
+    notes: str
+
+
 def to_product(row):
     """One row of products_view as the API describes a product.
 
@@ -227,6 +275,26 @@ def read_products(connection: Connection):
     return [to_product(row) for row in psells.all_products(connection)]
 
 
+@protected.get("/products/in-stock", response_model=list[Product],
+               tags=["products"])
+def read_products_in_stock(connection: Connection):
+    """Every product with at least one unit available, in id order. The
+    inventory page's list."""
+    return [to_product(row) for row in psells.in_stock_products(connection)]
+
+
+@protected.get("/products/out-of-stock", response_model=list[OutOfStockProduct],
+               tags=["products"])
+def read_products_out_of_stock(connection: Connection):
+    """Every product with none available, in id order, with the reason.
+    Together with /products/in-stock, every product exactly once."""
+    return [
+        OutOfStockProduct(**to_product(row).model_dump(),
+                          reason=psells.out_of_stock_reason(row))
+        for row in psells.out_of_stock_products(connection)
+    ]
+
+
 @protected.get("/dashboard", response_model=Dashboard, tags=["dashboard"])
 def read_dashboard(connection: Connection):
     """The nine dashboard figures. Quantities are counts, money is cents."""
@@ -243,6 +311,29 @@ def read_dashboard(connection: Connection):
         total_paid_cents=totals["total_paid"],
         balance_owing_cents=totals["balance_owing"],
     )
+
+
+@protected.get("/sales", response_model=list[SaleRecord], tags=["sales"])
+def read_sales(connection: Connection):
+    """Every sale, newest first; on the same date, newest id first."""
+    return [SaleRecord(**dict(row)) for row in psells.sales_history(connection)]
+
+
+@protected.get("/returns", response_model=list[ReturnRecord], tags=["returns"])
+def read_returns(connection: Connection):
+    """Every return to the partner, newest first; on the same date, newest id
+    first."""
+    return [ReturnRecord(**dict(row))
+            for row in psells.returns_history(connection)]
+
+
+@protected.get("/payments", response_model=list[PaymentRecord],
+               tags=["payments"])
+def read_payments(connection: Connection):
+    """Every payment to the partner, newest first; on the same date, newest id
+    first."""
+    return [PaymentRecord(**dict(row))
+            for row in psells.payments_history(connection)]
 
 
 @protected.post(
