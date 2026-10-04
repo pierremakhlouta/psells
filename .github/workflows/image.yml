@@ -168,10 +168,25 @@ jobs:
       - name: Show the list
         run: cat grype-all.txt
 
+      # Checked out for nginx/grype-exceptions.yaml only: the vulnerabilities
+      # this job's failing scan skips, each with its reason. The file has an
+      # expiry date, and once it has passed this job fails until someone looks
+      # again, so an exception cannot quietly become permanent. The app job
+      # reads no such file.
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Fail once the exceptions have expired
+        run: |
+          expires=$(sed -n 's/^# expires: //p' nginx/grype-exceptions.yaml)
+          echo "Exceptions expire on $expires"
+          test "$(date -u +%F)" '<' "$expires"
+
       - name: Fail on a high or critical vulnerability that has a fix
         uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439  # v7.4.2
         with:
           image: ${{ env.NGINX_IMAGE }}
+          config: nginx/grype-exceptions.yaml
           only-fixed: true
           severity-cutoff: high
           fail-build: true

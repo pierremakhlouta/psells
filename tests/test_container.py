@@ -18,6 +18,7 @@ the app relies on, and the app believes forwarded headers from nginx alone.
 
 import ast
 import base64
+import datetime
 import glob
 import hashlib
 import ipaddress
@@ -961,6 +962,64 @@ def test_nginx_is_checked_and_scanned_in_ci_with_the_image_the_stack_runs(name):
 
     assert stack == ci
     assert PINNED_IMAGE.match(stack), stack
+
+
+GRYPE_EXCEPTIONS = os.path.join(PROJECT_DIR, "nginx", "grype-exceptions.yaml")
+
+
+def scan_steps(job):
+    return [step for step in job["steps"]
+            if step.get("uses", "").startswith("anchore/scan-action@")]
+
+
+def test_only_the_nginx_scan_that_fails_reads_the_exceptions():
+    jobs = workflow(os.path.join(PROJECT_DIR, ".github", "workflows",
+                                 "image.yml"))["jobs"]
+    listing, failing = scan_steps(jobs["nginx"])
+
+    assert failing["with"]["config"] == "nginx/grype-exceptions.yaml"
+    assert failing["with"]["fail-build"] is True
+    # The listing still shows everything, and the app's image skips nothing.
+    assert "config" not in listing["with"]
+    for step in scan_steps(jobs["app"]):
+        assert "config" not in step["with"]
+    # The scan action reads a .grype.yaml it finds unless given a file.
+    assert not glob.glob(os.path.join(PROJECT_DIR, ".grype*"))
+
+
+def test_each_exception_names_one_flaw_in_one_version_of_one_package():
+    with open(GRYPE_EXCEPTIONS) as file:
+        config = yaml.safe_load(file)
+
+    assert set(config) == {"ignore"}
+    for rule in config["ignore"]:
+        assert set(rule) == {"vulnerability", "package"}, rule
+        assert set(rule["package"]) == {"name", "version", "type"}, rule
+
+
+def test_the_exceptions_have_not_expired():
+    # The nginx job checks the same line, so it fails on the same day.
+    with open(GRYPE_EXCEPTIONS) as file:
+        expires = re.findall(r"^# expires: (\d{4}-\d\d-\d\d)$", file.read(), re.M)
+
+    assert len(expires) == 1
+    assert datetime.date.today() < datetime.date.fromisoformat(expires[0]), (
+        "nginx/grype-exceptions.yaml has expired: check whether nginx has "
+        "published a fixed image, and remove or renew each exception")
+
+
+@pytest.mark.parametrize("site", SITES)
+def test_nginx_evaluates_no_regular_expression(site):
+    # The pcre2 exception rests on this: nginx hands text to pcre2 only to
+    # match the regular expressions in its configuration. Every regular
+    # expression nginx accepts starts with ~ (a location, a map key, a
+    # server_name), or sits in rewrite or if.
+    words = [word for blocks, directive in nginx_directives(site)
+             for word in [*directive,
+                          *(w for _, opening in blocks for w in opening)]]
+
+    assert not [word for word in words if word.startswith("~")]
+    assert not {"rewrite", "if", "regex"} & set(words)
 
 
 def test_every_commit_is_scanned_for_secrets_with_a_pinned_scanner():
