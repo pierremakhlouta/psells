@@ -29,7 +29,7 @@ pointing it at a copy rather than the real records is always a deliberate act:
 
 import datetime
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Response
 from fastapi.responses import PlainTextResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
@@ -45,7 +45,8 @@ app = FastAPI(
     title="PSells API",
     description=(
         "Read the inventory, the dashboard and the history of sales, "
-        "returns and payments, and record a sale. "
+        "returns and payments, record a sale, and correct a sale, return "
+        "or payment. "
         "All money is in whole cents."
     ),
     version="0.1.0",
@@ -254,6 +255,35 @@ class PaymentRecord(BaseModel):
     notes: str
 
 
+class SaleChange(BaseModel):
+    """A sale's corrected values: every field it can change, all of them.
+
+    The product and the per-unit partner cut frozen when it sold are not
+    here, because they cannot change: delete the sale and record it again to
+    move it to another product.
+    """
+
+    quantity: int = Field(ge=1)
+    sale_price_cents: int = Field(ge=0, description="Price per unit, in cents.")
+    date: datetime.date
+
+
+class ReturnChange(BaseModel):
+    """A return's corrected values. The product cannot change."""
+
+    quantity: int = Field(ge=1)
+    date: datetime.date
+    notes: str = ""
+
+
+class PaymentChange(BaseModel):
+    """A payment's corrected values. Zero is allowed, as when recorded."""
+
+    amount_cents: int = Field(ge=0)
+    date: datetime.date
+    notes: str = ""
+
+
 def to_product(row):
     """One row of products_view as the API describes a product.
 
@@ -317,6 +347,105 @@ def read_dashboard(connection: Connection):
 def read_sales(connection: Connection):
     """Every sale, newest first; on the same date, newest id first."""
     return [SaleRecord(**dict(row)) for row in psells.sales_history(connection)]
+
+
+# Correcting a record ---------------------------------------------------------
+#
+# The same psells functions the web pages and the command line call, which
+# write the change and its row in corrections in one transaction. PUT sends
+# every field that can change, DELETE removes the record. A malformed body is
+# a 422 before anything runs; an id that names nothing is a 404; a quantity
+# the stock cannot hold is a 409, as for POST /sales. Each needs the session's
+# form token, as every write does.
+
+CORRECTION_RESPONSES = {
+    404: {"description": "No record with that id."},
+    409: {"description": "The change conflicts with the stock on hand."},
+}
+
+
+@protected.put("/sales/{sale_id:int}", response_model=SaleRecord,
+               tags=["sales"], responses=CORRECTION_RESPONSES)
+def correct_sale(sale_id: int, change: SaleChange, connection: Connection):
+    """Correct a sale's quantity, price each and date, keeping its frozen
+    per-unit cut, and return it as GET /sales lists it."""
+    try:
+        psells.update_sale(connection, sale_id, change.quantity,
+                           change.sale_price_cents, change.date.isoformat())
+    except psells.SaleNotFound as error:
+        raise HTTPException(status_code=404, detail=str(error))
+    except psells.SaleError as error:
+        raise HTTPException(status_code=409, detail=str(error))
+
+    return SaleRecord(**dict(psells.find_sale(connection, sale_id)))
+
+
+@protected.delete("/sales/{sale_id:int}", status_code=204, tags=["sales"],
+                  responses=CORRECTION_RESPONSES)
+def remove_sale(sale_id: int, connection: Connection):
+    """Delete a sale, giving its units back to stock."""
+    try:
+        psells.delete_sale(connection, sale_id)
+    except psells.SaleNotFound as error:
+        raise HTTPException(status_code=404, detail=str(error))
+
+    return Response(status_code=204)
+
+
+@protected.put("/returns/{return_id:int}", response_model=ReturnRecord,
+               tags=["returns"], responses=CORRECTION_RESPONSES)
+def correct_return(return_id: int, change: ReturnChange,
+                   connection: Connection):
+    """Correct a return's quantity, date and notes."""
+    try:
+        psells.update_return(connection, return_id, change.quantity,
+                             change.date.isoformat(), change.notes)
+    except psells.ReturnNotFound as error:
+        raise HTTPException(status_code=404, detail=str(error))
+    except psells.ReturnError as error:
+        raise HTTPException(status_code=409, detail=str(error))
+
+    return ReturnRecord(**dict(psells.find_return(connection, return_id)))
+
+
+@protected.delete("/returns/{return_id:int}", status_code=204,
+                  tags=["returns"], responses=CORRECTION_RESPONSES)
+def remove_return(return_id: int, connection: Connection):
+    """Delete a return, giving its units back to stock."""
+    try:
+        psells.delete_return(connection, return_id)
+    except psells.ReturnNotFound as error:
+        raise HTTPException(status_code=404, detail=str(error))
+
+    return Response(status_code=204)
+
+
+@protected.put("/payments/{payment_id:int}", response_model=PaymentRecord,
+               tags=["payments"], responses=CORRECTION_RESPONSES)
+def correct_payment(payment_id: int, change: PaymentChange,
+                    connection: Connection):
+    """Correct a payment's amount, date and notes."""
+    try:
+        psells.update_payment(connection, payment_id, change.amount_cents,
+                              change.date.isoformat(), change.notes)
+    except psells.PaymentNotFound as error:
+        raise HTTPException(status_code=404, detail=str(error))
+    except psells.PaymentError as error:
+        raise HTTPException(status_code=409, detail=str(error))
+
+    return PaymentRecord(**dict(psells.find_payment(connection, payment_id)))
+
+
+@protected.delete("/payments/{payment_id:int}", status_code=204,
+                  tags=["payments"], responses=CORRECTION_RESPONSES)
+def remove_payment(payment_id: int, connection: Connection):
+    """Delete a payment."""
+    try:
+        psells.delete_payment(connection, payment_id)
+    except psells.PaymentNotFound as error:
+        raise HTTPException(status_code=404, detail=str(error))
+
+    return Response(status_code=204)
 
 
 @protected.get("/returns", response_model=list[ReturnRecord], tags=["returns"])

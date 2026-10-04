@@ -1949,7 +1949,9 @@ def test_pages_are_not_in_the_api_documentation(client):
     assert "/" not in paths
     assert set(paths) == {"/products", "/products/in-stock",
                           "/products/out-of-stock", "/dashboard", "/sales",
-                          "/returns", "/payments", "/session"}
+                          "/returns", "/payments", "/session",
+                          "/sales/{sale_id}", "/returns/{return_id}",
+                          "/payments/{payment_id}"}
 
 
 # Templates format and never compute -----------------------------------------

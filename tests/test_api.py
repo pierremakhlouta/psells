@@ -550,3 +550,155 @@ def test_the_schema_documents_the_lists(client):
                                   "/returns", "/payments"])
 def test_every_list_needs_a_session(anonymous, path):
     assert anonymous.get(path).status_code == 401
+
+
+# Correcting a record ---------------------------------------------------------
+#
+# The routes hand the work to the psells functions test_corrections.py covers;
+# these check the HTTP side: the body each route takes, what it answers, and
+# that the change, its log row and GET agree.
+
+def corrections(db):
+    return db.execute("SELECT record_type, record_id, action FROM corrections "
+                      "ORDER BY id").fetchall()
+
+
+def test_a_sale_is_corrected_and_returned_as_get_lists_it(client, db):
+    add_shop(db)
+
+    response = client.put("/sales/3", json={
+        "quantity": 1, "sale_price_cents": 13000, "date": "2026-09-04"})
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "id": 3, "date": "2026-09-04", "item_id": 5, "name": "Jordan 4 Bred",
+        "category": "Shoes", "quantity": 1, "sale_price_cents": 13000,
+        "partner_share_cents": 5600, "sale_total_cents": 13000,
+        "partner_cut_cents": 5600, "profit_cents": 7400,
+    }
+    assert response.json() in client.get("/sales").json()
+    assert corrections(db) == [{"record_type": "sale", "record_id": 3,
+                                "action": "edit"}]
+
+
+def test_a_sale_body_cannot_change_the_product_or_the_frozen_cut(client, db):
+    """Fields the model does not have are ignored, never applied."""
+    add_shop(db)
+
+    client.put("/sales/3", json={
+        "quantity": 2, "sale_price_cents": 14000, "date": "2026-09-03",
+        "item_id": 1, "partner_share_cents": 1})
+
+    sale = psells.find_sale(db, 3)
+    assert (sale["item_id"], sale["partner_share_cents"]) == (5, 5600)
+
+
+def test_a_sale_past_the_stock_is_a_409(client, db):
+    add_shop(db)
+
+    response = client.put("/sales/1", json={
+        "quantity": 99, "sale_price_cents": 8800, "date": "2026-09-03"})
+
+    assert response.status_code == 409
+    assert "can be at most" in response.json()["detail"]
+    assert corrections(db) == []
+
+
+@pytest.mark.parametrize("body", [
+    {"quantity": 0, "sale_price_cents": 8800, "date": "2026-09-03"},
+    {"quantity": 1, "sale_price_cents": -1, "date": "2026-09-03"},
+    {"quantity": 1, "sale_price_cents": 8800, "date": "2026-02-30"},
+    {"quantity": 1, "sale_price_cents": 8800},
+])
+def test_a_malformed_sale_correction_is_a_422(client, db, body):
+    add_shop(db)
+
+    assert client.put("/sales/1", json=body).status_code == 422
+    assert corrections(db) == []
+
+
+@pytest.mark.parametrize("method, path, body", [
+    ("put", "/sales/99", {"quantity": 1, "sale_price_cents": 1,
+                          "date": "2026-09-03"}),
+    ("delete", "/sales/99", None),
+    ("put", "/returns/99", {"quantity": 1, "date": "2026-09-03"}),
+    ("delete", "/returns/99", None),
+    ("put", "/payments/99", {"amount_cents": 1, "date": "2026-09-03"}),
+    ("delete", "/payments/99", None),
+])
+def test_correcting_a_record_that_does_not_exist_is_a_404(client, db, method,
+                                                          path, body):
+    add_shop(db)
+    kwargs = {} if body is None else {"json": body}
+
+    response = getattr(client, method)(path, **kwargs)
+
+    assert response.status_code == 404
+    assert response.json()["detail"].startswith("No ")
+
+
+def test_an_id_that_is_not_a_number_matches_no_route(client):
+    assert client.delete("/sales/abc").status_code == 404
+
+
+def test_deleting_a_sale_is_a_204_and_moves_the_dashboard(client, db):
+    add_shop(db)
+    before = client.get("/dashboard").json()
+
+    response = client.delete("/sales/2")
+
+    assert response.status_code == 204
+    assert response.content == b""
+    assert 2 not in [s["id"] for s in client.get("/sales").json()]
+    after = client.get("/dashboard").json()
+    assert before["total_revenue_cents"] - after["total_revenue_cents"] == 5100
+    assert after["total_sold"] == before["total_sold"] - 2
+    assert corrections(db)[-1]["action"] == "delete"
+
+
+def test_a_return_is_corrected_and_deleted(client, db):
+    add_shop(db)
+
+    edited = client.put("/returns/1", json={"quantity": 1,
+                                            "date": "2026-09-13",
+                                            "notes": " Torn seam, fixed "})
+    deleted = client.delete("/returns/3")
+
+    assert edited.status_code == 200
+    assert edited.json()["notes"] == "Torn seam, fixed"
+    assert edited.json() in client.get("/returns").json()
+    assert deleted.status_code == 204
+    assert [r["id"] for r in client.get("/returns").json()] == [1, 2]
+
+
+def test_a_payment_is_corrected_and_deleted(client, db):
+    add_shop(db)
+
+    edited = client.put("/payments/1", json={"amount_cents": 4500,
+                                             "date": "2026-09-15"})
+    deleted = client.delete("/payments/2")
+
+    assert edited.json() == {"id": 1, "date": "2026-09-15",
+                             "amount_cents": 4500, "notes": ""}
+    assert deleted.status_code == 204
+    assert client.get("/dashboard").json()["total_paid_cents"] == 4500
+    assert client.put("/payments/1", json={
+        "amount_cents": -1, "date": "2026-09-15"}).status_code == 422
+
+
+def test_the_schema_documents_the_corrections(client):
+    schema = client.get("/openapi.json").json()
+
+    for path in ["/sales/{sale_id}", "/returns/{return_id}",
+                 "/payments/{payment_id}"]:
+        assert {"put", "delete"} <= set(schema["paths"][path]), path
+    # Exactly the fields that can change: a product or a frozen cut offered
+    # here would be a promise the route cannot keep.
+    fields = {model: set(schema["components"]["schemas"][model]["properties"])
+              for model in ["SaleChange", "ReturnChange", "PaymentChange"]}
+    assert fields == {
+        "SaleChange": {"quantity", "sale_price_cents", "date"},
+        "ReturnChange": {"quantity", "date", "notes"},
+        "PaymentChange": {"amount_cents", "date", "notes"},
+    }
+
