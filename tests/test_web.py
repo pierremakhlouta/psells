@@ -442,6 +442,153 @@ def test_an_edit_from_the_out_of_stock_page_is_confirmed(client, db):
     ]
 
 
+# The history pages -----------------------------------------------------------
+
+HISTORY_PAGES = {
+    "/sales-history": "No sales recorded yet.",
+    "/returns-history": "No returns recorded yet.",
+    "/payments-history": "No payments recorded yet.",
+}
+
+
+def add_history(db):
+    """Sales, returns and payments entered out of date order, with two of
+    each on one date, so the order shown is the page's own."""
+    add_product(db, 1, quantity_received=10, name="Jordan 1 Chicago")
+    add_product(db, 2, quantity_received=5, name="Box Logo Hoodie",
+                category="Hoodies")
+    add_sale(db, 1, item_id=1, quantity=1, sale_price_cents=9000,
+             partner_share_cents=3500, date="2026-09-03")
+    add_sale(db, 2, item_id=2, quantity=3, sale_price_cents=12550,
+             partner_share_cents=4020, date="2026-09-10")
+    add_sale(db, 3, item_id=1, quantity=2, sale_price_cents=8800,
+             partner_share_cents=3333, date="2026-09-03")
+    add_return(db, 1, item_id=2, quantity=1, date="2026-09-12",
+               notes="Torn seam")
+    add_return(db, 2, item_id=1, quantity=1, date="2026-09-05",
+               notes="Wrong size")
+    add_return(db, 3, item_id=1, quantity=2, date="2026-09-12")
+    add_payment(db, 1, 5000, "First transfer", date="2026-09-15")
+    add_payment(db, 2, 12345, "", date="2026-09-20")
+    add_payment(db, 3, 0, "Nothing owed", date="2026-09-15")
+
+
+@pytest.mark.parametrize("path", HISTORY_PAGES)
+def test_an_empty_history_page_says_so_and_has_no_table(client, path):
+    response = client.get(path)
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert "<table" not in response.text
+    assert paragraphs(response.text, "empty") == [(HISTORY_PAGES[path], [])]
+
+
+@pytest.mark.parametrize("path", HISTORY_PAGES)
+def test_every_page_links_to_the_history_pages_from_the_nav(client, db, path):
+    add_product(db, 1, quantity_received=1)
+    label = {"/sales-history": "Sales", "/returns-history": "Returns",
+             "/payments-history": "Payments"}[path]
+
+    for page in ["/", "/out-of-stock", *HISTORY_PAGES, "/products/new",
+                 "/products/1/edit", "/payments/new"]:
+        assert f'href="http://testserver{path}">{label}</a>' in client.get(
+            page).text, page
+
+
+def test_the_sales_page_shows_sales_history_newest_first(client, db):
+    add_history(db)
+
+    rows = table_rows(client.get("/sales-history").text)
+
+    assert rows == [
+        ["2026-09-10", "Box Logo Hoodie", "Hoodies", "3",
+         "$125.50", "$376.50", "$120.60", "$255.90"],
+        ["2026-09-03", "Jordan 1 Chicago", "Shoes", "2",
+         "$88.00", "$176.00", "$66.66", "$109.34"],
+        ["2026-09-03", "Jordan 1 Chicago", "Shoes", "1",
+         "$90.00", "$90.00", "$35.00", "$55.00"],
+    ]
+
+
+def test_the_sales_page_shows_what_sales_history_returns(client, db):
+    add_history(db)
+
+    rows = table_rows(client.get("/sales-history").text)
+
+    assert rows == [
+        [str(sale["date"]), sale["name"], sale["category"],
+         str(sale["quantity"]), psells.format_cents(sale["sale_price_cents"]),
+         psells.format_cents(sale["sale_total_cents"]),
+         psells.format_cents(sale["partner_cut_cents"]),
+         psells.format_cents(sale["profit_cents"])]
+        for sale in psells.sales_history(db)
+    ]
+
+
+def test_editing_a_product_never_changes_its_row_in_the_sales_page(client,
+                                                                   db):
+    add_history(db)
+    before = table_rows(client.get("/sales-history").text)
+
+    submit_edit_form(client, listed_price="10.00", retail_price="20.00",
+                     partner_share_mode="custom_percent",
+                     partner_share_percent="90")
+    after = table_rows(client.get("/sales-history").text)
+
+    assert stored(db)["listed_price_cents"] == 1000
+    assert after == before
+
+
+def test_the_returns_page_shows_returns_newest_first_with_notes(client, db):
+    add_history(db)
+
+    rows = table_rows(client.get("/returns-history").text)
+
+    assert rows == [
+        ["2026-09-12", "Jordan 1 Chicago", "Shoes", "2", ""],
+        ["2026-09-12", "Box Logo Hoodie", "Hoodies", "1", "Torn seam"],
+        ["2026-09-05", "Jordan 1 Chicago", "Shoes", "1", "Wrong size"],
+    ]
+
+
+def test_the_payments_page_shows_payments_newest_first(client, db):
+    add_history(db)
+
+    rows = table_rows(client.get("/payments-history").text)
+
+    assert rows == [
+        ["2026-09-20", "$123.45", ""],
+        ["2026-09-15", "$0.00", "Nothing owed"],
+        ["2026-09-15", "$50.00", "First transfer"],
+    ]
+
+
+def test_a_payment_recorded_on_the_page_appears_in_the_history(client, db):
+    form = payment_form_of(client)
+    data = form_data(form)
+    data.update(amount="75.25", date="2026-09-30", notes="Cash")
+    client.post(form["action"], data=data)
+
+    rows = table_rows(client.get("/payments-history").text)
+
+    assert rows == [["2026-09-30", "$75.25", "Cash"]]
+
+
+def test_markup_in_history_text_is_escaped(client, db):
+    name = '<script>alert("x")</script>'
+    add_product(db, 1, quantity_received=5, name=name)
+    add_sale(db, 1, item_id=1, quantity=1)
+    add_return(db, 1, item_id=1, quantity=1, notes=name)
+    add_payment(db, 1, 100, name)
+
+    for path, column in [("/sales-history", 1), ("/returns-history", 1),
+                         ("/returns-history", 4), ("/payments-history", 2)]:
+        page = client.get(path).text
+
+        assert "<script>" not in page, path
+        assert table_rows(page)[0][column] == name, path
+
+
 # Adding a product ------------------------------------------------------------
 
 def add_form(client):
@@ -1617,6 +1764,10 @@ def test_there_are_templates_to_check():
     assert "return_form.html" in names
     assert "payment_form.html" in names
     assert "delete_confirm.html" in names
+    assert "out_of_stock.html" in names
+    assert "sales_history.html" in names
+    assert "returns_history.html" in names
+    assert "payments_history.html" in names
     assert "macros.html" in names
 
 

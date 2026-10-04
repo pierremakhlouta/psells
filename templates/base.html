@@ -219,6 +219,9 @@
       {% block nav %}
       <a href="{{ url_for('inventory_page') }}">Inventory</a>
       <a href="{{ url_for('out_of_stock_page') }}">Out of stock</a>
+      <a href="{{ url_for('sales_history_page') }}">Sales</a>
+      <a href="{{ url_for('returns_history_page') }}">Returns</a>
+      <a href="{{ url_for('payments_history_page') }}">Payments</a>
       <a href="{{ url_for('add_product_page') }}">Add product</a>
       <a href="{{ url_for('add_payment_page') }}">Record payment</a>
       {#- A form, not a link: logging out is a POST. -#}

@@ -176,6 +176,38 @@ def out_of_stock_page(request: Request, connection: Connection, q: str = ""):
     )
 
 
+# The history pages -----------------------------------------------------------
+#
+# Every sale, return and payment, newest first, each read from one psells
+# function and shown as it comes back. A sale's total, partner cut and profit
+# are sales_history's, worked out from the sale's own frozen columns, so an
+# edit to a product never changes a row here. With nothing recorded, each page
+# says so instead of showing an empty table.
+
+@router.get("/sales-history", response_class=HTMLResponse)
+def sales_history_page(request: Request, connection: Connection):
+    """Every sale, with what it came to."""
+    return templates.TemplateResponse(
+        request, "sales_history.html",
+        {"sales": psells.sales_history(connection)})
+
+
+@router.get("/returns-history", response_class=HTMLResponse)
+def returns_history_page(request: Request, connection: Connection):
+    """Every return to the partner, with its notes."""
+    return templates.TemplateResponse(
+        request, "returns_history.html",
+        {"returns": psells.returns_history(connection)})
+
+
+@router.get("/payments-history", response_class=HTMLResponse)
+def payments_history_page(request: Request, connection: Connection):
+    """Every payment to the partner, with its notes."""
+    return templates.TemplateResponse(
+        request, "payments_history.html",
+        {"payments": psells.payments_history(connection)})
+
+
 # Adding a product ------------------------------------------------------------
 
 class ProductForm(BaseModel):

@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+
+{% block title %}Sales history · PSells{% endblock %}
+
+{% block content %}
+<h1>Sales history</h1>
+<p class="lead">Every sale, newest first. Each row's figures are the ones frozen when it sold, so a later edit to the product never changes them.</p>
+
+{#- Each sale arrives with sale_total_cents, partner_cut_cents and profit_cents
+    worked out by psells.sales_history from the sale's own columns. This file
+    only formats them. -#}
+{% if sales %}
+<table>
+  <thead>
+    <tr>
+      <th>Date</th>
+      <th>Product</th>
+      <th>Category</th>
+      <th class="num">Quantity</th>
+      <th class="num">Price each</th>
+      <th class="num">Sale total</th>
+      <th class="num">Partner cut</th>
+      <th class="num">Profit</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for sale in sales %}
+    <tr>
+      <td>{{ sale.date }}</td>
+      <td>{{ sale.name }}</td>
+      <td>{{ sale.category }}</td>
+      <td class="num">{{ sale.quantity }}</td>
+      <td class="num">{{ sale.sale_price_cents|money }}</td>
+      <td class="num">{{ sale.sale_total_cents|money }}</td>
+      <td class="num">{{ sale.partner_cut_cents|money }}</td>
+      <td class="num">{{ sale.profit_cents|money }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty">No sales recorded yet.</p>
+{% endif %}
+{% endblock %}
