@@ -96,6 +96,97 @@ def all_products(connection):
     ).fetchall()
 
 
+def in_stock_products(connection):
+    """Every product with at least one unit available, in id order.
+
+    The inventory: what can still be sold or returned. Together with
+    out_of_stock_products it splits every product exactly once, because the
+    two conditions are each other's opposite.
+    """
+    return connection.execute(
+        "SELECT * FROM products_view WHERE quantity_available > 0 ORDER BY id"
+    ).fetchall()
+
+
+def out_of_stock_products(connection):
+    """Every product with no unit available, in id order.
+
+    Written as the opposite of in_stock_products' condition rather than as
+    "= 0", so a product could not fall between the two lists even if its
+    figures were ever wrong.
+    """
+    return connection.execute(
+        "SELECT * FROM products_view WHERE NOT (quantity_available > 0) "
+        "ORDER BY id"
+    ).fetchall()
+
+
+def out_of_stock_reason(product):
+    """Why a product has nothing left, from its derived quantities.
+
+    "Sold out" when every unit received was sold, "Returned" when every unit
+    went back to the partner, and otherwise how many of each, such as
+    "2 sold, 1 returned of 3". Only for a product with nothing available; one
+    with units left has no reason to give, and asking is a mistake.
+    """
+    if product["quantity_available"] > 0:
+        raise ValueError(f"Product {product['id']} is not out of stock.")
+
+    sold = product["quantity_sold"]
+    returned = product["quantity_returned"]
+    received = product["quantity_received"]
+
+    if sold == received:
+        return "Sold out"
+    if returned == received:
+        return "Returned"
+    return f"{sold} sold, {returned} returned of {received}"
+
+
+def sales_history(connection):
+    """Every sale, newest first, with what it came to.
+
+    Each row is the sale as recorded, with its product's name and category,
+    and three figures worked out from the sale's own frozen columns only:
+    sale_total_cents (quantity times the price each), partner_cut_cents
+    (quantity times the per-unit cut frozen when it sold) and profit_cents
+    (the first less the second). Never from the product's prices or share as
+    they are now, so editing a product never changes a past sale. These are
+    the same sums dashboard_totals makes over all sales, made per sale.
+
+    Sales on the same date come newest id first.
+    """
+    return connection.execute(
+        "SELECT s.id, s.date, s.item_id, p.name, p.category, s.quantity, "
+        "       s.sale_price_cents, s.partner_share_cents, "
+        "       s.quantity * s.sale_price_cents AS sale_total_cents, "
+        "       s.quantity * s.partner_share_cents AS partner_cut_cents, "
+        "       s.quantity * s.sale_price_cents "
+        "         - s.quantity * s.partner_share_cents AS profit_cents "
+        "FROM sales s JOIN products p ON p.id = s.item_id "
+        "ORDER BY s.date DESC, s.id DESC"
+    ).fetchall()
+
+
+def returns_history(connection):
+    """Every return to the partner, newest first, with its product's name and
+    category. Returns on the same date come newest id first."""
+    return connection.execute(
+        "SELECT r.id, r.date, r.item_id, p.name, p.category, r.quantity, "
+        "       r.notes "
+        "FROM returns r JOIN products p ON p.id = r.item_id "
+        "ORDER BY r.date DESC, r.id DESC"
+    ).fetchall()
+
+
+def payments_history(connection):
+    """Every payment to the partner, newest first; on the same date, newest
+    id first."""
+    return connection.execute(
+        "SELECT * FROM payments ORDER BY date DESC, id DESC"
+    ).fetchall()
+
+
 def format_cents(cents, *, symbol=True):
     """Format a whole number of cents as money, for display only.
 

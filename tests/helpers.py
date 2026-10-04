@@ -71,18 +71,19 @@ def add_product(connection, product_id, quantity_received, **overrides):
 
 
 def add_sale(connection, sale_id, item_id, quantity, sale_price_cents=9000,
-             partner_share_cents=3500):
+             partner_share_cents=3500, date="2026-09-01"):
     _insert_with_id(connection, "sales", {
-        "id": sale_id, "date": "2026-09-01", "item_id": item_id,
+        "id": sale_id, "date": date, "item_id": item_id,
         "quantity": quantity, "sale_price_cents": sale_price_cents,
         "partner_share_cents": partner_share_cents,
     })
 
 
-def add_return(connection, return_id, item_id, quantity):
+def add_return(connection, return_id, item_id, quantity, date="2026-09-01",
+               notes=""):
     _insert_with_id(connection, "returns", {
-        "id": return_id, "date": "2026-09-01", "item_id": item_id,
-        "quantity": quantity, "notes": "",
+        "id": return_id, "date": date, "item_id": item_id,
+        "quantity": quantity, "notes": notes,
     })
 
 
@@ -130,9 +131,10 @@ def stock(connection, product_id):
     ).fetchone()
 
 
-def add_payment(connection, payment_id, amount_cents, note=""):
+def add_payment(connection, payment_id, amount_cents, note="",
+                date="2026-09-01"):
     _insert_with_id(connection, "payments", {
-        "id": payment_id, "date": "2026-09-01", "amount_cents": amount_cents,
+        "id": payment_id, "date": date, "amount_cents": amount_cents,
         "notes": note,
     })
 
