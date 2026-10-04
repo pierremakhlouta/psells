@@ -1480,23 +1480,29 @@ def view_dashboard(connection):
     print(f"Balance owing: {format_cents(totals['balance_owing'])}")
 
 
-def print_product(product):
+def print_product(product, reason=None):
+    """One product's block. reason is out_of_stock_reason's, for the
+    out-of-stock list only."""
     partner_cut = partner_share_for(product)
 
     print(f"ID: {product['id']}")
     print(f"Name: {product['name']}")
     print(f"Category: {product['category']}")
     print(f"Available: {product['quantity_available']}")
+    if reason is not None:
+        print(f"Reason: {reason}")
     print(f"Listed Price: {format_cents(product['listed_price_cents'])}")
     print(f"Partner Cut: {format_cents(partner_cut)}")
     print(f"Discontinued: {'Yes' if product['retail_discontinued'] else 'No'}")
     print(f"Condition: {product['condition']}")
     print()
 def view_inventory(connection):
-    products = all_products(connection)
+    """The products in stock, as the inventory page lists them. Those with
+    none available are under option 11."""
+    products = in_stock_products(connection)
 
     if not products:
-        print("Inventory is empty.")
+        print("No products in stock.")
         return
 
     for product in products:
@@ -1618,17 +1624,84 @@ def list_categories(connection):
 
 
 def search(connection):
-    products = all_products(connection)
+    """Search the products in stock, as the inventory page's search does."""
+    products = in_stock_products(connection)
 
     term = ask_text("Search by product name or category: ")
     matches = find_items_by_name_or_category(products, term)
 
     if not matches:
-        print("No products found.")
+        print("No products in stock found.")
         return
 
     for product in matches:
         print_product(product)
+
+
+def view_out_of_stock(connection):
+    """The products with none available, each with out_of_stock_reason's
+    reason, as the out-of-stock page lists them."""
+    products = out_of_stock_products(connection)
+
+    if not products:
+        print("No products are out of stock.")
+        return
+
+    for product in products:
+        print_product(product, out_of_stock_reason(product))
+
+
+def view_sales_history(connection):
+    """Every sale, newest first, with the figures sales_history worked out
+    from the sale's own frozen columns."""
+    sales = sales_history(connection)
+
+    if not sales:
+        print("No sales recorded yet.")
+        return
+
+    for sale in sales:
+        print(f"Date: {sale['date']}")
+        print(f"Product: {sale['name']}")
+        print(f"Category: {sale['category']}")
+        print(f"Quantity: {sale['quantity']}")
+        print(f"Price Each: {format_cents(sale['sale_price_cents'])}")
+        print(f"Sale Total: {format_cents(sale['sale_total_cents'])}")
+        print(f"Partner Cut: {format_cents(sale['partner_cut_cents'])}")
+        print(f"Profit: {format_cents(sale['profit_cents'])}")
+        print()
+
+
+def view_returns_history(connection):
+    """Every return to the partner, newest first."""
+    returns = returns_history(connection)
+
+    if not returns:
+        print("No returns recorded yet.")
+        return
+
+    for item_return in returns:
+        print(f"Date: {item_return['date']}")
+        print(f"Product: {item_return['name']}")
+        print(f"Category: {item_return['category']}")
+        print(f"Quantity: {item_return['quantity']}")
+        print(f"Notes: {item_return['notes']}")
+        print()
+
+
+def view_payments_history(connection):
+    """Every payment to the partner, newest first."""
+    payments = payments_history(connection)
+
+    if not payments:
+        print("No payments recorded yet.")
+        return
+
+    for payment in payments:
+        print(f"Date: {payment['date']}")
+        print(f"Amount: {format_cents(payment['amount_cents'])}")
+        print(f"Notes: {payment['notes']}")
+        print()
 
 
 def add(connection):
@@ -1953,15 +2026,19 @@ def main():
             "Choose an option!\n"
             "0: Quit\n"
             "1: View Dashboard\n"
-            "2: View Inventory\n"
+            "2: View Inventory (in stock)\n"
             "3: List Categories\n"
-            "4: Search\n"
+            "4: Search (in stock)\n"
             "5: Add\n"
             "6: Edit\n"
             "7: Delete\n"
             "8: Record Sale\n"
             "9: Record Return\n"
             "10: Record Payment\n"
+            "11: View Out of Stock\n"
+            "12: Sales History\n"
+            "13: Returns History\n"
+            "14: Payments History\n"
         )
 
         if choice == "0":
@@ -1996,6 +2073,18 @@ def main():
 
         elif choice == "10":
             record_payment(connection)
+
+        elif choice == "11":
+            view_out_of_stock(connection)
+
+        elif choice == "12":
+            view_sales_history(connection)
+
+        elif choice == "13":
+            view_returns_history(connection)
+
+        elif choice == "14":
+            view_payments_history(connection)
 
         else:
             print("Invalid input try again!\n")

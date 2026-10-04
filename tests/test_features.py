@@ -11,9 +11,12 @@ rewording a heading does not fail a test that nothing broke.
 
 from datetime import date
 
+import pytest
+
 import psells
 
-from helpers import add_payment, add_product, add_return, add_sale
+from helpers import (add_payment, add_product, add_return, add_sale,
+                     add_shop)
 
 
 def test_dashboard_on_an_empty_database(db, capsys):
@@ -110,7 +113,7 @@ def test_dashboard_shows_an_overpayment_as_a_negative_balance(db, capsys):
 def test_inventory_says_so_when_it_is_empty(db, capsys):
     psells.view_inventory(db)
 
-    assert "Inventory is empty." in capsys.readouterr().out
+    assert "No products in stock." in capsys.readouterr().out
 
 
 def test_inventory_prints_every_field_of_a_product(db, capsys, partner_rate):
@@ -273,7 +276,7 @@ def test_search_says_so_when_nothing_matches(db, capsys, answers, partner_rate):
     answers("kettle")
     psells.search(db)
 
-    assert "No products found." in capsys.readouterr().out
+    assert "No products in stock found." in capsys.readouterr().out
 
 
 def test_search_asks_again_after_a_blank_term(db, capsys, answers, partner_rate):
@@ -1135,3 +1138,217 @@ def test_coming_back_to_retail_will_not_take_a_blank_price(db, capsys, answers):
 
     assert product_row(db)["retail_price_cents"] == 8000
     assert "Please enter an amount in dollars" in capsys.readouterr().out
+
+
+# Out of stock and the history --------------------------------------------------
+#
+# Options 11 to 14, and options 2 and 4 limited to the products in stock. Each
+# prints one psells function's answer; the last tests here hold the terminal
+# to the API, which test_web.py holds the pages to, so all three agree.
+
+def printed_blocks(printed):
+    """What a listing printed, as one {label: value} per blank-line-separated
+    block, in the order printed."""
+    blocks = []
+    for chunk in printed.strip("\n").split("\n\n"):
+        block = {}
+        for line in chunk.splitlines():
+            label, value = line.split(": ", 1)
+            block[label] = value
+        blocks.append(block)
+    return blocks
+
+
+def test_inventory_lists_only_products_in_stock(db, capsys, partner_rate):
+    add_shop(db)
+
+    psells.view_inventory(db)
+
+    assert [b["ID"] for b in printed_blocks(capsys.readouterr().out)] == [
+        "1", "2"]
+
+
+def test_inventory_with_everything_sold_out_says_none_in_stock(db, capsys,
+                                                               partner_rate):
+    add_product(db, 1, quantity_received=1)
+    add_sale(db, 1, item_id=1, quantity=1)
+
+    psells.view_inventory(db)
+
+    assert capsys.readouterr().out == "No products in stock.\n"
+
+
+def test_search_finds_only_products_in_stock(db, capsys, answers,
+                                             partner_rate):
+    """"chicago" names product 1, in stock, and 3, sold out."""
+    add_shop(db)
+
+    answers("chicago")
+    psells.search(db)
+
+    assert [b["ID"] for b in printed_blocks(capsys.readouterr().out)] == ["1"]
+
+
+def test_search_for_only_an_out_of_stock_product_finds_nothing(
+        db, capsys, answers, partner_rate):
+    add_shop(db)
+
+    answers("hoodie")
+    psells.search(db)
+
+    assert capsys.readouterr().out == "No products in stock found.\n"
+
+
+@pytest.mark.parametrize("view, message", [
+    (psells.view_out_of_stock, "No products are out of stock."),
+    (psells.view_sales_history, "No sales recorded yet."),
+    (psells.view_returns_history, "No returns recorded yet."),
+    (psells.view_payments_history, "No payments recorded yet."),
+])
+def test_an_empty_list_says_so(db, capsys, partner_rate, view, message):
+    add_product(db, 1, quantity_received=1)
+
+    view(db)
+
+    assert capsys.readouterr().out == message + "\n"
+
+
+def test_out_of_stock_lists_each_product_with_its_reason(db, capsys,
+                                                         partner_rate):
+    add_shop(db)
+
+    psells.view_out_of_stock(db)
+    blocks = printed_blocks(capsys.readouterr().out)
+
+    assert [(b["ID"], b["Available"], b["Reason"]) for b in blocks] == [
+        ("3", "0", "Sold out"), ("4", "0", "Returned"),
+        ("5", "0", "2 sold, 1 returned of 3")]
+    assert list(blocks[0]) == ["ID", "Name", "Category", "Available", "Reason",
+                               "Listed Price", "Partner Cut", "Discontinued",
+                               "Condition"]
+
+
+def test_sales_history_prints_newest_first_with_its_figures(db, capsys,
+                                                            partner_rate):
+    add_shop(db)
+
+    psells.view_sales_history(db)
+    blocks = printed_blocks(capsys.readouterr().out)
+
+    assert [b["Date"] for b in blocks] == ["2026-09-10", "2026-09-03",
+                                           "2026-09-03"]
+    assert blocks[1] == {
+        "Date": "2026-09-03", "Product": "Jordan 4 Bred", "Category": "Shoes",
+        "Quantity": "2", "Price Each": "$140.00", "Sale Total": "$280.00",
+        "Partner Cut": "$112.00", "Profit": "$168.00",
+    }
+
+
+def test_returns_history_prints_newest_first_with_notes(db, capsys,
+                                                        partner_rate):
+    add_shop(db)
+
+    psells.view_returns_history(db)
+    blocks = printed_blocks(capsys.readouterr().out)
+
+    assert [(b["Product"], b["Notes"]) for b in blocks] == [
+        ("Jordan 1 Chicago", "Wrong size"), ("Box Logo Hoodie", "Torn seam"),
+        ("Jordan 4 Bred", "")]
+
+
+def test_payments_history_prints_newest_first(db, capsys, partner_rate):
+    add_shop(db)
+
+    psells.view_payments_history(db)
+
+    assert printed_blocks(capsys.readouterr().out) == [
+        {"Date": "2026-09-20", "Amount": "$123.45", "Notes": ""},
+        {"Date": "2026-09-15", "Amount": "$0.00", "Notes": "Nothing owed"},
+        {"Date": "2026-09-15", "Amount": "$50.00", "Notes": "First transfer"},
+    ]
+
+
+def test_the_terminal_lists_what_the_api_serves(db, capsys, client):
+    add_shop(db)
+    money = psells.format_cents
+
+    def shown(view):
+        view(db)
+        return printed_blocks(capsys.readouterr().out)
+
+    def product_block(p, reason=None):
+        block = {"ID": str(p["id"]), "Name": p["name"],
+                 "Category": p["category"],
+                 "Available": str(p["quantity_available"])}
+        if reason is not None:
+            block["Reason"] = reason
+        block.update({
+            "Listed Price": money(p["listed_price_cents"]),
+            "Partner Cut": money(p["partner_share_cents"]),
+            "Discontinued": "Yes" if p["retail_discontinued"] else "No",
+            "Condition": p["condition"]})
+        return block
+
+    assert shown(psells.view_inventory) == [
+        product_block(p) for p in client.get("/products/in-stock").json()]
+    assert shown(psells.view_out_of_stock) == [
+        product_block(p, p["reason"])
+        for p in client.get("/products/out-of-stock").json()]
+    assert shown(psells.view_sales_history) == [
+        {"Date": s["date"], "Product": s["name"], "Category": s["category"],
+         "Quantity": str(s["quantity"]),
+         "Price Each": money(s["sale_price_cents"]),
+         "Sale Total": money(s["sale_total_cents"]),
+         "Partner Cut": money(s["partner_cut_cents"]),
+         "Profit": money(s["profit_cents"])}
+        for s in client.get("/sales").json()]
+    assert shown(psells.view_returns_history) == [
+        {"Date": r["date"], "Product": r["name"], "Category": r["category"],
+         "Quantity": str(r["quantity"]), "Notes": r["notes"]}
+        for r in client.get("/returns").json()]
+    assert shown(psells.view_payments_history) == [
+        {"Date": p["date"], "Amount": money(p["amount_cents"]),
+         "Notes": p["notes"]}
+        for p in client.get("/payments").json()]
+
+
+class Unclosed:
+    """The test connection, which main() may use but not close: the db
+    fixture rolls it back after the test."""
+
+    def __init__(self, connection):
+        self._connection = connection
+
+    def __getattr__(self, name):
+        return getattr(self._connection, name)
+
+    def close(self):
+        pass
+
+
+def test_the_menu_offers_and_runs_options_11_to_14(db, capsys, partner_rate,
+                                                   monkeypatch):
+    add_shop(db)
+    monkeypatch.setattr(psells, "connect", lambda: Unclosed(db))
+    replies = iter(["11", "12", "13", "14", "0"])
+    prompts = []
+
+    def answer(prompt=""):
+        prompts.append(prompt)
+        return next(replies)
+
+    monkeypatch.setattr("builtins.input", answer)
+
+    psells.main()
+    printed = capsys.readouterr().out
+
+    for line in ["2: View Inventory (in stock)", "4: Search (in stock)",
+                 "11: View Out of Stock", "12: Sales History",
+                 "13: Returns History", "14: Payments History"]:
+        assert line in prompts[0].splitlines(), line
+    assert "Reason: 2 sold, 1 returned of 3" in printed
+    assert "Sale Total: $280.00" in printed
+    assert "Notes: Torn seam" in printed
+    assert "Notes: Nothing owed" in printed
+    assert "Invalid input" not in printed
+

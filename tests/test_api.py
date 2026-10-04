@@ -13,7 +13,8 @@ import pytest
 
 import psells
 
-from helpers import add_payment, add_product, add_return, add_sale
+from helpers import (add_payment, add_product, add_return, add_sale,
+                     add_shop)
 
 
 def test_products_is_empty_to_start_with(client):
@@ -406,32 +407,6 @@ def test_the_schema_documents_the_sales_endpoint(client):
 #
 # Each list is one psells function's answer, served as it comes back. These
 # compare the two directly, then check the figures add up to the dashboard.
-
-def add_shop(db):
-    """In stock: 1 and 2. Out of stock: 3 sold out, 4 returned, 5 a mix.
-    Sales, returns and payments out of date order, two of each on one date."""
-    add_product(db, 1, quantity_received=6, name="Jordan 1 Chicago")
-    add_product(db, 2, quantity_received=2, name="Air Max 90")
-    add_product(db, 3, quantity_received=2, name="Chicago Bulls Cap",
-                category="Hats")
-    add_product(db, 4, quantity_received=1, name="Box Logo Hoodie",
-                category="Hoodies")
-    add_product(db, 5, quantity_received=3, name="Jordan 4 Bred")
-    add_sale(db, 1, item_id=1, quantity=2, sale_price_cents=8800,
-             partner_share_cents=3333, date="2026-09-03")
-    add_sale(db, 2, item_id=3, quantity=2, sale_price_cents=2550,
-             partner_share_cents=1020, date="2026-09-10")
-    add_sale(db, 3, item_id=5, quantity=2, sale_price_cents=14000,
-             partner_share_cents=5600, date="2026-09-03")
-    add_return(db, 1, item_id=4, quantity=1, date="2026-09-12",
-               notes="Torn seam")
-    add_return(db, 2, item_id=5, quantity=1, date="2026-09-05")
-    add_return(db, 3, item_id=1, quantity=1, date="2026-09-12",
-               notes="Wrong size")
-    add_payment(db, 1, 5000, "First transfer", date="2026-09-15")
-    add_payment(db, 2, 12345, "", date="2026-09-20")
-    add_payment(db, 3, 0, "Nothing owed", date="2026-09-15")
-
 
 def as_served(rows):
     """psells rows as JSON would carry them: dates as YYYY-MM-DD text."""
