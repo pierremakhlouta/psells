@@ -15,6 +15,8 @@ payouts made to that partner, and computes a live dashboard from all four.
 
 - Full inventory management: view, browse by category, search, add, edit, delete
 - Records sales, returns to the partner, and partner payouts
+- Lists the products in stock apart from those that are not, with the reason
+  each ran out, and the full history of sales, returns and payments
 - Does all of it from a browser, in server-rendered pages, or from the terminal
 - Works out each item's partner cut from a rule set per item
 - Computes stock levels, revenue, profit, and the balance owing to the partner
@@ -84,15 +86,23 @@ access to the containers:
 
     0: Quit
     1: View Dashboard
-    2: View Inventory
+    2: View Inventory (in stock)
     3: List Categories
-    4: Search
+    4: Search (in stock)
     5: Add
     6: Edit
     7: Delete
     8: Record Sale
     9: Record Return
     10: Record Payment
+    11: View Out of Stock
+    12: Sales History
+    13: Returns History
+    14: Payments History
+
+View Inventory and Search cover the products with at least one unit
+available, as the inventory page does; View Out of Stock lists the rest, each
+with the reason. Edit and Delete still choose from every product.
 
 Search matches a product name or a category, so typing a category returns
 everything in it. Choosing a product to sell, edit or delete matches on the name
@@ -149,13 +159,25 @@ out, a return, and two partner payments.
 Served at `https://psells.localhost/`, through nginx, by the `app` container
 behind it. One process serves the pages and the API.
 
-- **Inventory**, the home page: the nine dashboard figures above a table of
-  every product with its stock, listed price, partner cut and retail status, and
-  a search box that matches name or category.
+- **Inventory**, the home page: the nine dashboard figures, which cover every
+  product, above a table of the products with at least one unit available, with
+  stock, listed price, partner cut and retail status, and a search box that
+  matches name or category among them.
+- **Out of stock**: the products with none available, each with the reason,
+  "Sold out", "Returned" or a mix such as "2 sold, 1 returned of 3", and a
+  search of their own. Every product is on exactly one of the two pages. After
+  a sale, return or edit that leaves a product with none, the inventory says so
+  and links here.
+- **Sales**, **Returns** and **Payments**: every record of each kind, newest
+  first. A sale's row shows the price each, the sale total, the partner cut for
+  the sale and the profit, all from the figures frozen when it sold, so editing
+  a product never changes a past sale. Each page says so in a sentence when
+  there is nothing to list.
 - **Add** and **Edit** a product. The edit form opens filled in; a field emptied
   there is cleared, unlike the command line, where Enter keeps the current value.
-- **Sell**, **Return** and **Edit** from each row with stock, **Record payment**
-  from the navigation, and **Delete** from a product's edit page.
+- **Sell**, **Return** and **Edit** from each row with stock, **Edit** from each
+  out-of-stock row, **Record payment** from the navigation, and **Delete** from a
+  product's edit page.
 
 The pages are a view, not a second implementation, and three rules keep them
 one. A page route calls the same `psells` functions the command line calls and
@@ -200,10 +222,18 @@ interactive pages for it, `/docs` and `/redoc`, are turned off: they load their
 JavaScript from a CDN pinned only to a major version, and would run it on the
 same site as the forms.
 
-    GET  /products    every product, with stock and the partner cut per unit
-    GET  /dashboard   the nine dashboard figures
-    POST /sales       record one sale
-    GET  /session     the form token of the session asking
+    GET  /products                every product, with stock and the partner cut per unit
+    GET  /products/in-stock       the products with at least one unit available
+    GET  /products/out-of-stock   the rest, each with its reason
+    GET  /dashboard               the nine dashboard figures
+    GET  /sales                   every sale, newest first, with its total, partner cut and profit
+    POST /sales                   record one sale
+    GET  /returns                 every return, newest first
+    GET  /payments                every payment, newest first
+    GET  /session                 the form token of the session asking
+
+The lists are the ones the pages and the terminal show, from the same
+functions, and tests compare all three.
 
 All money is sent and received as a whole number of cents, never as dollars and
 never as a formatted string. That matches how it is stored, keeps every value
@@ -472,6 +502,10 @@ How it is put together:
 - **Backups.** Once a day `deploy/aws/backup-to-s3.sh` dumps the database,
   proves the dump restores, as `backup.sh` does, and only then copies it to a
   private, encrypted S3 bucket that deletes each copy after thirty days.
+- **The sample records.** A deploy loads `sample_data/seed.sql` only into a
+  database with no products, so a new server starts with them and a running one
+  keeps whatever it holds. A change to the seed reaches the demo only once its
+  records are emptied, or the server rebuilt.
 
 ### Shipping from a push
 
@@ -628,7 +662,7 @@ database it is pointed at, so it refuses any whose name does not end in
 Every warning is an error (`pytest.ini`), apart from one known deprecation in
 Starlette's test client on Python 3.14, matched on its exact message.
 
-Sixteen files, and the split is deliberate, so a red run says what kind of
+Eighteen files, and the split is deliberate, so a red run says what kind of
 thing broke before you read a line of it.
 
 `test_domain.py` covers everything in `psells.py` that has no input or output:
@@ -638,11 +672,20 @@ rules (`create_product`, `update_product`, `create_sale`, `create_return`,
 `create_payment`, `delete_product`) and the readers that turn a form's text into
 their values.
 
-`test_features.py` covers the ten menu functions end to end. They prompt and
+`test_features.py` covers the fourteen menu functions end to end. They prompt and
 print, so input is faked with pytest's `monkeypatch` and output is read back
 with `capsys`. Each test queues one answer per question, which makes the length
 of that queue a claim about how many questions the function asks: if it ever
 asks one more, the queue runs dry and the test fails rather than hanging.
+
+`test_history.py` covers the lists: every product in exactly one of the
+in-stock and out-of-stock lists, the three reasons, the order of each history,
+each sale's figures taken from the sale alone, and the sales and payments
+adding up to the dashboard.
+
+`test_seed.py` loads `sample_data/seed.sql` into the test database and fails if
+it stops filling every list, breaks a rule the application enforces, freezes a
+cut its product would not give, or leaves a sequence behind its highest id.
 
 `test_api.py` drives the HTTP endpoints through FastAPI's test client, with the
 connection dependency pointed at the test's own connection. That client is
@@ -731,8 +774,11 @@ on with the values it relies on, if the application would believe forwarded
 headers from anyone but nginx, if nginx would run as root, if a response would
 lack one of its security headers or the policy's style hash no longer matches
 the page, if the login limit stops counting only login attempts, if an action or an
-image is used by a tag rather than pinned to a commit or a digest, or if a
-workflow can write to the repository. On the server's side it fails if
+image is used by a tag rather than pinned to a commit or a digest, if a
+workflow can write to the repository, or if the nginx scan's exceptions reach
+any other scan, stop naming one version of one package, outlive their date, or
+lose the ground they stand on, an nginx configuration with no regular
+expression. On the server's side it fails if
 `compose.aws.yaml` stops replacing the ports, the site or the certificate, or
 if certbot would write anywhere nginx does not read or as another user, if
 any job but the one without third-party code could publish the image or it
@@ -752,7 +798,8 @@ port. Everything runs on every push through GitHub Actions, alongside a
 dependency vulnerability audit, a shellcheck pass and an `nginx -t` check, and
 a scan with Grype of the built image, on both architectures, and of the nginx
 image, which fails on a high or critical vulnerability that has a fix and
-lists the rest, and a scan of every commit in the history with gitleaks, which
+lists the rest (the nginx scan skips only what `nginx/grype-exceptions.yaml`
+lists, each with its reason, until the date written in it), and a scan of every commit in the history with gitleaks, which
 fails on anything that looks like a credential. On `main`, the scanned image is
 then published and deployed, as described under "Shipping from a push".
 

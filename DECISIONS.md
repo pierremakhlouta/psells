@@ -804,3 +804,71 @@ calls only, not every detail, and no specific business figures.
   main demo address never moves. nginx's shared rules moved into snippets first,
   so the two servers use one copy.
 
+
+- **In stock and out of stock are two lists of one set of products.** The
+  inventory page, View Inventory and Search show the products with at least one
+  unit available, and the out-of-stock page and View Out of Stock show the
+  rest. One condition decides, in psells, and the second list is its negation,
+  so no product can fall between them or appear in both; a test checks every
+  product is in exactly one. The dashboard still covers every product, because
+  it describes the business, not one list.
+
+- **Why a product ran out is worked out, not recorded.** "Sold out",
+  "Returned", or a mix such as "2 sold, 1 returned of 3" follows from the
+  quantities products_view already derives, so nothing new is stored and the
+  reason cannot disagree with the stock. It is one psells function, which the
+  page, the API and the terminal all call.
+
+- **A confirmation finds its product wherever it now is.** The notice after a
+  form looks the product up among every product, not only those in stock, so
+  selling the last unit is still confirmed; the inventory then says the
+  product has none left and links to the out-of-stock page. Without that, the
+  sale that empties a product would be the one sale with no confirmation.
+
+- **Delete stays on the edit page, from either list.** Out-of-stock rows offer
+  Edit only, as in-stock rows do, so deleting is still one step further away
+  than everything else. Most out-of-stock products have sales or returns and
+  would be refused anyway.
+
+- **The history shows each sale as it was recorded.** A sale's total, partner
+  cut and profit are worked out from its own frozen quantity, price and
+  per-unit cut, never from its product as it is now, so editing a product
+  never changes a past sale; tests edit a product and compare. Summed, the
+  history equals the dashboard's revenue, partner share, profit and units
+  sold, and the payments equal total paid; tests check both.
+
+- **Every list is one function, served three ways.** Each list is a psells
+  function. The page, the API route and the menu option each call it and only
+  format the answer, and tests compare the page with the API and the terminal
+  with the API, row by row. The API's existing routes are unchanged; the lists
+  are new routes with response models of their own. The pages are at
+  /out-of-stock, /sales-history, /returns-history and /payments-history,
+  because /sales and /payments already belonged to the API and a form.
+
+- **An empty list says so.** Each new page shows a sentence, such as "No
+  returns recorded yet.", instead of a table with no rows, and the terminal
+  prints the same sentence.
+
+- **A fixed package goes into the image before the base image has it.** In
+  October 2026 the pinned Python image still carried a libpcre2 with a
+  high-severity flaw that Debian had already fixed, and the newest digest of
+  that image carried it too. The Dockerfile upgrades those packages, and only
+  those, from Debian's security updates. Waiting would have blocked every
+  deploy for as long as the image took to be rebuilt.
+
+- **An unfixable scan finding gets a dated exception, for the image it is in.**
+  The nginx image's pcre2 had a high-severity flaw for which no nginx image
+  had a fix. nginx uses pcre2 only to evaluate the regular expressions in its
+  configuration, and PSells' has none. So nginx's failing scan skips that one
+  flaw, in that one version, with the reason written beside it, until a date;
+  from that date the job fails until someone looks again. A test fails if a
+  regular expression is ever added, if the exception reaches the app's scan,
+  or if it outlives its date. Turning the scan off for nginx, or moving to an
+  older nginx that Dependabot proposed, were the alternatives, and both were
+  worse.
+
+- **The sample records are tested like code.** They are what the demo shows
+  and what every screenshot is taken from, so a test loads them and fails if
+  any list is left empty, if a sale froze a cut its product would not give, if
+  more was sold or returned than received, or if a sequence would hand out an
+  id already used.
