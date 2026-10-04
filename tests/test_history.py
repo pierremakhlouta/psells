@@ -45,7 +45,7 @@ def test_every_product_is_in_exactly_one_of_the_two_lists(db):
     assert not set(in_stock) & set(out_of_stock)
 
 
-def test_a_sale_of_the_last_unit_moves_a_product_between_the_lists(db):
+def test_a_sale_of_the_last_unit_moves_a_product_between_the_lists(db, partner_rate):
     add_product(db, 1, quantity_received=1)
     assert ids(psells.in_stock_products(db)) == [1]
 
