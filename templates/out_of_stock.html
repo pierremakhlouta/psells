@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+
+{% block title %}Out of stock · PSells{% endblock %}
+
+{% block content %}
+<h1>Out of stock</h1>
+<p class="lead">Products with no unit available, and why. Products with stock are on the <a href="{{ url_for('inventory_page') }}">inventory</a>.</p>
+
+{#- The inventory's search, aimed at this page: the input is named q, the
+    route's parameter. -#}
+<form class="search" action="{{ url_for('out_of_stock_page') }}" method="get" role="search">
+  <input type="search" name="q" value="{{ q }}"
+         placeholder="Search by name or category"
+         aria-label="Search by name or category">
+  <button type="submit">Search</button>
+  {% if q %}<a href="{{ url_for('out_of_stock_page') }}">Clear</a>{% endif %}
+</form>
+
+{#- rows holds (product, partner cut, reason), each worked out in psells:
+    partner_share_for and out_of_stock_reason. This file only shows them. No
+    Delete link: as from the inventory, it is on the edit page. -#}
+{% if rows %}
+<table>
+  <thead>
+    <tr>
+      <th class="num">ID</th>
+      <th>Name</th>
+      <th>Category</th>
+      <th>Condition</th>
+      <th class="num">Available</th>
+      <th>Reason</th>
+      <th class="num">Listed price</th>
+      <th class="num">Partner cut</th>
+      <th>Retail</th>
+      <th><span class="visually-hidden">Actions</span></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for product, partner_cut, reason in rows %}
+    <tr>
+      <td class="num">{{ product.id }}</td>
+      <td>{{ product.name }}</td>
+      <td>{{ product.category }}</td>
+      <td>{{ product.condition }}</td>
+      <td class="num">{{ product.quantity_available }}</td>
+      <td>{{ reason }}</td>
+      <td class="num">{{ product.listed_price_cents|money }}</td>
+      <td class="num">{{ partner_cut|money }}</td>
+      <td>{% if product.retail_discontinued %}Discontinued{% endif %}</td>
+      <td class="row-actions"><a href="{{ url_for('edit_product_page', product_id=product.id) }}">Edit</a></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% elif q %}
+<p class="empty">No out-of-stock products match "{{ q }}".</p>
+{% else %}
+<p class="empty">No products are out of stock.</p>
+{% endif %}
+{% endblock %}

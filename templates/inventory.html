@@ -4,6 +4,7 @@
 
 {% block content %}
 <h1>Inventory</h1>
+<p class="lead">Products with at least one unit available. Those with none are under <a href="{{ url_for('out_of_stock_page') }}">Out of stock</a>.</p>
 
 {% if added %}
 <p class="notice" role="status">Added {{ added.name }}, id {{ added.id }}.</p>
@@ -16,6 +17,9 @@
 {% endif %}
 {% if returned %}
 <p class="notice" role="status">Recorded a return of {{ returned.name }}, id {{ returned.id }}.</p>
+{% endif %}
+{% if now_out_of_stock %}
+<p class="notice" role="status">{{ now_out_of_stock.name }} has no units available, so it is listed under <a href="{{ url_for('out_of_stock_page') }}">Out of stock</a>.</p>
 {% endif %}
 {% if paid %}
 <p class="notice" role="status">Recorded a payment of {{ paid.amount_cents|money }} dated {{ paid.date }}.</p>
@@ -93,7 +97,7 @@
     {% else %}
     <tr>
       <td colspan="9" class="empty">
-        {%- if q %}No products match "{{ q }}".{% else %}No products yet.{% endif -%}
+        {%- if q %}No products in stock match "{{ q }}".{% else %}No products in stock.{% endif -%}
       </td>
     </tr>
     {% endfor %}

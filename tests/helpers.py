@@ -231,6 +231,47 @@ def figures(html):
     return parser.figures
 
 
+class _Paragraphs(HTMLParser):
+    """Collects each <p> of one class: its text, and the links inside it."""
+
+    def __init__(self, css_class):
+        super().__init__(convert_charrefs=True)
+        self.css_class = css_class
+        self.found = []
+        self._text = None
+        self._links = None
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag == "p" and self.css_class in (attrs.get("class") or "").split():
+            self._text, self._links = [], []
+        elif tag == "a" and self._links is not None:
+            self._links.append(attrs.get("href"))
+
+    def handle_endtag(self, tag):
+        if tag == "p" and self._text is not None:
+            self.found.append((" ".join("".join(self._text).split()),
+                               self._links))
+            self._text = self._links = None
+
+    def handle_data(self, data):
+        if self._text is not None:
+            self._text.append(data)
+
+
+def paragraphs(html, css_class):
+    """Every <p class="css_class"> in a page, as (text, [link hrefs]).
+
+    For the notices after a form, and for the message a list page shows in
+    place of a table when it has nothing to list.
+    """
+    parser = _Paragraphs(css_class)
+    parser.feed(html)
+    parser.close()
+
+    return parser.found
+
+
 class _Forms(HTMLParser):
     """Collects every <form>, with each <input> and <select> inside it."""
 

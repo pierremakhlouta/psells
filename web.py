@@ -62,15 +62,18 @@ templates.env.filters["money"] = psells.format_cents
 def inventory_page(request: Request, connection: Connection, q: str = "",
                    added: str = "", edited: str = "", sold: str = "",
                    returned: str = "", paid: str = ""):
-    """Every product in one table, under the dashboard figures.
+    """Every product with a unit available, in one table, under the dashboard.
 
     The screen that replaces the spreadsheet. The nine figures above the table
     are dashboard_totals, the function the command line's dashboard and the
-    API's /dashboard call, handed to the template as they come back.
+    API's /dashboard call, handed to the template as they come back. They
+    describe every product, in stock or not. Which products are in stock is
+    decided by in_stock_products, and the rest are on out_of_stock_page.
 
     q is the search box, arriving as ?q= in the URL. A term narrows the table
     through find_items_by_name_or_category, the command line's own search, so
-    the two cannot disagree about what matches. The term is stripped, as the
+    the two cannot disagree about what matches. It searches the products in
+    stock only, the ones the table can show. The term is stripped, as the
     command line strips what it reads. No term, or only spaces, means no search
     and the whole inventory, which is said here rather than left to the fact
     that an empty string is found inside every string.
@@ -79,7 +82,10 @@ def inventory_page(request: Request, connection: Connection, q: str = "",
     changed, sold or returned, and paid the id of a payment just recorded,
     carried here by the redirect after a form. Each is read as text and matched against
     the ids that exist, so a typed ?added=abc or an id that does not exist
-    shows nothing rather than an error or a false message.
+    shows nothing rather than an error or a false message. They are looked up
+    among every product, not only those in stock, so a sale of the last unit,
+    or an edit made from the out-of-stock page, is still confirmed. When the
+    product named is not in stock, the page says so and links to where it is.
 
     The dashboard is never narrowed by a search. It describes the business,
     and totals for whichever rows happen to be showing would mean adding them
@@ -92,14 +98,23 @@ def inventory_page(request: Request, connection: Connection, q: str = "",
     """
     term = q.strip()
     everything = psells.all_products(connection)
-    products = everything
+    in_stock = psells.in_stock_products(connection)
+    products = in_stock
 
     if term:
-        products = psells.find_items_by_name_or_category(everything, term)
+        products = psells.find_items_by_name_or_category(in_stock, term)
 
     def named(product_id):
         return next((product for product in everything
                      if str(product["id"]) == product_id), None)
+
+    confirmed = [named(added), named(edited), named(sold), named(returned)]
+    in_stock_ids = {product["id"] for product in in_stock}
+    now_out_of_stock = next(
+        (product for product in confirmed
+         if product is not None and product["id"] not in in_stock_ids),
+        None,
+    )
 
     payment_recorded = next(
         (payment for payment in psells.all_payments(connection)
@@ -119,12 +134,45 @@ def inventory_page(request: Request, connection: Connection, q: str = "",
             "totals": psells.dashboard_totals(connection),
             "inventory": inventory,
             "q": term,
-            "added": named(added),
-            "edited": named(edited),
-            "sold": named(sold),
-            "returned": named(returned),
+            "added": confirmed[0],
+            "edited": confirmed[1],
+            "sold": confirmed[2],
+            "returned": confirmed[3],
+            "now_out_of_stock": now_out_of_stock,
             "paid": payment_recorded,
         },
+    )
+
+
+@router.get("/out-of-stock", response_class=HTMLResponse)
+def out_of_stock_page(request: Request, connection: Connection, q: str = ""):
+    """Every product with no unit available, and why.
+
+    The other half of the inventory: out_of_stock_products and
+    in_stock_products between them list every product exactly once. The reason
+    beside each, "Sold out", "Returned" or a mix such as "2 sold, 1 returned
+    of 3", is out_of_stock_reason's, worked out in psells and only shown here.
+
+    q searches these products alone, with the inventory's search function and
+    the same stripping. Rows offer Edit only. Delete stays one step further
+    away, on the edit page, as it is from the inventory.
+    """
+    term = q.strip()
+    products = psells.out_of_stock_products(connection)
+
+    if term:
+        products = psells.find_items_by_name_or_category(products, term)
+
+    rows = [
+        (product, psells.partner_share_for(product),
+         psells.out_of_stock_reason(product))
+        for product in products
+    ]
+
+    return templates.TemplateResponse(
+        request,
+        "out_of_stock.html",
+        {"rows": rows, "q": term},
     )
 
 

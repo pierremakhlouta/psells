@@ -21,7 +21,8 @@ import psells
 import web
 
 from helpers import (add_payment, add_product, add_return, add_sale,
-                     field_names, figures, form_data, forms, table_rows)
+                     field_names, figures, form_data, forms, paragraphs,
+                     table_rows)
 
 
 # Column positions in the inventory table, so a test says which figure it
@@ -41,7 +42,7 @@ def test_the_inventory_page_is_html(client):
 
 def test_an_empty_inventory_says_so(client):
     """The {% else %} branch of the loop, which runs only when nothing did."""
-    assert table_rows(client.get("/").text) == [["No products yet."]]
+    assert table_rows(client.get("/").text) == [["No products in stock."]]
 
 
 def test_a_product_is_one_row_with_every_column(client, db):
@@ -66,13 +67,14 @@ def test_available_counts_down_from_sales_and_returns(client, db):
     assert row[AVAILABLE] == "6"
 
 
-def test_a_sold_out_product_is_still_listed(client, db):
+def test_a_sold_out_product_leaves_the_inventory_for_the_out_of_stock_page(
+        client, db):
     add_product(db, 1, quantity_received=2)
     add_sale(db, 1, item_id=1, quantity=2)
 
-    row = table_rows(client.get("/").text)[0]
-
-    assert row[AVAILABLE] == "0"
+    assert table_rows(client.get("/").text) == [["No products in stock."]]
+    assert [row[ID] for row in table_rows(client.get("/out-of-stock").text)] == [
+        "1"]
 
 
 def test_a_discontinued_product_says_so_and_shows_its_fixed_cut(client, db):
@@ -183,7 +185,7 @@ def test_a_search_with_no_match_says_so(client, db):
 
     rows = table_rows(client.get("/", params={"q": "zzz"}).text)
 
-    assert rows == [['No products match "zzz".']]
+    assert rows == [['No products in stock match "zzz".']]
 
 
 def test_the_search_goes_through_the_form_the_page_serves(client, db):
@@ -230,6 +232,214 @@ def test_a_search_does_not_change_the_dashboard(client, db):
     searched = figures(client.get("/", params={"q": "chicago"}).text)
 
     assert searched == everything
+
+
+# The out-of-stock page -------------------------------------------------------
+
+# Column positions in the out-of-stock table: the inventory's, with the reason
+# after Available.
+(OUT_ID, OUT_NAME, OUT_CATEGORY, OUT_CONDITION, OUT_AVAILABLE, OUT_REASON,
+ OUT_LISTED, OUT_PARTNER_CUT, OUT_RETAIL, OUT_ACTIONS) = range(10)
+
+
+def out_of_stock_rows(client, **params):
+    return table_rows(client.get("/out-of-stock", params=params).text)
+
+
+def add_both_kinds(db):
+    """Two products in stock and three out, one for each reason, with
+    "Chicago" in the name of one of each kind."""
+    add_product(db, 1, quantity_received=3, name="Jordan 1 Chicago")
+    add_product(db, 2, quantity_received=2, name="Air Max 90")
+    add_product(db, 3, quantity_received=2, name="Chicago Bulls Cap",
+                category="Hats")
+    add_product(db, 4, quantity_received=1, name="Box Logo Hoodie",
+                category="Hoodies")
+    add_product(db, 5, quantity_received=3, name="Jordan 4 Bred")
+    add_sale(db, 1, item_id=1, quantity=1)
+    add_sale(db, 2, item_id=3, quantity=2)
+    add_return(db, 1, item_id=4, quantity=1)
+    add_sale(db, 3, item_id=5, quantity=2)
+    add_return(db, 2, item_id=5, quantity=1)
+
+
+def test_the_out_of_stock_page_is_html(client):
+    response = client.get("/out-of-stock")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+
+
+def test_with_nothing_out_of_stock_the_page_says_so_and_has_no_table(client,
+                                                                     db):
+    add_product(db, 1, quantity_received=1)
+    page = client.get("/out-of-stock").text
+
+    assert "<table" not in page
+    assert paragraphs(page, "empty") == [("No products are out of stock.", [])]
+
+
+def test_every_product_is_on_exactly_one_of_the_two_pages(client, db):
+    add_both_kinds(db)
+
+    inventory = [row[ID] for row in table_rows(client.get("/").text)]
+    out = [row[OUT_ID] for row in out_of_stock_rows(client)]
+
+    assert inventory == ["1", "2"]
+    assert out == ["3", "4", "5"]
+    assert sorted(inventory + out) == sorted(
+        str(p["id"]) for p in client.get("/products").json())
+
+
+def test_each_out_of_stock_row_gives_the_reason_psells_gives(client, db):
+    add_both_kinds(db)
+
+    reasons = {row[OUT_ID]: row[OUT_REASON] for row in out_of_stock_rows(client)}
+
+    assert reasons == {"3": "Sold out", "4": "Returned",
+                       "5": "2 sold, 1 returned of 3"}
+    for product in psells.out_of_stock_products(db):
+        assert reasons[str(product["id"])] == psells.out_of_stock_reason(
+            product)
+
+
+def test_an_out_of_stock_row_shows_the_figures_the_api_serves(client, db):
+    add_product(db, 1, quantity_received=1, name="Typo-free name",
+                retail_price_cents=10003, partner_share_mode="custom_percent",
+                partner_share_percent=12.5)
+    add_sale(db, 1, item_id=1, quantity=1)
+
+    (row,) = out_of_stock_rows(client)
+    (served,) = client.get("/products").json()
+
+    assert row[:OUT_REASON] == [
+        "1", served["name"], served["category"], served["condition"],
+        str(served["quantity_available"])]
+    assert row[OUT_LISTED] == psells.format_cents(served["listed_price_cents"])
+    assert row[OUT_PARTNER_CUT] == psells.format_cents(
+        served["partner_share_cents"])
+
+
+def test_each_page_searches_only_its_own_products(client, db):
+    add_both_kinds(db)
+
+    assert ids_shown(client, q="chicago") == ["1"]
+    assert [row[OUT_ID] for row in out_of_stock_rows(client, q="chicago")] == [
+        "3"]
+    assert [row[OUT_ID] for row in out_of_stock_rows(client, q=" HOODIES ")] == [
+        "4"]
+
+
+def test_the_out_of_stock_page_searches_with_the_command_lines_search(client,
+                                                                      db):
+    add_both_kinds(db)
+    out = psells.out_of_stock_products(db)
+
+    for term in ["jordan", "o", "CHICAGO", "hats", "zzz"]:
+        expected = [str(product["id"]) for product in
+                    psells.find_items_by_name_or_category(out, term)]
+        shown = [row[OUT_ID] for row in out_of_stock_rows(client, q=term)]
+
+        assert shown == expected, term
+
+
+def test_an_out_of_stock_search_with_no_match_says_so(client, db):
+    add_both_kinds(db)
+    page = client.get("/out-of-stock", params={"q": "air max"}).text
+
+    assert "<table" not in page
+    assert paragraphs(page, "empty") == [
+        ('No out-of-stock products match "air max".', [])]
+
+
+def test_the_out_of_stock_search_goes_through_its_own_form(client, db):
+    add_both_kinds(db)
+
+    form, box = search_box(client.get("/out-of-stock").text)
+    response = client.get(form["action"], params={box["name"]: "bred"})
+
+    assert form["action"].endswith("/out-of-stock")
+    assert [row[OUT_ID] for row in table_rows(response.text)] == ["5"]
+
+
+def test_out_of_stock_rows_offer_edit_and_the_edit_page_offers_delete(client,
+                                                                      db):
+    add_both_kinds(db)
+    page = client.get("/out-of-stock").text
+
+    assert {row[OUT_ACTIONS] for row in table_rows(page)} == {"Edit"}
+    assert "/delete" not in page
+    assert "/products/4/delete" in client.get("/products/4/edit").text
+
+
+def test_markup_in_a_name_is_escaped_on_the_out_of_stock_page(client, db):
+    name = '<script>alert("x")</script>'
+    add_product(db, 1, quantity_received=1, name=name)
+    add_sale(db, 1, item_id=1, quantity=1)
+
+    page = client.get("/out-of-stock").text
+
+    assert "<script>" not in page
+    assert out_of_stock_rows(client)[0][OUT_NAME] == name
+
+
+def test_every_page_links_to_the_out_of_stock_page_from_the_nav(client, db):
+    add_product(db, 1, quantity_received=1)
+
+    for path in ["/", "/out-of-stock", "/products/new", "/products/1/edit",
+                 "/payments/new"]:
+        page = client.get(path).text
+        assert 'href="http://testserver/out-of-stock">Out of stock</a>' in page
+
+
+def test_selling_the_last_unit_is_confirmed_with_a_link_to_out_of_stock(
+        client, db):
+    add_product(db, 1, quantity_received=2, name="Jordan 1 Chicago")
+
+    response = submit_sale_form(client, quantity="2", sale_price="90.00",
+                                follow_redirects=True)
+    notices = paragraphs(response.text, "notice")
+
+    assert notices == [
+        ("Recorded a sale of Jordan 1 Chicago, id 1.", []),
+        ("Jordan 1 Chicago has no units available, so it is listed under "
+         "Out of stock.", ["http://testserver/out-of-stock"]),
+    ]
+    assert table_rows(response.text) == [["No products in stock."]]
+
+
+def test_a_sale_that_leaves_stock_has_no_out_of_stock_notice(client, db):
+    add_product(db, 1, quantity_received=2, name="Jordan 1 Chicago")
+
+    response = submit_sale_form(client, quantity="1", sale_price="90.00",
+                                follow_redirects=True)
+
+    assert paragraphs(response.text, "notice") == [
+        ("Recorded a sale of Jordan 1 Chicago, id 1.", [])]
+
+
+def test_returning_the_last_unit_is_confirmed_with_the_same_link(client, db):
+    add_product(db, 1, quantity_received=1, name="Box Logo Hoodie")
+
+    response = submit_return_form(client, quantity="1", follow_redirects=True)
+    (_, (_, links)) = paragraphs(response.text, "notice")
+
+    assert links == ["http://testserver/out-of-stock"]
+
+
+def test_an_edit_from_the_out_of_stock_page_is_confirmed(client, db):
+    add_product(db, 1, quantity_received=1, name="Sold Hoodie")
+    add_sale(db, 1, item_id=1, quantity=1)
+
+    response = submit_edit_form(client, notes="Kept the box",
+                                follow_redirects=True)
+    texts = [text for text, _ in paragraphs(response.text, "notice")]
+
+    assert texts == [
+        "Saved changes to Sold Hoodie, id 1.",
+        "Sold Hoodie has no units available, so it is listed under "
+        "Out of stock.",
+    ]
 
 
 # Adding a product ------------------------------------------------------------
@@ -651,9 +861,12 @@ def test_only_a_product_with_stock_offers_sell(client, db):
     add_sale(db, 1, item_id=2, quantity=2)
 
     rows = {row[ID]: row for row in table_rows(client.get("/").text)}
+    out = {row[ID]: row for row in table_rows(client.get("/out-of-stock").text)}
 
+    assert rows.keys() == {"1"}
     assert rows["1"][ACTIONS] == "Sell Return Edit"
-    assert rows["2"][ACTIONS] == "Edit"
+    assert out.keys() == {"2"}
+    assert out["2"][OUT_ACTIONS] == "Edit"
 
 
 def test_the_sale_form_offers_the_fields_the_reader_reads(client, db):
@@ -1296,13 +1509,17 @@ def test_the_page_shows_the_figures_the_api_serves(client, db):
                 retail_price_cents=0, retail_discontinued=1,
                 partner_share_mode="custom_amount",
                 partner_share_amount_cents=700)
+    add_product(db, 5, quantity_received=1)
     add_sale(db, 1, item_id=1, quantity=4)
+    add_sale(db, 2, item_id=5, quantity=1)
     add_return(db, 1, item_id=3, quantity=1)
 
-    served = {p["id"]: p for p in client.get("/products").json()}
+    in_stock = {p["id"] for p in psells.in_stock_products(db)}
+    served = {p["id"]: p for p in client.get("/products").json()
+              if p["id"] in in_stock}
     shown = {int(row[ID]): row for row in table_rows(client.get("/").text)}
 
-    assert shown.keys() == served.keys()
+    assert shown.keys() == served.keys() == {1, 2, 3, 4}
 
     for product_id, product in served.items():
         row = shown[product_id]
