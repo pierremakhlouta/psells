@@ -28,7 +28,9 @@ calls only, not every detail, and no specific business figures.
 - **History stays fixed.** Each sale records its own figures at the moment it
   happens, so later changes to an item never rewrite the numbers on past sales.
   For example, changing an item's price later does not change the price recorded
-  on an earlier sale.
+  on an earlier sale. A record entered wrongly can still be corrected, but
+  only as itself and never by a change elsewhere; see "A wrong record is
+  corrected, and the correction is kept" below.
 
 - **Real data stays out of the repo.** Actual inventory and financials are never
   committed, preventing accidental exposure of business data. Everything under
@@ -351,7 +353,9 @@ calls only, not every detail, and no specific business figures.
   need the work separated from the prompts, and it has been. Putting HTTP
   endpoints on top of it now would add unauthenticated ways to change the
   records that nothing yet calls. Authentication now exists; more write
-  endpoints still wait, now for a program that needs them.
+  endpoints still wait, now for a program that needs them. Correcting a sale,
+  return or payment was the exception, chosen so the three ways in stay equal
+  for it; see below.
 
 - **Pinned versions are checked weekly.** Pinning makes a build repeatable and
   then goes quiet forever. The vulnerability audit answers whether a pinned
@@ -872,3 +876,58 @@ calls only, not every detail, and no specific business figures.
   any list is left empty, if a sale froze a cut its product would not give, if
   more was sold or returned than received, or if a sequence would hand out an
   id already used.
+
+- **A wrong record is corrected, and the correction is kept.** "History stays
+  fixed" means a record's figures are never rewritten by something else: a
+  product edit never touches a past sale, and a sale's partner cut is frozen
+  when it sells. It never meant a typo had to stay forever. So a sale, return
+  or payment can be edited, for a mistake in it, or deleted, for one that
+  should never exist, and the rule is kept in three ways. A correction changes
+  only that record, and only what it was entered with: a sale's date,
+  quantity and price, never its product or its frozen per-unit cut, so its
+  partner cut is still the quantity times the cut agreed at the time; a
+  return's date, quantity and notes, never its product; a payment's date,
+  amount and notes. Moving a record to another product is a delete and a new
+  entry. Every correction writes the whole record before, and after for an
+  edit, to a corrections table in the same transaction, so the figures are
+  corrected and what they were is still known. And that table only grows: a
+  trigger refuses any change to it. The alternatives were delete-and-re-enter
+  only, which would have re-frozen a sale's cut at today's share, and keeping
+  no record of the change, which would have left the daily backup as the only
+  trace.
+
+- **A corrected quantity follows the rule entering it followed.** A sale's or
+  return's new quantity may be anything from 1 up to what is available plus
+  its own units, the stock entering it would have seen, so no product is ever
+  left with less than none. Zero is a delete. Deleting gives the units back,
+  which can never break the rule. A product whose last sale or return is
+  deleted has no history left, so it becomes deletable; the log keeps what was
+  deleted and the product it belonged to.
+
+- **A correction is confirmed, and an empty one is not logged.** A delete has a
+  confirmation page that says what it changes, from the record's own figures,
+  and the terminal asks yes or no after saying the same; only the API's DELETE
+  is its own confirmation, as any API call is. A save that changes nothing
+  writes nothing to the log, because nothing was corrected. The notice after a
+  delete is confirmed against the log, so an id typed into the address cannot
+  claim one.
+
+- **Correcting is the same in all three ways in.** The pages, PUT and DELETE in
+  the API, and the terminal's Fix options call the same psells functions,
+  which hold every rule above. The API gained write routes for this, against
+  the earlier rule that it only reads and sells, so that no way in is missing
+  a correction the others can make. Each needs a session and the form token,
+  as every write does. A PUT body holds exactly the fields that can change, and
+  a test pins that, so the published description never offers a field that
+  would be ignored.
+
+- **The demo's database is changed by hand, from a script that proves it ran.**
+  A deploy applies no migrations, and loads the sample records only into an
+  empty database. So the corrections table, and the new sample records, reached
+  the demo through one Run Command script: a backup to S3 first, the
+  migration, then emptying the four record tables and loading the seed in one
+  transaction, keeping the login. The first attempt reported success after the
+  backup alone: the script had been piped into bash, and a command inside it
+  read the rest of the script from the same input. It now runs from a file,
+  and the caller fails unless the script printed its last line.
+

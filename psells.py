@@ -113,8 +113,10 @@ def out_of_stock_products(connection):
     """Every product with no unit available, in id order.
 
     Written as the opposite of in_stock_products' condition rather than as
-    "= 0", so a product could not fall between the two lists even if its
-    figures were ever wrong.
+    "= 0", so a product with a negative figure, were one ever recorded, is
+    still on one of the two lists. A NULL would be on neither, since
+    NOT (NULL > 0) is NULL; products_view's COALESCE is what keeps
+    quantity_available from ever being one.
     """
     return connection.execute(
         "SELECT * FROM products_view WHERE NOT (quantity_available > 0) "

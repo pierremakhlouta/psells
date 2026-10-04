@@ -17,6 +17,8 @@ payouts made to that partner, and computes a live dashboard from all four.
 - Records sales, returns to the partner, and partner payouts
 - Lists the products in stock apart from those that are not, with the reason
   each ran out, and the full history of sales, returns and payments
+- Corrects a sale, return or payment entered wrongly, by editing or deleting
+  it, and keeps the record as it was in a log that only grows
 - Does all of it from a browser, in server-rendered pages, or from the terminal
 - Works out each item's partner cut from a rule set per item
 - Computes stock levels, revenue, profit, and the balance owing to the partner
@@ -99,10 +101,15 @@ access to the containers:
     12: Sales History
     13: Returns History
     14: Payments History
+    15: Fix Sale
+    16: Fix Return
+    17: Fix Payment
 
 View Inventory and Search cover the products with at least one unit
 available, as the inventory page does; View Out of Stock lists the rest, each
-with the reason. Edit and Delete still choose from every product.
+with the reason. Edit and Delete still choose from every product. Fix Sale,
+Fix Return and Fix Payment list their records with ids, then edit one, Enter
+keeping each current value, or delete it after saying what that changes.
 
 Search matches a product name or a category, so typing a category returns
 everything in it. Choosing a product to sell, edit or delete matches on the name
@@ -173,6 +180,11 @@ behind it. One process serves the pages and the API.
   the sale and the profit, all from the figures frozen when it sold, so editing
   a product never changes a past sale. Each page says so in a sentence when
   there is nothing to list.
+- **Edit** and **Delete** on each of those rows, to correct a record entered
+  wrongly. A sale keeps its product and frozen partner cut; a return keeps its
+  product. A quantity can rise only as far as the stock allows. Delete has a
+  confirmation page saying what it changes. Every correction is written,
+  with the record as it was, to the `corrections` log.
 - **Add** and **Edit** a product. The edit form opens filled in; a field emptied
   there is cleared, unlike the command line, where Enter keeps the current value.
 - **Sell**, **Return** and **Edit** from each row with stock, **Edit** from each
@@ -228,8 +240,14 @@ same site as the forms.
     GET  /dashboard               the nine dashboard figures
     GET  /sales                   every sale, newest first, with its total, partner cut and profit
     POST /sales                   record one sale
+    PUT    /sales/{id}            correct a sale: quantity, sale_price_cents, date
+    DELETE /sales/{id}            delete a sale
     GET  /returns                 every return, newest first
+    PUT    /returns/{id}          correct a return: quantity, date, notes
+    DELETE /returns/{id}          delete a return
     GET  /payments                every payment, newest first
+    PUT    /payments/{id}         correct a payment: amount_cents, date, notes
+    DELETE /payments/{id}         delete a payment
     GET  /session                 the form token of the session asking
 
 The lists are the ones the pages and the terminal show, from the same
@@ -666,7 +684,7 @@ database it is pointed at, so it refuses any whose name does not end in
 Every warning is an error (`pytest.ini`), apart from one known deprecation in
 Starlette's test client on Python 3.14, matched on its exact message.
 
-Eighteen files, and the split is deliberate, so a red run says what kind of
+Nineteen files, and the split is deliberate, so a red run says what kind of
 thing broke before you read a line of it.
 
 `test_domain.py` covers everything in `psells.py` that has no input or output:
@@ -676,7 +694,7 @@ rules (`create_product`, `update_product`, `create_sale`, `create_return`,
 `create_payment`, `delete_product`) and the readers that turn a form's text into
 their values.
 
-`test_features.py` covers the fourteen menu functions end to end. They prompt and
+`test_features.py` covers the seventeen menu functions end to end. They prompt and
 print, so input is faked with pytest's `monkeypatch` and output is read back
 with `capsys`. Each test queues one answer per question, which makes the length
 of that queue a claim about how many questions the function asks: if it ever
@@ -686,6 +704,12 @@ asks one more, the queue runs dry and the test fails rather than hanging.
 in-stock and out-of-stock lists, the three reasons, the order of each history,
 each sale's figures taken from the sale alone, and the sales and payments
 adding up to the dashboard.
+
+`test_corrections.py` covers editing and deleting a sale, return or payment:
+what may change and what may not, a sale's frozen cut kept after its product's
+share changes, the stock rule at and past its limit, the dashboard after each
+kind, the log row written with every change and none for a save that changes
+nothing, and a change undone when its log row cannot be written.
 
 `test_seed.py` loads `sample_data/seed.sql` into the test database and fails if
 it stops filling every list, breaks a rule the application enforces, freezes a
@@ -723,7 +747,9 @@ application as it is in the stack.
 `test_schema.py` runs `schema.sql` on its own: every rule tried with a row that
 breaks exactly that rule and refused by that rule's own constraint, ids never
 reused, the view's derived stock, the Python types each column comes back as,
-and that each file in `migrations/` builds exactly what `schema.sql` builds.
+the corrections log refusing any change to a row, and that the files in
+`migrations/`, applied in order, build exactly what `schema.sql` builds,
+functions and triggers included.
 
 `test_connect.py` covers `psells.connect`: that a write through it is really
 committed, and that a missing or silent database is a sentence.
@@ -847,10 +873,17 @@ Worth stating plainly rather than leaving to be discovered.
 - **Behind Docker Desktop, the application never sees a client's address.**
   Every request reaches nginx from the Compose network's gateway, so that is the
   address logged and forwarded. Harmless while everything is on one machine.
-- **The API can read and sell, and nothing else.** Every other write is in the
-  web pages and the command line. More write endpoints wait for a program that
-  needs them, and so do API keys; until then a program logs in with the same
-  cookie as the browser.
+- **The API can read, sell and correct, and nothing else.** Adding or editing a
+  product, recording a return or a payment, and deleting a product are in the
+  web pages and the command line only. More write endpoints wait for a program
+  that needs them, and so do API keys; until then a program logs in with the
+  same cookie as the browser.
+- **Corrections have no page of their own yet.** The `corrections` log is
+  written by every edit and delete of a sale, return or payment, and read only
+  in the database or a backup.
+- **A deploy applies no migrations.** A new migration reaches an existing
+  database, the demo's included, by hand after a backup, as described under
+  "Changing the schema of an existing database".
 - **Two rules live in the application rather than the database.** Available stock
   never going negative, and an intake quantity never being edited below what has
   already sold and returned, both span more than one table, and a `CHECK`
