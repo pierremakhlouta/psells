@@ -7,10 +7,13 @@ the connection dependency, so no test touches a file. The client fixture that
 does this lives in conftest.py.
 """
 
+import logging
 from datetime import date
 
+import psycopg
 import pytest
 
+import dependencies
 import psells
 
 from helpers import (add_payment, add_product, add_return, add_sale,
@@ -702,3 +705,46 @@ def test_the_schema_documents_the_corrections(client):
         "PaymentChange": {"amount_cents", "date", "notes"},
     }
 
+
+
+# Without the database --------------------------------------------------------
+#
+# Found by Phase 10's deliberate failure: with the database stopped, every
+# request was an unhandled exception, a bare 500 and a traceback in the log.
+
+def no_database():
+    raise psells.DatabaseUnavailable("Could not reach the database: "
+                                     "failed to resolve host 'db'")
+
+
+@pytest.mark.parametrize("path", ["/login", "/products", "/", "/sales-history"])
+def test_without_the_database_every_request_is_a_503_with_a_sentence(
+        client, caplog, path):
+    api_app = client.app
+    api_app.dependency_overrides[dependencies.get_connection] = no_database
+
+    with caplog.at_level(logging.WARNING, logger="psells"):
+        response = client.get(path, follow_redirects=False)
+
+    assert response.status_code == 503
+    assert response.text == ("PSells cannot reach its database right now. "
+                             "Please try again in a minute.")
+    assert response.headers["retry-after"] == "60"
+    # One line in the log, naming the error; nothing about hosts to visitors.
+    records = [r for r in caplog.records if r.name == "psells"]
+    assert len(records) == 1
+    assert "failed to resolve host 'db'" in records[0].getMessage()
+    assert "db" not in response.text.lower().replace("database", "")
+    assert not any(r.exc_info for r in caplog.records)
+
+
+def test_a_connection_lost_partway_through_is_a_503_too(client, monkeypatch):
+    def lost(connection):
+        raise psycopg.OperationalError("server closed the connection unexpectedly")
+
+    monkeypatch.setattr(psells, "all_products", lost)
+
+    response = client.get("/products")
+
+    assert response.status_code == 503
+    assert response.headers["retry-after"] == "60"

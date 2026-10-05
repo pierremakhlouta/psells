@@ -26,11 +26,14 @@ import json
 import os
 import re
 import stat
+import subprocess
+import sys
 
 import pytest
 import yaml
 
 import psells
+from helpers import TEST_DATABASE_URL
 
 
 PROJECT_DIR = psells.PROJECT_DIR
@@ -1324,3 +1327,48 @@ def test_the_agent_reads_only_the_proxys_json_lines_and_never_docker():
     assert re.search(r'stage\.drop \{\s*expression = "\^\[\^\{\]"', config)
     assert "docker" not in config.replace("var/lib/docker", "")
     assert "sys.env(\"GRAFANA_TOKEN\")" in config
+
+
+# The app's health check asks the database ---------------------------------------
+#
+# Found by Phase 10's deliberate failure: with the database stopped, the app
+# said healthy while every page failed. These run the health check's own
+# command, with its socket part stood in, since nothing listens on port 8000
+# here.
+
+def app_health_command():
+    test = compose()["services"]["app"]["healthcheck"]["test"]
+    assert test[:3] == ["CMD", "python", "-c"]
+    return test[3]
+
+
+def run_health_check(database_url):
+    stand_in_socket = (
+        "import socket\n"
+        "class Answered:\n"
+        "    def close(self): pass\n"
+        "socket.create_connection = lambda *args, **kwargs: Answered()\n")
+    environment = dict(os.environ, PSELLS_DATABASE_URL=database_url)
+    return subprocess.run(
+        [sys.executable, "-c", stand_in_socket + app_health_command()],
+        cwd=PROJECT_DIR, env=environment, capture_output=True, text=True,
+        timeout=30)
+
+
+def test_the_app_health_check_asks_uvicorn_and_the_database():
+    command = app_health_command()
+
+    assert "socket.create_connection(('127.0.0.1', 8000), 2)" in command
+    assert "psells.connect()" in command and "SELECT 1" in command
+
+
+def test_the_app_is_healthy_when_the_database_answers():
+    assert run_health_check(TEST_DATABASE_URL).returncode == 0
+
+
+def test_the_app_is_unhealthy_when_the_database_does_not():
+    result = run_health_check(
+        "postgresql://nobody:nothing@127.0.0.1:1/none?connect_timeout=2")
+
+    assert result.returncode != 0
+    assert "DatabaseUnavailable" in result.stderr

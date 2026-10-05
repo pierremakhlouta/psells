@@ -116,13 +116,17 @@ services:
       db:
         condition: service_healthy
     healthcheck:
-      # Healthy once uvicorn accepts connections. Docker accepts a connection on
-      # the published port before the app inside is listening and then drops
-      # it, so a request made the moment the container starts gets an empty
-      # reply. "docker compose up --wait" waits for this instead. It opens a
-      # socket rather than requesting a page, so it adds nothing to the log.
-      # Python rather than curl, because the slim image has no curl.
-      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8000), 2).close()"]
+      # Healthy once uvicorn accepts connections and the database answers.
+      # Docker accepts a connection on the published port before the app
+      # inside is listening and then drops it, so a request made the moment
+      # the container starts gets an empty reply; "docker compose up --wait"
+      # waits for this instead. The database is asked too because every page
+      # needs it: in Phase 10's deliberate failure the database was stopped
+      # and this check, then only the socket, said healthy while every page
+      # failed. It opens a socket and runs SELECT 1 rather than requesting a
+      # page, so it adds nothing to the log. Python rather than curl, because
+      # the slim image has no curl.
+      test: ["CMD", "python", "-c", "import socket, psells; socket.create_connection(('127.0.0.1', 8000), 2).close(); c = psells.connect(); c.execute('SELECT 1'); c.close()"]
       interval: 30s
       timeout: 5s
       start_period: 30s

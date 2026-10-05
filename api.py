@@ -28,7 +28,9 @@ pointing it at a copy rather than the real records is always a deliberate act:
 """
 
 import datetime
+import logging
 
+import psycopg
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Response
 from fastapi.responses import PlainTextResponse, RedirectResponse
 from pydantic import BaseModel, Field
@@ -87,6 +89,31 @@ def refuse_without_the_form_token(request, exc):
         "Refused: the form token is missing or wrong. "
         "Reload the page and try again.",
         status_code=403,
+    )
+
+
+logger = logging.getLogger("psells")
+
+
+@app.exception_handler(psells.DatabaseUnavailable)
+@app.exception_handler(psycopg.OperationalError)
+def answer_without_the_database(request, exc):
+    """The database cannot be reached: 503, for pages and the API alike.
+
+    Found by Phase 10's deliberate failure: with the demo's database stopped,
+    every request ended in an unhandled exception, a bare 500 "Internal Server
+    Error" and a full traceback in the log, one per request. Now a visitor
+    reads what is wrong and when to try again (Retry-After), and the log gets
+    one line naming the error. DatabaseUnavailable is psells.connect failing
+    to connect; OperationalError is a connection lost partway through a
+    request. Neither message reaches the visitor: it names hosts and users.
+    """
+    logger.warning("database unavailable, answered 503: %s", exc)
+    return PlainTextResponse(
+        "PSells cannot reach its database right now. "
+        "Please try again in a minute.",
+        status_code=503,
+        headers={"Retry-After": "60"},
     )
 
 
