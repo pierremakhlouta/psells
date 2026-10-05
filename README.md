@@ -29,6 +29,8 @@ payouts made to that partner, and computes a live dashboard from all four.
 - Backs itself up daily, on a schedule, and proves each copy restores
 - Runs a public demonstration on AWS, with invented records only, at
   `https://psells.lakeshorefreight.me`
+- Watches that demonstration from outside and inside, against two service
+  level objectives, with one alert and a dashboard, all described in code
 
 Every figure that can be derived is computed on demand rather than stored, so no
 total can drift out of sync with the records it came from. See
@@ -664,6 +666,52 @@ leaves RDS before RDS goes:
 and the CNAME removed. The certificate and the record that proves the name to
 AWS stay; both are free.
 
+## Monitoring the demonstration
+
+The AWS demo is watched by a Grafana Cloud stack on its free tier, which
+costs nothing and needs no card. Only the demo: the real business's records
+and activity never leave the Mac, so nothing on the Mac is sent anywhere.
+
+- **From outside.** Grafana checks `https://psells.lakeshorefreight.me/login`
+  from Montreal, North Virginia and London every two minutes, over HTTPS with
+  the certificate checked, passing only on a 200. Three places, so one
+  location's own network is never mistaken for the site's; every two minutes,
+  so the checks use 64,800 of the free tier's 100,000 runs a month.
+- **From inside.** An agent, Grafana Alloy, runs beside the stack on the
+  server only (`compose.aws.yaml`, configured by `monitoring/config.alloy`).
+  It sends the server's CPU, memory, disk, load and network, and nginx's
+  access log, read from the system journal. It has no Docker socket, runs as
+  its own user with no capabilities and a 160 MB ceiling, publishes no port,
+  and keeps only nginx's JSON lines, which carry no visitor address, no query
+  string and no browser string. From those lines it counts requests by status
+  class and records how long each took.
+- **Two service level objectives**, over a rolling seven days: 99.5% of the
+  outside checks pass, and 99% of requests are answered in under 500 ms.
+- **One alert**: the site is down, meaning under half of the checks passed
+  over five minutes, held for two. It is emailed, and so is its resolution.
+  No data alerts too.
+- **A dashboard**, `monitoring/dashboards/psells-demo.json`: the SLOs, requests
+  by status and time to answer, the checks by location, the server, and
+  nginx's lines.
+
+Everything on Grafana's side is Terraform in `infra/grafana/`, with its state
+beside `infra/aws/`'s. Its two tokens are read from the Mac's Keychain for the
+length of the command, and the stack's name and the alert address are in
+`terraform.tfvars`, which git ignores:
+
+    export AWS_PROFILE=psells
+    GRAFANA_AUTH=$(security find-generic-password -s psells-grafana-terraform -w) \
+    GRAFANA_SM_ACCESS_TOKEN=$(security find-generic-password -s psells-grafana-sm -w) \
+    terraform plan
+
+The agent's addresses and its write-only token are in Parameter Store under
+`/psells/grafana`, written into `.env` on each deploy.
+
+The monitoring was tested by stopping the demo's database for fifteen
+minutes. The alert fired after 5 minutes 17 seconds; the write-up, with what
+it found and what was fixed, is
+[postmortems/2026-10-05-demo-database-stopped.md](postmortems/2026-10-05-demo-database-stopped.md).
+
 ## Running the tests
 
 The suite needs a PostgreSQL to run against: `db-test` in `compose.yaml`, a
@@ -684,7 +732,7 @@ database it is pointed at, so it refuses any whose name does not end in
 Every warning is an error (`pytest.ini`), apart from one known deprecation in
 Starlette's test client on Python 3.14, matched on its exact message.
 
-Nineteen files, and the split is deliberate, so a red run says what kind of
+Twenty files, and the split is deliberate, so a red run says what kind of
 thing broke before you read a line of it.
 
 `test_domain.py` covers everything in `psells.py` that has no input or output:
@@ -718,7 +766,8 @@ cut its product would not give, or leaves a sequence behind its highest id.
 `test_api.py` drives the HTTP endpoints through FastAPI's test client, with the
 connection dependency pointed at the test's own connection. That client is
 logged in, with a session made directly, so tests about something else do not
-depend on the login page.
+depend on the login page. Without the database, every request must answer 503
+with a sentence and `Retry-After`, logging one line and no traceback.
 
 `test_auth.py` covers `auth.py` and `set_password.py`: Argon2id hashing, a
 refusal that takes as long for an unknown username, the upgrade of an old hash,
@@ -776,7 +825,11 @@ only when there is none, before the stack starts, and that `first-boot.sh`
 deploys only after every step that prepares the host. And it runs
 `live-database.sh` with stand-ins, checking the database container is reached
 as before and RDS only with its certificate verified and the password kept off
-every command line.
+every command line. It runs the deploy's monitoring block with a stand-in `aws`, which must
+accept the Grafana settings only in their expected shapes and stop on any
+other or a missing one, and checks the deploy reloads nginx after checking
+its configuration, since a changed mounted file is invisible to
+`compose up`.
 
 `test_infra.py` reads the Terraform in `infra/aws/` and fails if a state or
 variables file could be committed, if the provider is not pinned to one exact
@@ -793,6 +846,14 @@ would keep, if the database admitted anything but the server, if the load
 balancer allowed less than TLS 1.3 or served another name, or if a security
 group description held a character AWS refuses.
 
+`test_grafana.py` reads the Terraform in `infra/grafana/` and the dashboard,
+and fails if the provider is not pinned and locked for every platform, if a
+token, an address, the stack's name or an email address is written in, if the
+checks stop being the login page from three places over HTTPS with its
+certificate, or would no longer fit the free tier, if either SLO changes, if
+there is more than one alert or it stops being the site down or stops alerting
+on no data, or if the dashboard names a data source other than by placeholder.
+
 `test_container.py` reads the `Dockerfile`, `.dockerignore`, `compose.yaml`,
 `compose.aws.yaml`, `nginx/nginx.conf` with each site's files, and the
 workflows, and fails if the image could ever be
@@ -805,10 +866,16 @@ headers from anyone but nginx, if nginx would run as root, if a response would
 lack one of its security headers or the policy's style hash no longer matches
 the page, if the login limit stops counting only login attempts, if an action or an
 image is used by a tag rather than pinned to a commit or a digest, if a
-workflow can write to the repository, or if the nginx scan's exceptions reach
-any other scan, stop naming one version of one package, outlive their date, or
-lose the ground they stand on, an nginx configuration with no regular
-expression. On the server's side it fails if
+workflow can write to the repository, or if a scan's exceptions reach any
+other scan, stop naming one version of one package, outlive their date, or
+lose the ground they stand on: an nginx configuration with no regular
+expression, an agent that never links OpenSSL. For the monitoring agent it
+fails if it could run on the Mac, run as root, reach Docker's socket, write
+to the host, publish a port or lose its memory ceiling, or if it reads more
+than the proxy's journal or keeps a line that is not JSON; for nginx's log, if
+a line could carry a visitor's address, a query string or a browser string;
+and it runs the app's health check against the test database and against one
+that does not answer. On the server's side it fails if
 `compose.aws.yaml` stops replacing the ports, the site or the certificate, or
 if certbot would write anywhere nginx does not read or as another user, if
 any job but the one without third-party code could publish the image or it
@@ -843,6 +910,18 @@ newer release, which the same workflows then test and scan.
 
 Worth stating plainly rather than leaving to be discovered.
 
+- **The application's errors are not in Grafana.** Grafana gets the server's
+  health and nginx's access lines, so an alert shows the symptom; the
+  application's own error lines, the cause, are read on the server. Open from
+  the postmortem.
+- **Monitoring covers the demo only.** The business on the Mac is watched by
+  its daily backup check and by whoever uses it.
+- **Two scan exceptions are dated.** nginx's pcre2 and the agent's OpenSSL each
+  have a known flaw skipped until 31 October 2026, with the reason; after that
+  date the Image workflow fails until they are dealt with.
+- **The free Grafana instance sleeps when unused.** Its first page after a
+  while answers "loading" for a moment. Metrics, checks and alerts keep
+  running.
 - **The login is a password and nothing else.** One account, a minimum of
   fifteen characters, no second factor. Argon2id makes each guess expensive and
   nginx limits how many arrive; a long passphrase is still the real
@@ -917,7 +996,8 @@ against a real PostgreSQL, and is backed up on a schedule. A copy with
 invented records runs on AWS behind a publicly trusted certificate, described
 in Terraform and rebuilt from it, and a push to `main` ships itself there once
 every check passes. A managed database and a load balancer are described in
-Terraform too, and run behind a switch. Planned next is monitoring: a dashboard of the server and
-the application, service level objectives, an alert, and a deliberate failure
-written up as an incident, carrying the same data model and business rules
-through each step.
+Terraform too, and run behind a switch. The demo is monitored from outside and
+inside against two service level objectives, with one alert and a dashboard,
+all in code, and a deliberate outage was written up as an incident. Planned
+next is Kubernetes, carrying the same data model and business rules through
+each step.

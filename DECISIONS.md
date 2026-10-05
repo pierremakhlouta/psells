@@ -931,3 +931,77 @@ calls only, not every detail, and no specific business figures.
   read the rest of the script from the same input. It now runs from a file,
   and the caller fails unless the script printed its last line.
 
+
+- **Monitoring runs on Grafana Cloud's free tier, with an agent on the
+  server.** The server has about 350 MB free, less than Prometheus, Grafana
+  and Loki need together. The hosted free tier costs nothing, needs no card
+  and has no end date, keeps alerting when the Mac is asleep, and checks the
+  site from outside. A stack on the Mac would stop whenever the Mac sleeps and
+  could not see the server without a port opened; a minimal stack on the
+  server would have risked its memory.
+
+- **Only the demo is watched.** The real business's records and activity never
+  leave the Mac, and even a request log carries paths, record ids and timing
+  about the business. The Mac keeps its backup check.
+
+- **Two SLIs, one from each side.** Availability is measured from outside, as a
+  visitor meets the site: 99.5% of checks of the login page pass over seven
+  days. Latency is measured from inside, from every request nginx answers: 99%
+  in under 500 ms. One that only the outside could see and one that only the
+  server could; the stricter 99.9% was turned down because one small server
+  with deploys would miss it.
+
+- **Three check locations every two minutes.** Three, so the alert can need a
+  majority and one location's network never pages; every two minutes, so the
+  checks use 65% of the free 100,000 runs a month. Two locations every minute
+  used 86%, five every five minutes took ten minutes to notice.
+
+- **One alert, on the symptom.** It fires when the site is down for visitors,
+  not on a cause such as memory, and by email, which needs nothing new. No data
+  alerts too, because silence is not health. Burn-rate alerting on the error
+  budget was turned down for now as harder to explain and to prove.
+
+- **nginx's log carries only what the SLOs need.** On the server it leaves for
+  Grafana Cloud, so each line holds time, host, method, path without its query
+  string, status, bytes and timings, and never a visitor's address, a search
+  term, a browser string or a referrer. Keeping the visitor's address would have
+  helped trace a brute-force attempt, at the cost of sending visitors' addresses
+  to a third party.
+
+- **The agent reads the journal, never Docker's socket.** On the server the
+  proxy logs to journald, which rotates itself, and the agent reads it with
+  only the journal group. Docker's socket, the usual way, is Docker's whole
+  API even mounted read-only, which is root on the server. The cost is no
+  per-container panels, which the SLOs do not need.
+
+- **The agent's scan has a dated exception, as nginx's does.** Its newest image
+  carries an OpenSSL with a high flaw that the agent, a Go program, never
+  loads; the scan skips that one flaw until 31 October, and CI fails if the
+  agent ever links OpenSSL. Building a patched image of our own would have
+  meant a second image to publish and deploy; not scanning it would have let
+  something ship that nothing checked.
+
+- **Grafana is Terraform too.** The checks, the SLOs, the alert, its email and
+  the dashboard are in `infra/grafana/`, so a plan with no changes proves the
+  live setup matches the code. The tokens stay in the Mac's Keychain and reach
+  Terraform through the environment for one command, never in a file or the
+  state.
+
+- **A deploy reloads nginx.** Compose recreates a container when its
+  definition changes, not when a file mounted into it does, so a change to
+  nginx's configuration alone used to wait for the next restart. The deploy
+  now checks the configuration and reloads it; a configuration nginx refuses
+  stops the deploy with the old one still running.
+
+- **The failure was planned, real and written up as if it were not.** The
+  demo's database was stopped for fifteen minutes. A database stop was chosen
+  over stopping the app, whose cause is obvious at once, and over exhausting
+  memory, which could have taken the way into the server down with it. The
+  postmortem is in `postmortems/`.
+
+- **What the failure found was fixed in the phase.** The app's health check
+  said healthy while every page failed, so it now asks the database too. A
+  missing database ended in a bare 500 and a traceback per request, so it is
+  now a 503 with a sentence and Retry-After, and one log line. Sending the
+  application's own errors to Grafana is left open, until what its log can
+  contain has been checked for anything private.
