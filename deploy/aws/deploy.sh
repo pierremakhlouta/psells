@@ -120,6 +120,36 @@ else
     echo "the database is the container"
 fi
 
+echo "== monitoring settings from Parameter Store (/psells/grafana)"
+# Where the agent sends metrics and logs, and its token. Each value is checked
+# for the shape it must have, so nothing in one can break .env.
+monitoring=$(aws ssm get-parameters-by-path --region "$REGION" --path /psells/grafana \
+    --with-decryption --query 'Parameters[].[Name,Value]' --output text)
+
+metrics_url="" metrics_user="" logs_url="" logs_user="" grafana_token=""
+while IFS=$'\t' read -r name value; do
+    case "$name" in
+        /psells/grafana/metrics_url|/psells/grafana/logs_url)
+            [[ "$value" =~ ^https://[A-Za-z0-9.-]+\.grafana\.net/[A-Za-z0-9/._-]+$ ]] ;;
+        /psells/grafana/metrics_user|/psells/grafana/logs_user)
+            [[ "$value" =~ ^[0-9]+$ ]] ;;
+        /psells/grafana/token)
+            [[ "$value" =~ ^glc_[A-Za-z0-9+/=_-]+$ ]] ;;
+        *) true ;;
+    esac || fail "$name does not look as it should"
+    case "$name" in
+        /psells/grafana/metrics_url) metrics_url="$value" ;;
+        /psells/grafana/metrics_user) metrics_user="$value" ;;
+        /psells/grafana/logs_url) logs_url="$value" ;;
+        /psells/grafana/logs_user) logs_user="$value" ;;
+        /psells/grafana/token) grafana_token="$value" ;;
+    esac
+done <<< "$monitoring"
+if [ -z "$metrics_url" ] || [ -z "$metrics_user" ] || [ -z "$logs_url" ] ||
+    [ -z "$logs_user" ] || [ -z "$grafana_token" ]; then
+    fail "expected metrics_url, metrics_user, logs_url, logs_user and token under /psells/grafana"
+fi
+
 # Readable by root only, written whole and then moved into place, so a
 # failure halfway never leaves a .env without its password.
 umask 077
@@ -131,6 +161,11 @@ POSTGRES_PASSWORD=$password
 POSTGRES_DB=$database
 PSELLS_CONFIG_FILE=./sample_data/config.json
 PSELLS_IMAGE=$image
+GRAFANA_METRICS_URL=$metrics_url
+GRAFANA_METRICS_USER=$metrics_user
+GRAFANA_LOGS_URL=$logs_url
+GRAFANA_LOGS_USER=$logs_user
+GRAFANA_TOKEN=$grafana_token
 $rds_settings
 EOF
 mv .env.new .env

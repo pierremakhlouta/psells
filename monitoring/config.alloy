@@ -1,0 +1,150 @@
+// The AWS demo server's monitoring agent: Grafana Alloy, run by
+// compose.aws.yaml, and only there. It sends two things to the Grafana Cloud
+// stack named in Parameter Store, and nothing else:
+//
+//   The server's health, from its own /proc and /sys, mounted read-only.
+//   nginx's access log, read from the system journal, which the proxy logs to
+//   on the server. Only its JSON lines, which carry no visitor's address and
+//   no query string; see nginx.conf.
+//
+// From the log it also counts each request and records how long it took, as
+// metrics, because the latency SLO is a share of requests answered in under
+// 500 ms, and an SLO is computed from metrics.
+//
+// The addresses, the user numbers and the token come from the environment,
+// which deploy.sh writes into .env from /psells/grafana. The token can write
+// metrics and logs to that one stack and do nothing else.
+//
+// The agent never touches Docker's API: it has no socket, only the journal.
+
+// The server's health ---------------------------------------------------------
+
+prometheus.exporter.unix "host" {
+	procfs_path = "/host/proc"
+	sysfs_path  = "/host/sys"
+	rootfs_path = "/host/root"
+
+	// What the dashboard shows and nothing more: CPU, memory, load, memory and
+	// CPU pressure, disk space and activity, and network traffic.
+	set_collectors = ["cpu", "meminfo", "loadavg", "pressure", "filesystem", "diskstats", "netdev", "uname"]
+
+	filesystem {
+		// The real disk only, not Docker's layers or the kernel's own mounts.
+		mount_points_exclude = "^/(dev|proc|run|sys|snap|var/lib/docker/.+)($|/)"
+		fs_types_exclude     = "^(overlay|tmpfs|squashfs|nsfs|autofs|proc|sysfs|cgroup2?|devpts|mqueue|fusectl|tracefs|debugfs|securityfs|pstore|bpf|configfs|binfmt_misc|hugetlbfs|rpc_pipefs)$"
+	}
+}
+
+prometheus.scrape "host" {
+	targets         = prometheus.exporter.unix.host.targets
+	scrape_interval = "60s"
+	forward_to      = [prometheus.remote_write.cloud.receiver]
+}
+
+// The agent's own metrics, which include the request counts and durations the
+// log stage below records.
+prometheus.exporter.self "agent" { }
+
+prometheus.scrape "agent" {
+	targets         = prometheus.exporter.self.agent.targets
+	scrape_interval = "60s"
+	forward_to      = [prometheus.relabel.agent.receiver]
+}
+
+// Of the agent's own few hundred series, only what is charted or alerted on:
+// nginx's request counts and durations, and whether sending works.
+prometheus.relabel "agent" {
+	rule {
+		source_labels = ["__name__"]
+		regex         = "loki_process_custom_nginx_.+|prometheus_remote_storage_samples_(total|failed_total)|loki_write_(sent|dropped)_entries_total|loki_source_journal_target_lines_total|alloy_build_info"
+		action        = "keep"
+	}
+	forward_to = [prometheus.remote_write.cloud.receiver]
+}
+
+prometheus.remote_write "cloud" {
+	endpoint {
+		url = sys.env("GRAFANA_METRICS_URL")
+
+		basic_auth {
+			username = sys.env("GRAFANA_METRICS_USER")
+			password = sys.env("GRAFANA_TOKEN")
+		}
+	}
+
+	// Every series says which server it came from, whatever the container's
+	// own host name is today.
+	external_labels = {
+		server = "psells-demo",
+	}
+}
+
+// nginx's access log ------------------------------------------------------------
+
+loki.source.journal "proxy" {
+	path       = "/var/log/journal"
+	matches    = "CONTAINER_NAME=psells-proxy-1"
+	labels     = {job = "nginx", server = "psells-demo"}
+	forward_to = [loki.process.access.receiver]
+}
+
+loki.process "access" {
+	// The image's startup messages and nginx's error log, which names client
+	// addresses, reach the journal too. Only the JSON access lines go on.
+	stage.drop {
+		expression = "^[^{]"
+	}
+
+	stage.json {
+		expressions = {
+			status       = "",
+			request_time = "",
+		}
+	}
+
+	// 2xx, 3xx, 4xx or 5xx: four values, so a label rather than every status.
+	stage.regex {
+		expression = "^(?P<status_class>[1-5])"
+		source     = "status"
+	}
+
+	stage.template {
+		source   = "status_class"
+		template = "{{ .Value }}xx"
+	}
+
+	stage.labels {
+		values = {status_class = ""}
+	}
+
+	stage.metrics {
+		metric.counter {
+			name              = "nginx_requests_total"
+			description       = "Requests nginx answered, by status class."
+			match_all         = true
+			action            = "inc"
+			max_idle_duration = "24h"
+		}
+
+		metric.histogram {
+			name              = "nginx_request_seconds"
+			description       = "How long nginx took to answer, from its request_time."
+			source            = "request_time"
+			buckets           = [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5]
+			max_idle_duration = "24h"
+		}
+	}
+
+	forward_to = [loki.write.cloud.receiver]
+}
+
+loki.write "cloud" {
+	endpoint {
+		url = sys.env("GRAFANA_LOGS_URL")
+
+		basic_auth {
+			username = sys.env("GRAFANA_LOGS_USER")
+			password = sys.env("GRAFANA_TOKEN")
+		}
+	}
+}

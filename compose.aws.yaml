@@ -44,6 +44,63 @@ services:
       # The files Let's Encrypt fetches over plain HTTP to prove the name,
       # which certbot leaves here; see nginx/sites/aws/http.conf.
       - "./data/acme:/var/www/acme:ro"
+    # To the system journal rather than Docker's own files, so the monitoring
+    # agent below can read nginx's access log without Docker's API. The
+    # journal rotates itself, and docker compose logs still reads it.
+    logging:
+      driver: journald
+
+  alloy:
+    # The monitoring agent; see monitoring/config.alloy for what it sends to
+    # Grafana Cloud and why. On the server only: the Mac's records never leave
+    # the Mac, so compose.yaml has no such service. Pinned like every other
+    # image; checked with docker buildx imagetools inspect on 4 October 2026
+    # against the v1.20.1 release.
+    image: grafana/alloy:v1.20.1@sha256:2aa2099af76c0098d4af7a4d6e48f86cb66dc1a000222ad927a1c67c6542d13f
+    # Not root: the image's own alloy user, which owns its data folder, with
+    # the host's systemd-journal group (999 on Ubuntu) added so it can read
+    # the journal and nothing more. No Docker socket.
+    user: "473:473"
+    group_add: ["999"]
+    command: ["run", "/etc/alloy/config.alloy",
+              "--storage.path=/var/lib/alloy/data",
+              # It tells Grafana nothing about which components it runs, and
+              # serves no profiling endpoint.
+              "--disable-reporting",
+              "--server.http.enable-pprof=false"]
+    environment:
+      GRAFANA_METRICS_URL: "${GRAFANA_METRICS_URL:?deploy/aws/deploy.sh writes it from /psells/grafana}"
+      GRAFANA_METRICS_USER: "${GRAFANA_METRICS_USER:?deploy/aws/deploy.sh writes it from /psells/grafana}"
+      GRAFANA_LOGS_URL: "${GRAFANA_LOGS_URL:?deploy/aws/deploy.sh writes it from /psells/grafana}"
+      GRAFANA_LOGS_USER: "${GRAFANA_LOGS_USER:?deploy/aws/deploy.sh writes it from /psells/grafana}"
+      GRAFANA_TOKEN: "${GRAFANA_TOKEN:?deploy/aws/deploy.sh writes it from /psells/grafana}"
+      # Go's collector works to stay under this, below the container's limit.
+      GOMEMLIMIT: "96MiB"
+    volumes:
+      - "./monitoring/config.alloy:/etc/alloy/config.alloy:ro"
+      # Where it keeps metrics and its place in the journal while it cannot
+      # send, so a restart or a short outage loses nothing.
+      - "alloy-data:/var/lib/alloy/data"
+      # The server's health, read-only. The whole disk is mounted only so
+      # its free space can be measured; as user 473 the agent can read only
+      # what everyone may, not .env, the certificate's key or the database.
+      - "/proc:/host/proc:ro"
+      - "/sys:/host/sys:ro"
+      - "/:/host/root:ro,rslave"
+      - "/var/log/journal:/var/log/journal:ro"
+      - "/etc/machine-id:/etc/machine-id:ro"
+      # The disk's name and model for the disk activity figures; without it
+      # the agent logs an error at every start.
+      - "/run/udev/data:/run/udev/data:ro"
+    # Nothing to write but its data folder and /tmp, no privileges to gain,
+    # and a ceiling on memory, so on a 1 GiB server it can never starve the
+    # app or the database: past the limit the kernel stops it, not them.
+    read_only: true
+    tmpfs: ["/tmp"]
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 160m
+    restart: unless-stopped
 
   certbot:
     # Gets and renews the certificate. Runs only when asked for:
@@ -65,3 +122,6 @@ services:
       - "./data/acme:/var/www/acme"
     # Not on the stack's network: it talks to Let's Encrypt, not to the app.
     network_mode: bridge
+
+volumes:
+  alloy-data:

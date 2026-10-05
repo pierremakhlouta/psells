@@ -1029,7 +1029,9 @@ def test_nginx_is_checked_and_scanned_in_ci_with_the_image_the_stack_runs(name):
     assert PINNED_IMAGE.match(stack), stack
 
 
-GRYPE_EXCEPTIONS = os.path.join(PROJECT_DIR, "nginx", "grype-exceptions.yaml")
+# Each image job's exceptions file. The app's image has none.
+GRYPE_EXCEPTIONS = {"nginx": "nginx/grype-exceptions.yaml",
+                    "alloy": "monitoring/grype-exceptions.yaml"}
 
 
 def scan_steps(job):
@@ -1037,12 +1039,17 @@ def scan_steps(job):
             if step.get("uses", "").startswith("anchore/scan-action@")]
 
 
-def test_only_the_nginx_scan_that_fails_reads_the_exceptions():
-    jobs = workflow(os.path.join(PROJECT_DIR, ".github", "workflows",
+def image_jobs():
+    return workflow(os.path.join(PROJECT_DIR, ".github", "workflows",
                                  "image.yml"))["jobs"]
-    listing, failing = scan_steps(jobs["nginx"])
 
-    assert failing["with"]["config"] == "nginx/grype-exceptions.yaml"
+
+@pytest.mark.parametrize("job", sorted(GRYPE_EXCEPTIONS))
+def test_only_each_jobs_failing_scan_reads_its_own_exceptions(job):
+    jobs = image_jobs()
+    listing, failing = scan_steps(jobs[job])
+
+    assert failing["with"]["config"] == GRYPE_EXCEPTIONS[job]
     assert failing["with"]["fail-build"] is True
     # The listing still shows everything, and the app's image skips nothing.
     assert "config" not in listing["with"]
@@ -1050,27 +1057,48 @@ def test_only_the_nginx_scan_that_fails_reads_the_exceptions():
         assert "config" not in step["with"]
     # The scan action reads a .grype.yaml it finds unless given a file.
     assert not glob.glob(os.path.join(PROJECT_DIR, ".grype*"))
+    # The job checks its own file's date, no other.
+    expiry = [step["run"] for step in jobs[job]["steps"]
+              if step.get("name") == "Fail once the exceptions have expired"]
+    assert len(expiry) == 1 and GRYPE_EXCEPTIONS[job] in expiry[0]
 
 
-def test_each_exception_names_one_flaw_in_one_version_of_one_package():
-    with open(GRYPE_EXCEPTIONS) as file:
+@pytest.mark.parametrize("job", sorted(GRYPE_EXCEPTIONS))
+def test_each_exception_names_one_flaw_in_one_version_of_one_package(job):
+    with open(os.path.join(PROJECT_DIR, GRYPE_EXCEPTIONS[job])) as file:
         config = yaml.safe_load(file)
 
     assert set(config) == {"ignore"}
+    assert config["ignore"]
     for rule in config["ignore"]:
         assert set(rule) == {"vulnerability", "package"}, rule
         assert set(rule["package"]) == {"name", "version", "type"}, rule
 
 
-def test_the_exceptions_have_not_expired():
-    # The nginx job checks the same line, so it fails on the same day.
-    with open(GRYPE_EXCEPTIONS) as file:
+@pytest.mark.parametrize("job", sorted(GRYPE_EXCEPTIONS))
+def test_the_exceptions_have_not_expired(job):
+    # Each job checks the same line, so it fails on the same day.
+    with open(os.path.join(PROJECT_DIR, GRYPE_EXCEPTIONS[job])) as file:
         expires = re.findall(r"^# expires: (\d{4}-\d\d-\d\d)$", file.read(), re.M)
 
     assert len(expires) == 1
     assert datetime.date.today() < datetime.date.fromisoformat(expires[0]), (
-        "nginx/grype-exceptions.yaml has expired: check whether nginx has "
-        "published a fixed image, and remove or renew each exception")
+        f"{GRYPE_EXCEPTIONS[job]} has expired: check for a fixed image, and "
+        "remove or renew each exception")
+
+
+def test_the_agent_is_scanned_as_the_server_runs_it_and_checked_for_openssl():
+    job = image_jobs()["alloy"]
+    names = [step.get("name") for step in job["steps"]]
+
+    assert job["env"]["ALLOY_IMAGE"] == alloy()["image"]
+    # The OpenSSL exception rests on the agent never loading libssl, checked
+    # before the failing scan.
+    assert names.index("Fail if the agent links OpenSSL") < names.index(
+        "Fail on a high or critical vulnerability that has a fix")
+    check = job["steps"][names.index("Fail if the agent links OpenSSL")]["run"]
+    assert "ldd" in check and "! grep -q libssl" in check
+    assert "packages" not in job.get("permissions", {})
 
 
 @pytest.mark.parametrize("site", SITES)
@@ -1213,3 +1241,86 @@ def test_dependabot_watches_every_kind_of_pin():
                       for update in yaml.safe_load(config)["updates"]}
 
     assert ecosystems == {"pip", "github-actions", "docker", "docker-compose"}
+
+
+# The monitoring agent ----------------------------------------------------------
+#
+# Grafana Alloy runs on the AWS server only and sends the server's health and
+# nginx's access log to Grafana Cloud. These hold it to what it was given:
+# no Docker socket, nothing it can write but its own data, no port, a memory
+# ceiling, and only the proxy's JSON lines.
+
+ALLOY_CONFIG = os.path.join(PROJECT_DIR, "monitoring", "config.alloy")
+
+
+def alloy():
+    return compose_aws()["services"]["alloy"]
+
+
+def alloy_config():
+    with open(ALLOY_CONFIG) as config:
+        return "\n".join(line.split("//", 1)[0] if not line.lstrip().startswith("//")
+                         else "" for line in config)
+
+
+def test_the_agent_runs_on_the_server_only_and_pinned():
+    assert "alloy" not in compose()["services"]
+    assert PINNED_IMAGE.match(alloy()["image"])
+    assert alloy()["image"].startswith("grafana/alloy:")
+
+
+def test_the_agent_is_not_root_and_cannot_gain_anything():
+    agent = alloy()
+
+    assert agent["user"] == "473:473"
+    # The host's systemd-journal group, to read the journal, and no other.
+    assert agent["group_add"] == ["999"]
+    assert agent["read_only"] is True
+    assert agent["cap_drop"] == ["ALL"]
+    assert "no-new-privileges:true" in agent["security_opt"]
+    assert "privileged" not in agent
+    assert "pid" not in agent and "network_mode" not in agent
+
+
+def test_the_agent_has_no_socket_no_port_and_reads_the_host_read_only():
+    agent = alloy()
+    mounts = agent["volumes"]
+
+    assert not any("docker.sock" in mount for mount in mounts)
+    assert "ports" not in agent and "expose" not in agent
+    for mount in mounts:
+        source = mount.split(":", 1)[0]
+        if source == "alloy-data":
+            continue
+        assert mount.split(":")[-1].split(",")[0] == "ro", mount
+    assert "./monitoring/config.alloy:/etc/alloy/config.alloy:ro" in mounts
+    assert "alloy-data" in compose_aws()["volumes"]
+
+
+def test_the_agent_has_a_memory_ceiling_below_the_server_and_tells_grafana_nothing():
+    agent = alloy()
+    limit = agent["mem_limit"]
+
+    assert re.fullmatch(r"\d+m", limit) and int(limit[:-1]) <= 256
+    assert "--disable-reporting" in agent["command"]
+    assert "--server.http.enable-pprof=false" in agent["command"]
+    # Every setting comes from .env, which deploy.sh writes, and is required.
+    for name in ("GRAFANA_METRICS_URL", "GRAFANA_METRICS_USER",
+                 "GRAFANA_LOGS_URL", "GRAFANA_LOGS_USER", "GRAFANA_TOKEN"):
+        assert agent["environment"][name].startswith("${" + name + ":?"), name
+
+
+def test_on_the_server_nginx_logs_to_the_journal_and_on_the_mac_it_does_not():
+    assert compose_aws()["services"]["proxy"]["logging"] == {"driver": "journald"}
+    assert "logging" not in compose()["services"]["proxy"]
+
+
+def test_the_agent_reads_only_the_proxys_json_lines_and_never_docker():
+    config = alloy_config()
+
+    assert re.findall(r'loki\.source\.\w+', config) == ["loki.source.journal"]
+    assert 'matches    = "CONTAINER_NAME=psells-proxy-1"' in config
+    # Startup messages and the error log, which names addresses, are dropped.
+    assert re.search(r'stage\.drop \{\s*expression = "\^\[\^\{\]"', config)
+    assert "docker" not in config.replace("var/lib/docker", "")
+    assert "sys.env(\"GRAFANA_TOKEN\")" in config

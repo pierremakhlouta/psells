@@ -251,6 +251,79 @@ def test_deploy_reloads_nginx_after_checking_its_configuration():
     assert up < check < reload < text.index('echo "== sample data"')
 
 
+def monitoring_settings(parameters):
+    """Run deploy.sh's block that reads /psells/grafana, with a stand-in aws
+    that answers the given name and value pairs, and return the variables it
+    set, or None if it stopped the deploy."""
+    with open(SCRIPT) as script:
+        text = script.read()
+    block = text[text.index('echo "== monitoring settings'):
+                 text.index("# Readable by root only")]
+    answer = "".join(f"{name}\t{value}\n" for name, value in parameters)
+    program = f"""
+set -euo pipefail
+REGION=ca-central-1
+fail() {{ echo "deploy.sh: $*" >&2; exit 1; }}
+aws() {{ printf '%s' {shlex_quote(answer)}; }}
+{block}
+echo "$metrics_url|$metrics_user|$logs_url|$logs_user|$grafana_token"
+"""
+    result = subprocess.run(["bash", "-c", program], capture_output=True,
+                            text=True)
+    return (result.stdout.strip().splitlines()[-1] if result.returncode == 0
+            else None)
+
+
+def shlex_quote(text):
+    return "'" + text.replace("'", "'\\''") + "'"
+
+
+GOOD_MONITORING = [
+    ("/psells/grafana/logs_url", "https://logs-prod-1.grafana.net/loki/api/v1/push"),
+    ("/psells/grafana/logs_user", "1111111"),
+    ("/psells/grafana/metrics_url", "https://prometheus-prod-1.grafana.net/api/prom/push"),
+    ("/psells/grafana/metrics_user", "2222222"),
+    ("/psells/grafana/token", "glc_ZXhhbXBsZQ=="),
+]
+
+
+def test_deploy_reads_the_monitoring_settings():
+    assert monitoring_settings(GOOD_MONITORING) == (
+        "https://prometheus-prod-1.grafana.net/api/prom/push|2222222|"
+        "https://logs-prod-1.grafana.net/loki/api/v1/push|1111111|"
+        "glc_ZXhhbXBsZQ==")
+
+
+@pytest.mark.parametrize("name, value", [
+    ("/psells/grafana/metrics_url", "http://prometheus-prod-1.grafana.net/api/prom/push"),
+    ("/psells/grafana/metrics_url", "https://evil.example/api/prom/push"),
+    ("/psells/grafana/logs_url", "https://logs.grafana.net/push'; rm -rf /"),
+    ("/psells/grafana/logs_user", "12a"),
+    ("/psells/grafana/token", "glc_abc def"),
+    ("/psells/grafana/token", "not-a-grafana-token"),
+])
+def test_deploy_stops_on_a_monitoring_setting_that_looks_wrong(name, value):
+    parameters = [(n, value if n == name else v) for n, v in GOOD_MONITORING]
+
+    assert monitoring_settings(parameters) is None
+
+
+def test_deploy_stops_when_a_monitoring_setting_is_missing():
+    assert monitoring_settings(GOOD_MONITORING[:-1]) is None
+
+
+def test_deploy_writes_the_monitoring_settings_into_env():
+    with open(SCRIPT) as script:
+        text = script.read()
+    env = text[text.index("cat > .env.new <<EOF"):text.index("mv .env.new .env")]
+
+    for line in ("GRAFANA_METRICS_URL=$metrics_url",
+                 "GRAFANA_METRICS_USER=$metrics_user",
+                 "GRAFANA_LOGS_URL=$logs_url", "GRAFANA_LOGS_USER=$logs_user",
+                 "GRAFANA_TOKEN=$grafana_token"):
+        assert line in env, line
+
+
 def test_first_boot_prepares_the_host_then_deploys_the_public_repository():
     with open(FIRST_BOOT) as script:
         text = script.read()

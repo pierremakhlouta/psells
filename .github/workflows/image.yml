@@ -196,3 +196,60 @@ jobs:
       - name: Show what failed the build
         if: failure()
         run: cat grype-fixable.txt
+
+  alloy:
+    runs-on: ubuntu-latest
+
+    # The monitoring agent compose.aws.yaml runs on the AWS server, scanned
+    # the same two ways as nginx's image. Not built here, only pulled. No
+    # Dependabot watches compose.aws.yaml, so test_container.py fails if this
+    # line and that file ever differ.
+    env:
+      ALLOY_IMAGE: grafana/alloy:v1.20.1@sha256:2aa2099af76c0098d4af7a4d6e48f86cb66dc1a000222ad927a1c67c6542d13f
+
+    steps:
+      - name: Pull the image
+        run: docker pull "$ALLOY_IMAGE"
+
+      - name: List every known vulnerability
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439  # v7.4.2
+        with:
+          image: ${{ env.ALLOY_IMAGE }}
+          fail-build: false
+          output-format: table
+          output-file: grype-all.txt
+
+      - name: Show the list
+        run: cat grype-all.txt
+
+      # For monitoring/grype-exceptions.yaml, as the nginx job reads its own.
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Fail once the exceptions have expired
+        run: |
+          expires=$(sed -n 's/^# expires: //p' monitoring/grype-exceptions.yaml)
+          echo "Exceptions expire on $expires"
+          test "$(date -u +%F)" '<' "$expires"
+
+      # The OpenSSL exception rests on this: the agent never loads libssl.
+      - name: Fail if the agent links OpenSSL
+        run: |
+          libraries=$(docker run --rm --entrypoint ldd "$ALLOY_IMAGE" /bin/alloy)
+          echo "$libraries"
+          ! grep -q libssl <<< "$libraries"
+
+      - name: Fail on a high or critical vulnerability that has a fix
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439  # v7.4.2
+        with:
+          image: ${{ env.ALLOY_IMAGE }}
+          config: monitoring/grype-exceptions.yaml
+          only-fixed: true
+          severity-cutoff: high
+          fail-build: true
+          output-format: table
+          output-file: grype-fixable.txt
+
+      - name: Show what failed the build
+        if: failure()
+        run: cat grype-fixable.txt

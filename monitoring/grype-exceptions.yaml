@@ -1,0 +1,29 @@
+# Vulnerabilities the monitoring agent's failing image scan skips, in
+# .github/workflows/image.yml's alloy job only. The app's image has none, and
+# nginx's has its own file. Each entry is as narrow as Grype allows: one CVE,
+# one package, one version, so a newer vulnerable version or any other flaw
+# still fails the scan. The listing step before it still prints everything.
+#
+# expires: 2026-10-31
+#
+# CVE-2026-84782, high, in OpenSSL 3.0.13-0ubuntu3.15 (the libssl3t64 and
+# openssl packages), fixed in 3.0.13-0ubuntu3.16. Found 4 October 2026 in
+# grafana/alloy v1.20.1, the newest release, whose Ubuntu base still carried
+# the old version. The agent is a Go program that uses Go's own TLS and links
+# only the C library: /bin/alloy does not load libssl, and the image has no
+# curl or other tool that would. The alloy job fails if /bin/alloy ever links
+# libssl. Remove these entries, and update the pin in compose.aws.yaml and in
+# image.yml, once Alloy publishes an image with the fixed OpenSSL. From the
+# date above the alloy job fails until this file is dealt with.
+
+ignore:
+  - vulnerability: CVE-2026-84782
+    package:
+      name: libssl3t64
+      version: 3.0.13-0ubuntu3.15
+      type: deb
+  - vulnerability: CVE-2026-84782
+    package:
+      name: openssl
+      version: 3.0.13-0ubuntu3.15
+      type: deb
