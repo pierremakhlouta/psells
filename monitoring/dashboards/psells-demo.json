@@ -1,0 +1,688 @@
+{
+  "uid": "psells-demo",
+  "title": "PSells demo",
+  "tags": [
+    "psells"
+  ],
+  "timezone": "browser",
+  "editable": false,
+  "schemaVersion": 39,
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "refresh": "1m",
+  "description": "The AWS demo of PSells: its SLOs, requests, outside checks, server and nginx's log. Managed by infra/grafana; edits in the UI are overwritten.",
+  "panels": [
+    {
+      "type": "row",
+      "title": "Service level, rolling 7 days",
+      "id": 1,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Available (SLO 99.5%)",
+      "id": 2,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "__METRICS_UID__"
+      },
+      "description": "Share of outside checks of /login that passed over the last 7 days.",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 1
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(probe_all_success_sum{job=\"psells-login\"}[7d])) / sum(increase(probe_all_success_count{job=\"psells-login\"}[7d]))",
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "__METRICS_UID__"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0.995
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "type": "stat",
+      "title": "Requests under 500 ms (SLO 99%)",
+      "id": 3,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "__METRICS_UID__"
+      },
+      "description": "Share of requests nginx answered in under 500 ms over the last 7 days.",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 6,
+        "y": 1
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(loki_process_custom_nginx_request_seconds_bucket{server=\"psells-demo\",le=\"0.5\"}[7d])) / sum(increase(loki_process_custom_nginx_request_seconds_count{server=\"psells-demo\"}[7d]))",
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "__METRICS_UID__"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0.99
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "type": "stat",
+      "title": "Checks passing now",
+      "id": 4,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "__METRICS_UID__"
+      },
+      "description": "Share of checks that passed in the last 5 minutes. The alert fires under 50%.",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 12,
+        "y": 1
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(probe_all_success_sum{job=\"psells-login\"}[5m])) / sum(rate(probe_all_success_count{job=\"psells-login\"}[5m]))",
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "__METRICS_UID__"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0.5
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "type": "stat",
+      "title": "Requests answered with 5xx, last hour",
+      "id": 5,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "__METRICS_UID__"
+      },
+      "description": "",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 18,
+        "y": 1
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(loki_process_custom_nginx_requests_total{server=\"psells-demo\",status_class=\"5xx\"}[1h])) or vector(0)",
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "__METRICS_UID__"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "type": "row",
+      "title": "Requests, from nginx's log",
+      "id": 6,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 6
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Requests per minute by status class",
+      "id": 7,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "__METRICS_UID__"
+      },
+      "description": "",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 7
+      },
+      "targets": [
+        {
+          "expr": "sum by (status_class) (rate(loki_process_custom_nginx_requests_total{server=\"psells-demo\"}[$__rate_interval])) * 60",
+          "legendFormat": "{{status_class}}",
+          "instant": false,
+          "range": true,
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "__METRICS_UID__"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqpm"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "type": "timeseries",
+      "title": "Time to answer",
+      "id": 8,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "__METRICS_UID__"
+      },
+      "description": "From the agent's histogram, so accurate to its buckets: 50, 100, 250 and 500 ms, 1, 2.5 and 5 s.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 7
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(loki_process_custom_nginx_request_seconds_bucket{server=\"psells-demo\"}[$__rate_interval])))",
+          "legendFormat": "p50",
+          "instant": false,
+          "range": true,
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "__METRICS_UID__"
+          }
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(loki_process_custom_nginx_request_seconds_bucket{server=\"psells-demo\"}[$__rate_interval])))",
+          "legendFormat": "p95",
+          "instant": false,
+          "range": true,
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "__METRICS_UID__"
+          }
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(loki_process_custom_nginx_request_seconds_bucket{server=\"psells-demo\"}[$__rate_interval])))",
+          "legendFormat": "p99",
+          "instant": false,
+          "range": true,
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "__METRICS_UID__"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "type": "row",
+      "title": "Outside checks of /login",
+      "id": 9,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 15
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Checks passing, by location",
+      "id": 10,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "__METRICS_UID__"
+      },
+      "description": "",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "targets": [
+        {
+          "expr": "sum by (probe) (rate(probe_all_success_sum{job=\"psells-login\"}[$__rate_interval])) / sum by (probe) (rate(probe_all_success_count{job=\"psells-login\"}[$__rate_interval]))",
+          "legendFormat": "{{probe}}",
+          "instant": false,
+          "range": true,
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "__METRICS_UID__"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "type": "timeseries",
+      "title": "Check duration, by location",
+      "id": 11,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "__METRICS_UID__"
+      },
+      "description": "Whole check time from each location, including connecting and TLS.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "targets": [
+        {
+          "expr": "sum by (probe) (rate(probe_all_duration_seconds_sum{job=\"psells-login\"}[$__rate_interval])) / sum by (probe) (rate(probe_all_duration_seconds_count{job=\"psells-login\"}[$__rate_interval]))",
+          "legendFormat": "{{probe}}",
+          "instant": false,
+          "range": true,
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "__METRICS_UID__"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "type": "row",
+      "title": "The server",
+      "id": 12,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 24
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "CPU busy",
+      "id": 13,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "__METRICS_UID__"
+      },
+      "description": "",
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 0,
+        "y": 25
+      },
+      "targets": [
+        {
+          "expr": "1 - avg(rate(node_cpu_seconds_total{server=\"psells-demo\",mode=\"idle\"}[$__rate_interval]))",
+          "legendFormat": "cpu",
+          "instant": false,
+          "range": true,
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "__METRICS_UID__"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "type": "timeseries",
+      "title": "Memory available",
+      "id": 14,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "__METRICS_UID__"
+      },
+      "description": "",
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 6,
+        "y": 25
+      },
+      "targets": [
+        {
+          "expr": "node_memory_MemAvailable_bytes{server=\"psells-demo\"}",
+          "legendFormat": "available",
+          "instant": false,
+          "range": true,
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "__METRICS_UID__"
+          }
+        },
+        {
+          "expr": "node_memory_MemTotal_bytes{server=\"psells-demo\"}",
+          "legendFormat": "total",
+          "instant": false,
+          "range": true,
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "__METRICS_UID__"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "type": "timeseries",
+      "title": "Disk free",
+      "id": 15,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "__METRICS_UID__"
+      },
+      "description": "",
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 12,
+        "y": 25
+      },
+      "targets": [
+        {
+          "expr": "node_filesystem_avail_bytes{server=\"psells-demo\",mountpoint=\"/\"} / node_filesystem_size_bytes{server=\"psells-demo\",mountpoint=\"/\"}",
+          "legendFormat": "/",
+          "instant": false,
+          "range": true,
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "__METRICS_UID__"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "type": "timeseries",
+      "title": "Load and network",
+      "id": 16,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "__METRICS_UID__"
+      },
+      "description": "",
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 18,
+        "y": 25
+      },
+      "targets": [
+        {
+          "expr": "node_load1{server=\"psells-demo\"}",
+          "legendFormat": "load 1m",
+          "instant": false,
+          "range": true,
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "__METRICS_UID__"
+          }
+        },
+        {
+          "expr": "sum(rate(node_network_receive_bytes_total{server=\"psells-demo\",device!=\"lo\"}[$__rate_interval]))",
+          "legendFormat": "received B/s",
+          "instant": false,
+          "range": true,
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "__METRICS_UID__"
+          }
+        },
+        {
+          "expr": "sum(rate(node_network_transmit_bytes_total{server=\"psells-demo\",device!=\"lo\"}[$__rate_interval]))",
+          "legendFormat": "sent B/s",
+          "instant": false,
+          "range": true,
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "__METRICS_UID__"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "type": "row",
+      "title": "nginx's log",
+      "id": 17,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 32
+      }
+    },
+    {
+      "type": "logs",
+      "title": "Every request, newest first",
+      "id": 18,
+      "datasource": {
+        "type": "loki",
+        "uid": "__LOGS_UID__"
+      },
+      "description": "nginx's JSON lines: no visitor address and no query string ever reach here.",
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 0,
+        "y": 33
+      },
+      "targets": [
+        {
+          "expr": "{job=\"nginx\"}",
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "__LOGS_UID__"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "sortOrder": "Descending",
+        "wrapLogMessage": true,
+        "showTime": true
+      }
+    },
+    {
+      "type": "logs",
+      "title": "Server errors only (5xx)",
+      "id": 19,
+      "datasource": {
+        "type": "loki",
+        "uid": "__LOGS_UID__"
+      },
+      "description": "",
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 33
+      },
+      "targets": [
+        {
+          "expr": "{job=\"nginx\", status_class=\"5xx\"}",
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "__LOGS_UID__"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "sortOrder": "Descending",
+        "wrapLogMessage": true,
+        "showTime": true
+      }
+    }
+  ]
+}

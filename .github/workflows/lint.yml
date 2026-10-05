@@ -98,7 +98,7 @@ jobs:
       - name: Check the Terraform formatting
         run: >-
           docker run --rm --user "$(id -u):$(id -g)" --volume "$PWD:/repo:ro"
-          --workdir /repo/infra/aws "$TERRAFORM_IMAGE" fmt -check -recursive -diff
+          --workdir /repo/infra "$TERRAFORM_IMAGE" fmt -check -recursive -diff
 
       # Each configuration parses, names attributes that exist, and fits the
       # provider its lock file pins. No AWS account is reached: -backend=false
@@ -109,7 +109,7 @@ jobs:
       - name: Validate each Terraform configuration
         run: |
           cp -r "$PWD" "$RUNNER_TEMP/repo"
-          for dir in infra/aws infra/aws/bootstrap; do
+          for dir in infra/aws infra/aws/bootstrap infra/grafana; do
             docker run --rm --user "$(id -u):$(id -g)" --env HOME=/tmp \
               --volume "$RUNNER_TEMP/repo:/repo" --workdir "/repo/$dir" \
               "$TERRAFORM_IMAGE" init -backend=false -input=false -lockfile=readonly

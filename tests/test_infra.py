@@ -233,7 +233,10 @@ def test_ci_formats_and_validates_every_configuration_with_the_pinned_release():
     assert "fmt -check -recursive" in steps
     # Every configuration, without touching AWS, holding to the lock file.
     assert sorted(os.path.join(psells.PROJECT_DIR, d) for d in validated) \
-        == CONFIGURATIONS
+        == sorted(CONFIGURATIONS + [os.path.join(psells.PROJECT_DIR, "infra",
+                                                 "grafana")])
+    # Formatting checks every configuration under infra/, Grafana's too.
+    assert "--workdir /repo/infra " in steps
     assert "-backend=false" in steps
     assert "-lockfile=readonly" in steps
 
