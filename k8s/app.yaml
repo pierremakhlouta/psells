@@ -1,0 +1,200 @@
+# PSells itself on the cluster: the app and nginx in one pod, reached over
+# HTTPS at https://psells.localhost:9443 on the Mac.
+#
+# One pod, two containers, as one unit: nginx and the app share the pod's
+# network, so nginx reaches the app on 127.0.0.1 and nothing else can. uvicorn
+# listens on 127.0.0.1 only, never on the pod's address, so no other pod in the
+# cluster can reach the app without passing through nginx; and it believes
+# X-Forwarded-For and X-Forwarded-Proto from 127.0.0.1 alone, which is nginx.
+#
+# Both images are the ones CI scanned and published for one commit, pinned by
+# digest; the tag beside each digest names that commit and is ignored when the
+# image is pulled. Taken on 7 October 2026 with docker buildx imagetools
+# inspect. A test holds the two to the same commit.
+#
+# nginx runs the same nginx.conf and snippets as the Compose stack, and the
+# Mac's site folder, nginx/sites/localhost: the same name, psells.localhost,
+# and the same certificate paths. Only HTTPS is exposed; that site's plain
+# HTTP redirect to port 443, which is the real stack, is never reachable here.
+#
+# The certificate is the psells-tls Secret, which k8s/up.sh makes from a folder
+# outside the repository. The database password is the psells-db Secret the
+# database was created with.
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: psells
+spec:
+  # Port 30443 on the node, which k8s/kind.yaml maps to 127.0.0.1:9443 on the
+  # Mac. HTTPS only.
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: psells
+  ports:
+    - name: https
+      port: 8443
+      targetPort: https
+      nodePort: 30443
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: psells
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: psells
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: psells
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        # The group the certificate's key is readable by, below: nginx's.
+        fsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      automountServiceAccountToken: false
+      # No environment variables describing other Services: the app is told
+      # what it needs and nothing else.
+      enableServiceLinks: false
+      # nginx's snippets/app.conf passes requests to http://app:8000, the app's
+      # name in Compose. Here the app is in the same pod, so that name is this
+      # pod's own loopback, and the snippet stays one file for every place.
+      hostAliases:
+        - ip: 127.0.0.1
+          hostnames: ["app"]
+      containers:
+        - name: app
+          image: ghcr.io/pierremakhlouta/psells:307d404b5748f77e2231d5b65aaa79f112e040ff@sha256:d2125bfe03faeccc2988b35f6e86c7af0e50a2bf185095db07ff42884262027e
+          # The image's own command, but on the pod's loopback only.
+          command: ["uvicorn", "api:app", "--host", "127.0.0.1", "--port", "8000"]
+          env:
+            # No password in the address: libpq reads it from PGPASSWORD, so
+            # the one Secret holds it and nothing builds a copy of it.
+            - name: PSELLS_DATABASE_URL
+              value: postgresql://psells@db:5432/psells
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: psells-db
+                  key: password
+            - name: PSELLS_CONFIG
+              value: /config/config.json
+            - name: FORWARDED_ALLOW_IPS
+              value: "127.0.0.1"
+          securityContext:
+            runAsUser: 10001
+            runAsGroup: 10001
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          # Whether uvicorn answers, not whether the database does. With the
+          # database down the app still answers each page with its 503; if
+          # this asked the database too, the pod would leave the Service and
+          # the browser would get no answer at all, and a liveness check would
+          # restart an app that is not broken.
+          readinessProbe:
+            exec:
+              command: ["python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8000), 2).close()"]
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8000), 2).close()"]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          volumeMounts:
+            - name: app-config
+              mountPath: /config
+              readOnly: true
+            - name: app-tmp
+              mountPath: /tmp
+
+        - name: nginx
+          image: ghcr.io/pierremakhlouta/psells:nginx-307d404b5748f77e2231d5b65aaa79f112e040ff@sha256:694ee87df67fe44555df33c10acabd6c9ab6233df8f60537664c76fbd7019284
+          ports:
+            - name: https
+              containerPort: 8443
+          securityContext:
+            # The image's nginx user, as compose.yaml runs it.
+            runAsUser: 101
+            runAsGroup: 101
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          # nginx's own answer on 127.0.0.1:8081, as Compose's health check
+          # asks it. It says nginx is up, nothing about the app.
+          readinessProbe:
+            exec:
+              command: ["wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8081/health"]
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8081/health"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          volumeMounts:
+            - name: nginx-conf
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+              readOnly: true
+            - name: nginx-snippets
+              mountPath: /etc/nginx/snippets
+              readOnly: true
+            - name: nginx-site
+              mountPath: /etc/nginx/site
+              readOnly: true
+            - name: tls
+              mountPath: /etc/nginx/tls
+              readOnly: true
+            # The process id and temporary files, which nginx.conf puts in
+            # /tmp: writable, since the rest of the container is read-only.
+            - name: nginx-tmp
+              mountPath: /tmp
+      volumes:
+        - name: app-config
+          configMap:
+            name: app-config
+        - name: nginx-conf
+          configMap:
+            name: nginx-conf
+        - name: nginx-snippets
+          configMap:
+            name: nginx-snippets
+        - name: nginx-site
+          configMap:
+            name: nginx-site
+        # Under the names the site's https.conf reads. The key is readable by
+        # nginx's group only, and mounted in the nginx container only.
+        - name: tls
+          secret:
+            secretName: psells-tls
+            defaultMode: 0440
+            items:
+              - key: tls.crt
+                path: psells.localhost.crt
+              - key: tls.key
+                path: psells.localhost.key
+        - name: app-tmp
+          emptyDir: {}
+        - name: nginx-tmp
+          emptyDir: {}

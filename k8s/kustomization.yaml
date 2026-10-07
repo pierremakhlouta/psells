@@ -4,9 +4,10 @@
 #     kubectl kustomize --load-restrictor LoadRestrictionsNone k8s | kubectl apply -f -
 #
 # LoadRestrictionsNone because the database is built from schema.sql and
-# sample_data/seed.sql where they are, outside this folder, rather than from
-# copies that could drift; kustomize refuses files outside the folder unless
-# told otherwise, and kubectl apply -k cannot tell it.
+# sample_data/seed.sql, and nginx is configured from nginx/, where they are,
+# outside this folder, rather than from copies that could drift; kustomize
+# refuses files outside the folder unless told otherwise, and kubectl apply -k
+# cannot tell it.
 
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -15,6 +16,7 @@ namespace: psells
 resources:
   - namespace.yaml
   - database.yaml
+  - app.yaml
 
 configMapGenerator:
   # Run in name order on the database's first start: tables, then records.
@@ -22,3 +24,22 @@ configMapGenerator:
     files:
       - 01-schema.sql=../schema.sql
       - 02-seed.sql=../sample_data/seed.sql
+
+  # The files the Compose stack mounts, read where they are: the sample
+  # partner share, and nginx's configuration with the Mac's site. Each name
+  # gets a hash of its contents, so a change to any of these files makes a new
+  # ConfigMap and rolls the pod onto it.
+  - name: app-config
+    files:
+      - config.json=../sample_data/config.json
+  - name: nginx-conf
+    files:
+      - nginx.conf=../nginx/nginx.conf
+  - name: nginx-snippets
+    files:
+      - app.conf=../nginx/snippets/app.conf
+      - headers.conf=../nginx/snippets/headers.conf
+  - name: nginx-site
+    files:
+      - http.conf=../nginx/sites/localhost/http.conf
+      - https.conf=../nginx/sites/localhost/https.conf

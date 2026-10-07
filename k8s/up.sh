@@ -32,7 +32,8 @@ else
 fi
 
 echo "== namespace and secrets"
-kubectl --context "$CONTEXT" apply -f "$PROJECT_DIR/k8s/namespace.yaml"
+kubectl --context "$CONTEXT" apply --server-side --field-manager=psells-up \
+    -f "$PROJECT_DIR/k8s/namespace.yaml"
 
 # The database's password: made once, random, and never printed or written to
 # a file; it reaches kubectl on its standard input. Kept if it exists, because
@@ -43,6 +44,26 @@ else
     openssl rand -hex 24 | tr -d '\n' |
         kube create secret generic psells-db --from-file=password=/dev/stdin
 fi
+
+# nginx's certificate for psells.localhost, from a folder outside the
+# repository: made by make-certificate.sh with the Mac's own CA, so the browser
+# trusts it, but its own key, so the cluster never holds the real stack's.
+# Replaced on every run, so a renewed certificate reaches the cluster; nginx
+# reads it when the pod starts. The key reaches kubectl through a file it reads
+# and is never printed.
+TLS_DIR="${PSELLS_KIND_TLS_DIR:-$HOME/PSells-Kind/tls}"
+for file in psells.localhost.crt psells.localhost.key; do
+    if [ ! -f "$TLS_DIR/$file" ]; then
+        echo "No $TLS_DIR/$file. Make the cluster's certificate first:" >&2
+        echo "    PSELLS_TLS_DIR=$TLS_DIR ./make-certificate.sh" >&2
+        exit 1
+    fi
+done
+kube create secret tls psells-tls \
+    --cert="$TLS_DIR/psells.localhost.crt" --key="$TLS_DIR/psells.localhost.key" \
+    --dry-run=client --output=yaml |
+    kube apply --server-side --field-manager=psells-up -f - > /dev/null
+echo "loaded the certificate from $TLS_DIR"
 
 echo "== manifests"
 # Server-side apply: the cluster itself works out what changed. It prints
@@ -56,3 +77,7 @@ kubectl kustomize --load-restrictor LoadRestrictionsNone "$PROJECT_DIR/k8s" |
 
 echo "== waiting for the database"
 kube rollout status statefulset/database --timeout=180s
+
+echo "== waiting for PSells"
+kube rollout status deployment/psells --timeout=180s
+echo "PSells is at https://psells.localhost:9443"
