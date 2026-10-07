@@ -421,3 +421,75 @@ def test_down_sh_never_reaches_docker_or_another_cluster():
     assert os.access(DOWN, os.X_OK)
     assert not re.search(r"\b(docker|kubectl)\b", "\n".join(commands))
     assert "CLUSTER=psells" in text
+
+
+# The Kubernetes workflow, which builds the cluster in CI ---------------------------
+
+WORKFLOW = os.path.join(psells.PROJECT_DIR, ".github", "workflows",
+                        "kubernetes.yml")
+
+
+def workflow_steps():
+    with open(WORKFLOW) as file:
+        document = yaml.safe_load(file)
+    (job,) = document["jobs"].values()
+    return document, {step["name"]: step for step in job["steps"]}
+
+
+def test_ci_runs_kind_only_as_the_release_binary_checked_against_its_hash():
+    document, steps = workflow_steps()
+    install = steps["Install kind"]["run"]
+
+    assert re.fullmatch(r"[0-9a-f]{64}", document["env"]["KIND_SHA256"])
+    assert document["env"]["KIND_URL"] == (
+        "https://github.com/kubernetes-sigs/kind/releases/download/"
+        "v0.33.0/kind-linux-amd64")
+    # The version whose default node image k8s/kind.yaml pins.
+    assert "kind v0.33.0" in read(os.path.join(K8S_DIR, "kind.yaml"))
+    assert (install.index("sha256sum --check --strict")
+            < install.index("chmod +x") < install.index("kind\" version"))
+    # No action but GitHub's checkout.
+    uses = [step["uses"] for step in steps.values() if "uses" in step]
+    assert [u.split("@")[0] for u in uses] == ["actions/checkout"]
+
+
+def test_ci_builds_and_removes_the_cluster_with_the_scripts_and_a_throwaway_certificate():
+    _, steps = workflow_steps()
+
+    assert steps["Make a throwaway certificate"]["run"] == (
+        'PSELLS_CA_DIR="$RUNNER_TEMP/ca" PSELLS_TLS_DIR="$RUNNER_TEMP/tls" '
+        "./make-certificate.sh")
+    assert steps["Build the cluster with up.sh"]["run"] == (
+        'PSELLS_KIND_TLS_DIR="$RUNNER_TEMP/tls" k8s/up.sh')
+    assert steps["Remove the cluster with down.sh"] == {
+        "name": "Remove the cluster with down.sh", "if": "always()",
+        "run": "k8s/down.sh"}
+    assert steps["Show the cluster"]["if"] == "failure()"
+
+
+def test_ci_asks_what_a_browser_would_and_checks_the_certificate():
+    _, steps = workflow_steps()
+    ask = "\n".join(line for line in
+                    steps["Ask PSells what a browser would"]["run"].splitlines()
+                    if not line.lstrip().startswith("#"))
+
+    assert '--cacert "$RUNNER_TEMP/ca/ca.crt"' in ask
+    assert "--insecure" not in ask and " -k " not in ask
+    assert "site=https://psells.localhost:9443" in ask
+    for expected in ('"$site/login")" 200', '"$site/")" "$site/login"',
+                     '"$site/login")" 421', '"$site/login")" 401'):
+        assert expected in ask, expected
+    # Retries a connection, never an HTTP answer.
+    assert "--retry-all-errors" in ask
+    assert "--fail" not in ask and not re.search(r"curl -\w*f", ask)
+
+
+def test_ci_checks_up_sh_changes_nothing_and_both_pods_are_replaced():
+    _, steps = workflow_steps()
+    again = steps["Run up.sh again and change nothing"]["run"]
+    kill = steps["Kill both pods and see them replaced"]["run"]
+
+    assert 'k8s/up.sh' in again and '[ "$before" = "$after" ]' in again
+    assert 'kube delete pod database-0 "${old#pod/}"' in kill
+    assert "SELECT count(*) FROM products" in kill
+    assert '[ "$products" = 9 ]' in kill

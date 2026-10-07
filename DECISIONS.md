@@ -760,10 +760,10 @@ calls only, not every detail, and no specific business figures.
   refuses an image whose ID differs from the scanned one. A deploy takes
   seconds instead of ten minutes.
 
-- **A deploy waits for every check.** It runs only when Tests, Lint, Security
-  and Image have all passed for that exact commit on main. Keeping the four
-  workflows separate, each with its badge, meant a gate that asks GitHub for
-  their results rather than one workflow that does everything.
+- **A deploy waits for every check.** It runs only when Tests, Lint, Security,
+  Image and Kubernetes have all passed for that exact commit on main. Keeping
+  the five workflows separate, each with its badge, meant a gate that asks
+  GitHub for their results rather than one workflow that does everything.
 
 - **A deploy is checked from outside, and rolled back by hand.** It fails
   unless the server reports the digest it was sent and the site answers over

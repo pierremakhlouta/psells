@@ -1,0 +1,144 @@
+name: Kubernetes
+
+# Builds PSells' local cluster from nothing with k8s/up.sh, exactly as on the
+# Mac, and asks it what a browser would: the login page over HTTPS on
+# psells.localhost:9443, a login that reaches the database, and the answers
+# that must never change. The manifests' own tests read the files; this runs
+# them, so a manifest the cluster refuses, a pod that never becomes ready or a
+# page that does not answer fails here and is never deployed. Deploy waits for
+# it as for the other checks.
+#
+# The cluster runs the images the manifests pin, the invented sample records
+# and a throwaway certificate, made here by make-certificate.sh with a CA of
+# its own, so curl checks the certificate properly. Nothing of the Mac's is
+# used, and everything goes with the runner.
+
+on:
+  push:
+
+# Read-only, like every check. No third-party action runs: kind is the release
+# binary, checked against the hash written here.
+permissions:
+  contents: read
+
+env:
+  # kind v0.33.0, the version k8s/kind.yaml's node image is the default of.
+  # The hash was the same on 7 October 2026 in the release's .sha256sum file,
+  # in GitHub's digest for the asset, and from the downloaded file itself.
+  KIND_URL: https://github.com/kubernetes-sigs/kind/releases/download/v0.33.0/kind-linux-amd64
+  KIND_SHA256: aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d
+
+jobs:
+  cluster:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      # Nothing runs unless it is the file that was checked by hand.
+      - name: Install kind
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -sSfLo "$RUNNER_TEMP/bin/kind" "$KIND_URL"
+          echo "$KIND_SHA256  $RUNNER_TEMP/bin/kind" | sha256sum --check --strict
+          chmod +x "$RUNNER_TEMP/bin/kind"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/bin/kind" version
+          kubectl version --client
+
+      - name: Make a throwaway certificate
+        run: PSELLS_CA_DIR="$RUNNER_TEMP/ca" PSELLS_TLS_DIR="$RUNNER_TEMP/tls" ./make-certificate.sh
+
+      - name: Build the cluster with up.sh
+        run: PSELLS_KIND_TLS_DIR="$RUNNER_TEMP/tls" k8s/up.sh
+
+      # What a browser would get. The certificate is checked against the
+      # throwaway CA, for the name psells.localhost, at the port the Mac uses.
+      - name: Ask PSells what a browser would
+        run: |
+          set -euo pipefail
+          site=https://psells.localhost:9443
+          # A pod is Ready a moment before the Service sends it connections,
+          # so a refused or reset connection is tried again, ten times a second
+          # apart. Without --fail an HTTP status is an answer, never retried.
+          ask() {
+            curl -sS --cacert "$RUNNER_TEMP/ca/ca.crt" \
+              --resolve psells.localhost:9443:127.0.0.1 \
+              --retry 10 --retry-delay 1 --retry-all-errors "$@"
+          }
+          check() {
+            echo "$1: $2"
+            [ "$2" = "$3" ] || { echo "expected $3"; exit 1; }
+          }
+
+          check "login page" "$(ask -o /dev/null -w '%{http_code}' "$site/login")" 200
+          headers=$(ask -o /dev/null -D - "$site/login")
+          grep -qi '^content-security-policy: default-src' <<< "$headers"
+          grep -qi '^strict-transport-security:' <<< "$headers"
+          # The Host reaches the app with its port, so redirects stay on 9443.
+          check "redirect" "$(ask -o /dev/null -w '%{redirect_url}' "$site/")" "$site/login"
+          # No other name is answered.
+          check "another name" "$(ask -o /dev/null -w '%{http_code}' -H 'Host: other.example' "$site/login")" 421
+          # A wrong login is checked against the database: 401, not 503.
+          check "wrong login" "$(ask -o /dev/null -w '%{http_code}' \
+            -H "Origin: $site" -H 'Sec-Fetch-Site: same-origin' \
+            --data 'username=nobody&password=wrong' "$site/login")" 401
+
+      # Run again, up.sh changes nothing: the same objects at the same
+      # generation, the same pods.
+      - name: Run up.sh again and change nothing
+        run: |
+          set -euo pipefail
+          state() {
+            kubectl --context kind-psells --namespace psells get deployment,statefulset,pods \
+              --output jsonpath='{range .items[*]}{.kind}/{.metadata.name} {.metadata.generation}{"\n"}{end}'
+          }
+          before=$(state)
+          PSELLS_KIND_TLS_DIR="$RUNNER_TEMP/tls" k8s/up.sh
+          after=$(state)
+          echo "$after"
+          [ "$before" = "$after" ] || { echo "changed:"; diff <(echo "$before") <(echo "$after"); exit 1; }
+
+      # Kubernetes replaces a pod that dies, and the database keeps its
+      # records on its volume through its own.
+      - name: Kill both pods and see them replaced
+        run: |
+          set -euo pipefail
+          kube() { kubectl --context kind-psells --namespace psells "$@"; }
+          old=$(kube get pods -l app.kubernetes.io/name=psells --output name)
+          old_db=$(kube get pod database-0 --output jsonpath='{.metadata.uid}')
+          kube delete pod database-0 "${old#pod/}" --wait=true
+          # The StatefulSet makes the new database-0 only once the old one is
+          # gone, so its status can be stale for a moment; wait for the pods
+          # themselves.
+          for _ in $(seq 90); do
+            db=$(kube get pod database-0 --output jsonpath='{.metadata.uid}' 2> /dev/null || true)
+            new=$(kube get pods -l app.kubernetes.io/name=psells --output name)
+            [ -n "$db" ] && [ "$db" != "$old_db" ] && [ -n "$new" ] && [ "$new" != "$old" ] && break
+            sleep 2
+          done
+          kube wait --for=condition=Ready pod/database-0 "$new" --timeout=180s
+          echo "$old replaced by $new"
+          [ "$old" != "$new" ]
+          products=$(kube exec database-0 -- psql -U psells -d psells -tAc 'SELECT count(*) FROM products')
+          echo "products after the restart: $products"
+          [ "$products" = 9 ]
+          # Again tried while the Service catches up with the new pod.
+          curl -sSf --cacert "$RUNNER_TEMP/ca/ca.crt" --resolve psells.localhost:9443:127.0.0.1 \
+            --retry 10 --retry-delay 1 --retry-all-errors \
+            -o /dev/null -w 'login page after the restart: %{http_code}\n' https://psells.localhost:9443/login
+
+      - name: Show the cluster
+        if: failure()
+        run: |
+          kubectl --context kind-psells --namespace psells get all,events --output wide || true
+          kubectl --context kind-psells --namespace psells describe pods || true
+          kubectl --context kind-psells --namespace psells logs --all-containers --prefix \
+            --selector 'app.kubernetes.io/name in (psells,database)' --tail=100 || true
+
+      - name: Remove the cluster with down.sh
+        if: always()
+        run: k8s/down.sh

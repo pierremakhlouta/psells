@@ -3,8 +3,8 @@ name: Deploy
 # Puts a commit on main live on the AWS demonstration server, with the image
 # CI published for it, once every check has passed for that exact commit.
 #
-# It starts each time one of the four workflows finishes on main, and the
-# gate lets it through only when all four have passed; the last to finish is
+# It starts each time one of the five workflows finishes on main, and the
+# gate lets it through only when all five have passed; the last to finish is
 # the one that deploys. Run by hand with a commit, it deploys that commit the
 # same way, which is how a bad deploy is rolled back.
 #
@@ -16,7 +16,7 @@ name: Deploy
 
 on:
   workflow_run:
-    workflows: [Tests, Lint, Security, Image]
+    workflows: [Tests, Lint, Security, Image, Kubernetes]
     types: [completed]
     branches: [main]
   workflow_dispatch:
@@ -56,7 +56,7 @@ jobs:
     steps:
       # Values from the event reach the shell as environment variables, never
       # written into the script, so nothing in them can become a command.
-      - name: Check all four workflows passed for the commit
+      - name: Check all five workflows passed for the commit
         id: check
         env:
           GH_TOKEN: ${{ github.token }}
@@ -78,7 +78,7 @@ jobs:
           # The latest run of each workflow for this commit, pushed to main.
           go=yes
           failed=no
-          for workflow in tests.yml lint.yml security.yml image.yml; do
+          for workflow in tests.yml lint.yml security.yml image.yml kubernetes.yml; do
             result=$(gh api "repos/$REPO/actions/workflows/$workflow/runs?head_sha=$commit&branch=main&event=push&per_page=1" \
               --jq '.workflow_runs[0] | "\(.status) \(.conclusion)"')
             echo "$workflow: $result"

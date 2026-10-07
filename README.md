@@ -566,9 +566,9 @@ has passed:
    The scanner runs in a job that can publish nothing; a separate job, which
    runs no third-party code, pushes each image only if its ID is the one that
    was scanned.
-2. **Deploy** starts whenever Tests, Lint, Security or Image finishes on
-   `main`, and its gate goes on only when all four have passed for that exact
-   commit. A failed check means no deploy; a scheduled scan deploys nothing.
+2. **Deploy** starts whenever Tests, Lint, Security, Image or Kubernetes
+   finishes on `main`, and its gate goes on only when all five have passed for
+   that exact commit. A failed check means no deploy; a scheduled scan deploys nothing.
 3. It signs in to AWS with GitHub's OpenID Connect token, which AWS trades for
    a role trusted only by `main` of this repository, for fifteen minutes. No
    AWS key is stored in GitHub.
