@@ -1005,3 +1005,12 @@ calls only, not every detail, and no specific business figures.
   now a 503 with a sentence and Retry-After, and one log line. Sending the
   application's own errors to Grafana is left open, until what its log can
   contain has been checked for anything private.
+
+- **On the Mac, a login job starts the stack.** Docker's restart policy
+  brings the containers back on the server, but on 7 October 2026 Docker
+  Desktop came back after a boot and restarted none of them, and the site
+  stayed down until someone looked. A launchd job runs at login, waits for
+  Docker Desktop and runs `docker compose up -d --wait --no-recreate`, which
+  starts what is stopped and changes nothing that runs. Changing backup.sh to
+  start everything was turned down: it runs at 09:00 only, so a later boot
+  would wait until the next morning.

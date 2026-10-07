@@ -477,6 +477,27 @@ install. From the project folder:
 launchd rather than cron because a Mac asleep at 09:00 runs the backup when it
 wakes; cron skips the day. A Mac that is shut down still misses it.
 
+## Starting the stack at login
+
+On the Mac, Docker's restart policy is not enough. On 7 October 2026 the Mac
+booted, Docker Desktop started and quit within seconds, and when it came back
+it restarted none of the three containers; only the 09:00 backup, which starts
+the database itself, brought anything back. So a second launchd job,
+`launchd/local.psells.start.plist`, runs `start-stack.sh` at every login. It
+waits up to twenty minutes for Docker Desktop, then runs
+`docker compose up -d --wait --no-recreate`: it starts whatever is not running
+and leaves every running container exactly as it is, building nothing and
+applying no changed configuration. It refuses to run anywhere but the folder
+holding `data/config.json`, and logs to `~/Library/Logs/psells-start.log`.
+Install it as the backup job is, from the project folder:
+
+    sed -e "s|__PROJECT_DIR__|$PWD|" -e "s|__HOME__|$HOME|" \
+        launchd/local.psells.start.plist > ~/Library/LaunchAgents/local.psells.start.plist
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.psells.start.plist
+
+It runs once as soon as it is installed, which on a running stack changes
+nothing.
+
 To restore a dump into the stack's database, which must be empty:
 
     docker compose exec -T db sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --no-owner --exit-on-error' \
@@ -807,7 +828,11 @@ committed, and that a missing or silent database is a sentence.
 the old shape, including every way it can refuse.
 
 `test_backup.py` holds the launchd job that runs `backup.sh`: that it parses,
-runs the script daily at 09:00, and carries no personal paths.
+runs the script daily at 09:00, and carries no personal paths. It holds the
+login job the same way, and runs `start-stack.sh` in a copy of the project with
+stand-ins for `docker` and `sleep`: it must start the stack with
+`--no-recreate` and nothing harsher, wait for Docker, and refuse outside the
+real stack's folder.
 
 `test_tls.py` runs `make-certificate.sh` into a temporary folder with the
 `openssl` on the machine, and proves the CA's limit by having it sign
@@ -945,10 +970,11 @@ Worth stating plainly rather than leaving to be discovered.
 - **A rebuilt server forgets its account.** It starts from the sample records
   with no login, and the password is set again by hand, since it is typed and
   never stored.
-- **The stack comes back only when Docker does.** The three containers restart
-  whenever Docker starts, after Docker Desktop restarts or the server reboots,
-  but on the Mac Docker Desktop itself has to be running: if it does not start
-  at login, neither does PSells, and neither does the daily backup.
+- **The stack comes back only when Docker does.** On the server the three
+  containers restart whenever Docker starts. On the Mac the login job starts
+  them once Docker Desktop is running, waiting up to twenty minutes; if Docker
+  Desktop does not start at all, neither does PSells, and neither does the
+  daily backup.
 - **Behind Docker Desktop, the application never sees a client's address.**
   Every request reaches nginx from the Compose network's gateway, so that is the
   address logged and forwarded. Harmless while everything is on one machine.

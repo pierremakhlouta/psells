@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The launchd job that runs start-stack.sh at every login, so the real stack
+  comes back after the Mac starts even when Docker Desktop's own restart
+  policy does not bring it back. See start-stack.sh for why.
+
+  A template, like local.psells.backup.plist: __PROJECT_DIR__ and __HOME__ are
+  filled in when it is installed into ~/Library/LaunchAgents. The README has
+  the install command.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>local.psells.start</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__PROJECT_DIR__/start-stack.sh</string>
+    </array>
+
+    <!-- Once, when the job is loaded: at login, and when it is installed. -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- start-stack.sh writes its verdict to psells-start.log. Anything a
+         command prints on the way lands here. -->
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/psells-start.launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/psells-start.launchd.log</string>
+</dict>
+</plist>
