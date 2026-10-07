@@ -3,6 +3,7 @@
 [![Tests](https://github.com/pierremakhlouta/psells/actions/workflows/tests.yml/badge.svg)](https://github.com/pierremakhlouta/psells/actions/workflows/tests.yml)
 [![Security](https://github.com/pierremakhlouta/psells/actions/workflows/security.yml/badge.svg)](https://github.com/pierremakhlouta/psells/actions/workflows/security.yml)
 [![Lint](https://github.com/pierremakhlouta/psells/actions/workflows/lint.yml/badge.svg)](https://github.com/pierremakhlouta/psells/actions/workflows/lint.yml)
+[![Kubernetes](https://github.com/pierremakhlouta/psells/actions/workflows/kubernetes.yml/badge.svg)](https://github.com/pierremakhlouta/psells/actions/workflows/kubernetes.yml)
 
 An inventory and profit tracker for my reselling business, used from a browser
 or from the terminal.
@@ -557,7 +558,7 @@ How it is put together:
 
 ### Shipping from a push
 
-A push to `main` goes live by itself, in about four minutes, once every check
+A push to `main` goes live by itself, in about five minutes, once every check
 has passed:
 
 1. **Image** builds the application's image on amd64 and on arm64, the
@@ -736,6 +737,66 @@ minutes. The alert fired after 5 minutes 17 seconds; the write-up, with what
 it found and what was fixed, is
 [postmortems/2026-10-05-demo-database-stopped.md](postmortems/2026-10-05-demo-database-stopped.md).
 
+## Kubernetes on the Mac
+
+PSells also runs on a local Kubernetes cluster, made by kind (Kubernetes in
+Docker), from the manifests in `k8s/`. It holds the invented sample records
+only: the real ones stay in the Compose stack, which the cluster never
+touches. It answers at `https://psells.localhost:9443`, on `127.0.0.1` only,
+beside the real stack on 443.
+
+What runs in it:
+
+- **The database**, a StatefulSet of one with its own volume, the same pinned
+  PostgreSQL image as `compose.yaml`, built on its first start from
+  `schema.sql` and `sample_data/seed.sql`, read where they are. Its password is
+  made at random by `k8s/up.sh` the first time, handed to kubectl on its
+  standard input, and kept in a Secret; it is printed and written nowhere.
+- **PSells**, one pod holding the app and nginx: the images CI scanned and
+  published for one commit, pinned by digest. The two containers share the
+  pod's network, so uvicorn listens on `127.0.0.1` only and no other pod can
+  reach it without nginx, and it believes forwarded headers from `127.0.0.1`
+  alone. nginx runs the repository's own `nginx.conf`, snippets and the Mac's
+  site, from ConfigMaps kustomize makes from those files, so a change to any of
+  them rolls the pod. Both containers run as their image's own user, with a
+  read-only filesystem and every Linux capability dropped.
+- **A NodePort Service** on 30443, which `k8s/kind.yaml` maps to
+  `127.0.0.1:9443`. HTTPS only.
+
+The certificate is the cluster's own, signed by the Mac's CA, so the browser
+trusts it, but with its own key, so the cluster never holds the real stack's.
+Made once, outside the repository:
+
+    PSELLS_TLS_DIR=~/PSells-Kind/tls ./make-certificate.sh
+
+Then, with kind and kubectl installed:
+
+    k8s/up.sh      # creates or updates the cluster, about 75 s from nothing
+    k8s/down.sh    # deletes the cluster named psells, and nothing else
+
+`up.sh` is safe to run again: it keeps the cluster and the database password,
+applies the manifests server-side so unchanged objects stay untouched, and
+restarts PSells only if the certificate changed, since nginx reads it when it
+starts. The cluster's login is set as the stack's is, in the cluster's own
+sample database:
+
+    kubectl --context kind-psells -n psells exec -it deploy/psells -c app -- python set_password.py
+
+Logins survive the pod: sessions are rows in PostgreSQL. Deleting the pod
+while a browser was logged in left the site unanswered for about three
+seconds, and the browser still logged in, with the same figures, on the new
+pod. The app's probes ask whether uvicorn answers, not whether the database
+does: with the database down the pod stays in the Service and every page
+answers 503, rather than the browser getting nothing.
+
+Every push builds the same cluster from nothing in CI, in the Kubernetes
+workflow, with a throwaway CA, and asks it what a browser would: the login
+page with its certificate checked, the redirect keeping the port, 421 for
+another name, 401 for a wrong login, `up.sh` again changing nothing, and both
+pods deleted and replaced with the records intact. kind there is its release
+binary, run only once it matches the hash written in the workflow. Deploy
+waits for it.
+
 ## Running the tests
 
 The suite needs a PostgreSQL to run against: `db-test` in `compose.yaml`, a
@@ -756,7 +817,7 @@ database it is pointed at, so it refuses any whose name does not end in
 Every warning is an error (`pytest.ini`), apart from one known deprecation in
 Starlette's test client on Python 3.14, matched on its exact message.
 
-Twenty files, and the split is deliberate, so a red run says what kind of
+Twenty-one files, and the split is deliberate, so a red run says what kind of
 thing broke before you read a line of it.
 
 `test_domain.py` covers everything in `psells.py` that has no input or output:
@@ -882,6 +943,22 @@ certificate, or would no longer fit the free tier, if either SLO changes, if
 there is more than one alert or it stops being the site down or stops alerting
 on no data, or if the dashboard names a data source other than by placeholder.
 
+`test_kubernetes.py` reads `k8s/` as kustomize renders it, and the Kubernetes
+workflow, and fails if the cluster could be reached beyond this machine or on
+443 or 80, if the database stops being built from `schema.sql` and the seed as
+they are or runs another image than Compose's, if a password could be written
+into a file, if the app and nginx stop being the images of one commit, if
+anything but nginx could reach the app or the app would believe anyone else,
+if nginx stops being configured from the repository's own files and the
+sample partner share, if a container could run as root, write to its image or
+keep a capability, if the app's probes start asking the database, or if the
+certificate's key could reach the app. It holds `up.sh` to the psells cluster
+alone, to a password made once and never printed, to a certificate from
+outside the repository and a restart only when it changed; runs `down.sh`
+against a stand-in kind that shows it deletes the psells cluster and nothing
+else; and holds the workflow to kind's checked binary, the scripts, a
+throwaway certificate and the answers it expects.
+
 `test_container.py` reads the `Dockerfile`, `.dockerignore`, `compose.yaml`,
 `compose.aws.yaml`, `nginx/nginx.conf` with each site's files, and the
 workflows, and fails if the image could ever be
@@ -922,7 +999,8 @@ every test runs inside a transaction that is rolled back at the end, so tests
 never see each other's rows and nothing has to be cleaned up. On GitHub Actions
 the test database is a service container of the same image, on the same
 port. Everything runs on every push through GitHub Actions, alongside a
-dependency vulnerability audit, a shellcheck pass and an `nginx -t` check, and
+dependency vulnerability audit, a shellcheck pass and an `nginx -t` check, the
+Kubernetes cluster built from nothing and checked from outside, and
 a scan with Grype of the app's and nginx's images, both built here, on both
 architectures, and of the monitoring agent's image, each failing on a high or
 critical vulnerability that has a fix and listing the rest (the agent's scan
@@ -972,6 +1050,13 @@ Worth stating plainly rather than leaving to be discovered.
   the Ubuntu host number 101 is the `uuidd` service's account, which could
   therefore read it. Worth closing with user-namespace remapping if the server
   ever held anything real.
+- **The cluster runs the images it was pinned to.** `k8s/app.yaml` names one
+  commit's published images by digest, and they move only when that line is
+  changed by hand, so the cluster can run older code than `main`. Dependabot
+  does not watch it.
+- **The cluster is one node with no Ingress and no network policy.** It runs
+  one application on one machine. nginx in the pod does what an Ingress would,
+  and the app listening on its pod's loopback is what keeps other pods out.
 - **The demonstration is temporary.** AWS's free plan ends six months after the
   account was opened, in March 2027, and the server with it. The repository,
   and the Terraform that rebuilds the server, are what last.
@@ -1032,6 +1117,7 @@ in Terraform and rebuilt from it, and a push to `main` ships itself there once
 every check passes. A managed database and a load balancer are described in
 Terraform too, and run behind a switch. The demo is monitored from outside and
 inside against two service level objectives, with one alert and a dashboard,
-all in code, and a deliberate outage was written up as an incident. Planned
-next is Kubernetes, carrying the same data model and business rules through
-each step.
+all in code, and a deliberate outage was written up as an incident. The same
+images run on a local Kubernetes cluster from manifests in the repository,
+built from nothing and checked on every push. Planned next is Ansible,
+carrying the same data model and business rules through each step.

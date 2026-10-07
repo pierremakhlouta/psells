@@ -1026,3 +1026,63 @@ calls only, not every detail, and no specific business figures.
   nginx exceptions are gone. The zlib exception stood for one deploy, while
   this was built. The agent keeps its exception: PSells does not build it.
 
+
+- **Kubernetes runs on the Mac, with kind, and the sample records only.**
+  Nothing is ever paid for, so not EKS; kind is a real cluster in Docker
+  containers, the same on the Mac and in CI, created and deleted in seconds.
+  It never holds the real records: those stay in the Compose stack, which is
+  what the business runs on, and the cluster has its own database built from
+  `schema.sql` and the seed. It answers on `127.0.0.1:9443`, so it can never
+  collide with the real stack on 443.
+
+- **nginx and the app share one pod.** The app trusts forwarded headers from
+  nginx's one fixed address only; in a pod the two share a network, so that address is `127.0.0.1` and fixed by construction, where a
+  separate nginx Deployment would reach the app from addresses that change
+  with every restart. uvicorn listens on the pod's loopback only, so nothing
+  else in the cluster can reach the app past nginx. nginx stays rather than
+  an Ingress controller, because it carries PSells' headers, limits and name
+  rules, which an Ingress would have to restate. A host alias maps `app` to
+  the loopback, so nginx's snippet is the same file in Compose, on the server
+  and in the pod.
+
+- **The cluster runs CI's published images, by digest.** The images that run
+  were scanned in CI, as on the server, and the cluster needs no build of its
+  own. Each is written with its commit's tag beside the digest, and a test
+  holds the app and nginx to the same commit. They move by hand.
+
+- **Plain YAML with kustomize, rendered from the repository's own files.**
+  No Helm: one application in one place has nothing to template. kustomize
+  makes the ConfigMaps from `schema.sql`, the seed, nginx's files and the
+  sample partner share where they are, so nothing is copied and nothing can
+  drift; that needs `--load-restrictor LoadRestrictionsNone`, which
+  `kubectl apply -k` cannot pass, so `up.sh` renders with `kubectl kustomize`
+  and applies the output. Server-side apply, because client-side apply
+  reported the database changed on every run when it had not.
+
+- **One copy of the database password.** `up.sh` makes it once with
+  `openssl rand`, passes it to kubectl on standard input and keeps it if it
+  exists, since the database on its volume was made with it. The app gets it
+  as `PGPASSWORD`, which libpq reads, and an address without a password, so no
+  second Secret holds a copy built from it.
+
+- **The cluster's certificate is its own, from the Mac's CA.** The browser
+  trusts it with nothing new to install, and its key is not the real stack's,
+  so a cluster's etcd never holds the key that serves the real records. It
+  lives in `~/PSells-Kind/tls`, outside the repository, and `up.sh` refuses to
+  run without it. nginx reads a certificate only when it starts, so `up.sh`
+  restarts the pod when, and only when, the Secret changed.
+
+- **The app's probes ask uvicorn, not the database.** With the database down
+  the app answers every page with a 503 and a sentence. A probe that asked the
+  database would take the only pod out of the Service, and the browser would
+  get no answer at all, or restart an app that was not broken. Compose's health
+  check still asks the database, because there it is what `--wait` and the
+  proxy's start wait for.
+
+- **A real cluster in CI, and Deploy waits for it.** Every push builds the
+  cluster from nothing with `up.sh` and a throwaway CA and checks it as a
+  browser would, so a manifest that only looks right fails before it ships.
+  kind is the release binary checked against a hash written in the workflow,
+  rather than a community action, so no third-party code runs. A pod is ready
+  a moment before its Service routes to it, so CI retries a failed connection,
+  but never an HTTP answer.
