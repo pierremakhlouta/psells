@@ -355,3 +355,69 @@ def test_up_sh_loads_the_clusters_own_certificate_from_outside_the_repository():
 
 def test_up_sh_waits_for_psells_to_be_rolled_out():
     assert "rollout status deployment/psells" in read(UP)
+
+
+def test_up_sh_restarts_psells_when_the_certificate_changed_and_only_then():
+    # nginx reads its certificate when it starts; a changed Secret alone would
+    # leave it serving the old one.
+    text = read(UP)
+    restart = text.index("kube rollout restart deployment/psells")
+
+    assert 'if [ -n "$tls_before" ] && [ "$tls_before" != "$tls_after" ]' in text
+    assert (text.index("tls_before=$(tls_version)")
+            < text.index("create secret tls psells-tls")
+            < text.index("tls_after=$(tls_version)")
+            < text.index("apply --server-side --field-manager=psells-up -f -\n")
+            < restart
+            < text.index("rollout status deployment/psells"))
+    assert text.count("rollout restart") == 1
+
+
+# Removing the cluster --------------------------------------------------------------
+
+DOWN = os.path.join(K8S_DIR, "down.sh")
+
+
+def run_down(tmp_path, clusters):
+    """down.sh with a stand-in kind that lists the given clusters and records
+    what it was asked; returns (exit code, the kind calls)."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    calls = tmp_path / "calls"
+    listing = "\\n".join(clusters)
+    kind = bin_dir / "kind"
+    kind.write_text(
+        "#!/bin/sh\n"
+        f'echo "$*" >> "{calls}"\n'
+        f'[ "$1 $2" = "get clusters" ] && printf "{listing}\\n"\n'
+        "exit 0\n")
+    kind.chmod(0o755)
+
+    result = subprocess.run(
+        ["bash", DOWN], capture_output=True, text=True,
+        env=dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}"))
+    return result.returncode, calls.read_text().splitlines()
+
+
+def test_down_sh_deletes_the_psells_cluster_and_nothing_else(tmp_path):
+    code, calls = run_down(tmp_path, ["other", "psells", "psells-old"])
+
+    assert code == 0
+    assert calls == ["get clusters", "delete cluster --name psells"]
+
+
+def test_down_sh_does_nothing_when_there_is_no_psells_cluster(tmp_path):
+    code, calls = run_down(tmp_path, ["other", "psells-old"])
+
+    assert code == 0
+    assert calls == ["get clusters"]
+
+
+def test_down_sh_never_reaches_docker_or_another_cluster():
+    text = read(DOWN)
+    commands = [line for line in text.splitlines()
+                if line.strip() and not line.lstrip().startswith("#")]
+
+    assert os.access(DOWN, os.X_OK)
+    assert not re.search(r"\b(docker|kubectl)\b", "\n".join(commands))
+    assert "CLUSTER=psells" in text

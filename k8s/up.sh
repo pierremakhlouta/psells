@@ -48,9 +48,8 @@ fi
 # nginx's certificate for psells.localhost, from a folder outside the
 # repository: made by make-certificate.sh with the Mac's own CA, so the browser
 # trusts it, but its own key, so the cluster never holds the real stack's.
-# Replaced on every run, so a renewed certificate reaches the cluster; nginx
-# reads it when the pod starts. The key reaches kubectl through a file it reads
-# and is never printed.
+# Applied on every run, so a renewed certificate reaches the cluster. The key
+# reaches kubectl through a file it reads and is never printed.
 TLS_DIR="${PSELLS_KIND_TLS_DIR:-$HOME/PSells-Kind/tls}"
 for file in psells.localhost.crt psells.localhost.key; do
     if [ ! -f "$TLS_DIR/$file" ]; then
@@ -59,10 +58,16 @@ for file in psells.localhost.crt psells.localhost.key; do
         exit 1
     fi
 done
+tls_version() {
+    kube get secret psells-tls --output=jsonpath='{.metadata.resourceVersion}' \
+        2> /dev/null || true
+}
+tls_before=$(tls_version)
 kube create secret tls psells-tls \
     --cert="$TLS_DIR/psells.localhost.crt" --key="$TLS_DIR/psells.localhost.key" \
     --dry-run=client --output=yaml |
     kube apply --server-side --field-manager=psells-up -f - > /dev/null
+tls_after=$(tls_version)
 echo "loaded the certificate from $TLS_DIR"
 
 echo "== manifests"
@@ -77,6 +82,16 @@ kubectl kustomize --load-restrictor LoadRestrictionsNone "$PROJECT_DIR/k8s" |
 
 echo "== waiting for the database"
 kube rollout status statefulset/database --timeout=180s
+
+# nginx reads its certificate only when it starts, and a Secret that changes
+# under a running pod does not make it read it again. So a certificate that
+# changed, and only then, restarts the pod; an unchanged one keeps its
+# resourceVersion, as server-side apply leaves it alone. Not on the first run,
+# when the pod is new and reads it anyway.
+if [ -n "$tls_before" ] && [ "$tls_before" != "$tls_after" ]; then
+    echo "the certificate changed: restarting PSells so nginx reads it"
+    kube rollout restart deployment/psells
+fi
 
 echo "== waiting for PSells"
 kube rollout status deployment/psells --timeout=180s
