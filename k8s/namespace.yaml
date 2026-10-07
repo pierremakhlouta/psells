@@ -1,0 +1,6 @@
+# Everything PSells runs on the cluster, in one namespace, so it can be read,
+# and removed, as one thing.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: psells

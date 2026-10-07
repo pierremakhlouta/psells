@@ -1,0 +1,24 @@
+# The PSells cluster's manifests, put together by kustomize, which kubectl
+# includes. k8s/up.sh applies them:
+#
+#     kubectl kustomize --load-restrictor LoadRestrictionsNone k8s | kubectl apply -f -
+#
+# LoadRestrictionsNone because the database is built from schema.sql and
+# sample_data/seed.sql where they are, outside this folder, rather than from
+# copies that could drift; kustomize refuses files outside the folder unless
+# told otherwise, and kubectl apply -k cannot tell it.
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: psells
+
+resources:
+  - namespace.yaml
+  - database.yaml
+
+configMapGenerator:
+  # Run in name order on the database's first start: tables, then records.
+  - name: database-init
+    files:
+      - 01-schema.sql=../schema.sql
+      - 02-seed.sql=../sample_data/seed.sql
