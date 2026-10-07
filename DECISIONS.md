@@ -1014,3 +1014,15 @@ calls only, not every detail, and no specific business figures.
   starts what is stopped and changes nothing that runs. Changing backup.sh to
   start everything was turned down: it runs at 09:00 only, so a later boot
   would wait until the next morning.
+
+- **PSells builds its own nginx image.** On 7 October 2026 nginx's image failed
+  the scan on a second flaw, in zlib, after the pcre2 one, and nginx had not
+  rebuilt its images in three weeks, though Alpine already had both fixes and
+  OpenSSL's. Rather than collect dated exceptions for someone else's schedule,
+  `nginx/Dockerfile` builds on the pinned official image and upgrades those
+  packages only, and CI builds, scans and publishes it beside the app's image,
+  in the same package under `nginx-<commit>`, so nothing new had to be made
+  public or granted. The server runs it by digest as it runs the app, and both
+  nginx exceptions are gone. The zlib exception stood for one deploy, while
+  this was built. The agent keeps its exception: PSells does not build it.
+

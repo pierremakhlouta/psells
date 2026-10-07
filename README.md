@@ -332,8 +332,11 @@ only redirects to it, both on `127.0.0.1`, forwarded to 8443 and 8080 inside
 its container. Publishing them on `127.0.0.1` is what keeps them to this
 machine. Leaving out the `127.0.0.1:` publishes them to the whole network, so
 anyone on the same Wi-Fi could reach the login page and start guessing.
-nginx runs the Docker Official Image, in its slim variant with none of the
-add-on modules, as its own unprivileged user, never root,
+nginx runs PSells' own image, built from `nginx/Dockerfile`: the Docker
+Official Image, in its slim variant with none of the add-on modules, pinned by
+digest, with Alpine's security fixes for zlib, pcre2 and OpenSSL installed on
+top, because in October 2026 nginx's images lagged behind Alpine's fixes. It
+runs as its own unprivileged user, never root,
 with its whole configuration in `nginx/nginx.conf`, mounted read-only, and the
 certificate and key mounted read-only from `data/tls/`.
 
@@ -891,10 +894,12 @@ headers from anyone but nginx, if nginx would run as root, if a response would
 lack one of its security headers or the policy's style hash no longer matches
 the page, if the login limit stops counting only login attempts, if an action or an
 image is used by a tag rather than pinned to a commit or a digest, if a
-workflow can write to the repository, or if a scan's exceptions reach any
-other scan, stop naming one version of one package, outlive their date, or
-lose the ground they stand on: an nginx configuration with no regular
-expression, an agent that never links OpenSSL. For the monitoring agent it
+workflow can write to the repository, or if the agent's scan exceptions reach
+any other scan, stop naming one version of one package, outlive their date, or
+lose the ground they stand on, an agent that never links OpenSSL. It holds
+PSells' nginx image to the pinned official image with only Alpine's fixes
+added and nothing copied in, built the same way on the Mac, in Lint and in
+image.yml, and run by its published digest on the server. For the monitoring agent it
 fails if it could run on the Mac, run as root, reach Docker's socket, write
 to the host, publish a port or lose its memory ceiling, or if it reads more
 than the proxy's journal or keeps a line that is not JSON; for nginx's log, if
@@ -918,12 +923,14 @@ never see each other's rows and nothing has to be cleaned up. On GitHub Actions
 the test database is a service container of the same image, on the same
 port. Everything runs on every push through GitHub Actions, alongside a
 dependency vulnerability audit, a shellcheck pass and an `nginx -t` check, and
-a scan with Grype of the built image, on both architectures, and of the nginx
-image, which fails on a high or critical vulnerability that has a fix and
-lists the rest (the nginx scan skips only what `nginx/grype-exceptions.yaml`
-lists, each with its reason, until the date written in it), and a scan of every commit in the history with gitleaks, which
-fails on anything that looks like a credential. On `main`, the scanned image is
-then published and deployed, as described under "Shipping from a push".
+a scan with Grype of the app's and nginx's images, both built here, on both
+architectures, and of the monitoring agent's image, each failing on a high or
+critical vulnerability that has a fix and listing the rest (the agent's scan
+skips only what `monitoring/grype-exceptions.yaml` lists, with its reason,
+until the date written in it), and a scan of every commit in the history with
+gitleaks, which fails on anything that looks like a credential. On `main`, the
+scanned images are then published and deployed, as described under "Shipping
+from a push".
 
 Everything is pinned: Python packages to exact versions, every action in the
 workflows to a commit, and the base images to a version and the digest of
@@ -941,9 +948,10 @@ Worth stating plainly rather than leaving to be discovered.
   the postmortem.
 - **Monitoring covers the demo only.** The business on the Mac is watched by
   its daily backup check and by whoever uses it.
-- **Two scan exceptions are dated.** nginx's pcre2 and the agent's OpenSSL each
-  have a known flaw skipped until 31 October 2026, with the reason; after that
-  date the Image workflow fails until they are dealt with.
+- **One scan exception is dated.** The agent's OpenSSL has a known flaw skipped
+  until 31 October 2026, with the reason; after that date the Image workflow
+  fails until it is dealt with. nginx's image needs none, because PSells builds
+  it with Alpine's fixes.
 - **The free Grafana instance sleeps when unused.** Its first page after a
   while answers "loading" for a moment. Metrics, checks and alerts keep
   running.

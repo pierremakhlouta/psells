@@ -5,8 +5,9 @@ name: Image
 # it from. What is published is the image that was scanned, not a rebuild.
 # The scan covers the Debian packages in the base image and the Python
 # packages installed on top; pip-audit in security.yml covers the requirements
-# files. The nginx image in front of it is scanned the same way, in a job of
-# its own, so each reports its own result.
+# files. PSells' nginx image, built from nginx/Dockerfile, is built, scanned and
+# published the same way and in the same jobs, tagged nginx-<commit> in the same
+# package, so the server runs a scanned nginx too.
 #
 # On every push, and weekly, because vulnerabilities are found in packages
 # that have not changed. Only a push to main publishes.
@@ -29,15 +30,29 @@ env:
 jobs:
   app:
     # Built natively on each architecture: amd64 for anyone's laptop and CI,
-    # arm64 for the AWS server. GitHub's arm64 runners are free for public
-    # repositories. Each build is scanned where it is built.
+    # arm64 for the AWS server and the Mac's cluster. GitHub's arm64 runners
+    # are free for public repositories. Each build is scanned where it is
+    # built. Two images: the app's, from the Dockerfile at the top, and
+    # nginx's, from nginx/Dockerfile, each built and scanned the same way.
     strategy:
       matrix:
         include:
           - runner: ubuntu-24.04
             arch: amd64
+            image: app
+            context: .
           - runner: ubuntu-24.04-arm
             arch: arm64
+            image: app
+            context: .
+          - runner: ubuntu-24.04
+            arch: amd64
+            image: nginx
+            context: nginx
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+            image: nginx
+            context: nginx
     runs-on: ${{ matrix.runner }}
 
     steps:
@@ -52,7 +67,7 @@ jobs:
           docker build --tag psells:ci \
             --label org.opencontainers.image.source=https://github.com/${{ github.repository }} \
             --label org.opencontainers.image.revision=${{ github.sha }} \
-            .
+            ${{ matrix.context }}
           docker image inspect --format '{{.Id}}' psells:ci > image-id
 
       # Two runs of the same scanner, because they answer different questions.
@@ -96,7 +111,7 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
-          name: image-${{ matrix.arch }}
+          name: image-${{ matrix.image }}-${{ matrix.arch }}
           path: |
             image.tar.gz
             image-id
@@ -128,74 +143,25 @@ jobs:
         run: |
           set -euo pipefail
           echo "$TOKEN" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
-          for arch in amd64 arm64; do
-            loaded=$(gunzip -c "image-$arch/image.tar.gz" | docker load --quiet | sed -n 's/^Loaded image ID: //p;s/^Loaded image: //p')
-            id=$(docker image inspect --format '{{.Id}}' "$loaded")
-            scanned=$(cat "image-$arch/image-id")
-            [ "$id" = "$scanned" ] || { echo "image-$arch is $id, but $scanned was scanned"; exit 1; }
-            docker tag "$id" "$IMAGE:${{ github.sha }}-$arch"
-            docker push --quiet "$IMAGE:${{ github.sha }}-$arch"
+          # The app under the commit's own tag, as the server has always pulled
+          # it, and nginx under nginx-<commit> in the same package.
+          for image in app nginx; do
+            prefix=""
+            [ "$image" = nginx ] && prefix="nginx-"
+            for arch in amd64 arm64; do
+              folder="image-$image-$arch"
+              loaded=$(gunzip -c "$folder/image.tar.gz" | docker load --quiet | sed -n 's/^Loaded image ID: //p;s/^Loaded image: //p')
+              id=$(docker image inspect --format '{{.Id}}' "$loaded")
+              scanned=$(cat "$folder/image-id")
+              [ "$id" = "$scanned" ] || { echo "$folder is $id, but $scanned was scanned"; exit 1; }
+              docker tag "$id" "$IMAGE:${prefix}${{ github.sha }}-$arch"
+              docker push --quiet "$IMAGE:${prefix}${{ github.sha }}-$arch"
+            done
+            docker buildx imagetools create --tag "$IMAGE:${prefix}${{ github.sha }}" \
+              "$IMAGE:${prefix}${{ github.sha }}-amd64" "$IMAGE:${prefix}${{ github.sha }}-arm64"
+            docker buildx imagetools inspect "$IMAGE:${prefix}${{ github.sha }}"
           done
-          docker buildx imagetools create --tag "$IMAGE:${{ github.sha }}" \
-            "$IMAGE:${{ github.sha }}-amd64" "$IMAGE:${{ github.sha }}-arm64"
-          docker buildx imagetools inspect "$IMAGE:${{ github.sha }}"
           docker logout ghcr.io
-
-  nginx:
-    runs-on: ubuntu-latest
-
-    # The nginx image compose.yaml runs, scanned the same two ways as the app's
-    # image. It is not built here, only pulled, but it is as much a part of
-    # what serves PSells. Dependabot updates compose.yaml and not this line,
-    # so test_container.py fails if the two ever differ.
-    env:
-      NGINX_IMAGE: nginx:1.30.5-alpine-slim@sha256:32463212baf0e7d91aded2e9b843a4f2b9e017804b8c9d5bae7b51dcef64389c
-
-    steps:
-      # Pulled by its digest first, so the scan reads exactly these bytes
-      # from the local Docker rather than looking the name up itself.
-      - name: Pull the image
-        run: docker pull "$NGINX_IMAGE"
-
-      - name: List every known vulnerability
-        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439  # v7.4.2
-        with:
-          image: ${{ env.NGINX_IMAGE }}
-          fail-build: false
-          output-format: table
-          output-file: grype-all.txt
-
-      - name: Show the list
-        run: cat grype-all.txt
-
-      # Checked out for nginx/grype-exceptions.yaml only: the vulnerabilities
-      # this job's failing scan skips, each with its reason. The file has an
-      # expiry date, and once it has passed this job fails until someone looks
-      # again, so an exception cannot quietly become permanent. The app job
-      # reads no such file.
-      - name: Check out the repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-
-      - name: Fail once the exceptions have expired
-        run: |
-          expires=$(sed -n 's/^# expires: //p' nginx/grype-exceptions.yaml)
-          echo "Exceptions expire on $expires"
-          test "$(date -u +%F)" '<' "$expires"
-
-      - name: Fail on a high or critical vulnerability that has a fix
-        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439  # v7.4.2
-        with:
-          image: ${{ env.NGINX_IMAGE }}
-          config: nginx/grype-exceptions.yaml
-          only-fixed: true
-          severity-cutoff: high
-          fail-build: true
-          output-format: table
-          output-file: grype-fixable.txt
-
-      - name: Show what failed the build
-        if: failure()
-        run: cat grype-fixable.txt
 
   alloy:
     runs-on: ubuntu-latest
@@ -222,7 +188,8 @@ jobs:
       - name: Show the list
         run: cat grype-all.txt
 
-      # For monitoring/grype-exceptions.yaml, as the nginx job reads its own.
+      # For monitoring/grype-exceptions.yaml: the one image with an exception,
+      # because it is not PSells' to rebuild.
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 

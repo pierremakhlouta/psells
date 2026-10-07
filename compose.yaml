@@ -26,9 +26,11 @@ services:
     # none of them, and they brought libraries PSells never runs, among them
     # the libexpat whose high vulnerability failed the first scan of the full
     # image. A test fails if nginx.conf ever asks for a module.
-    # The Lint workflow runs nginx -t with the same image, and a test holds the
-    # two equal, because Dependabot does not update an image in a workflow.
-    image: nginx:1.30.5-alpine-slim@sha256:32463212baf0e7d91aded2e9b843a4f2b9e017804b8c9d5bae7b51dcef64389c
+    # PSells builds it from nginx/Dockerfile: that pinned image with Alpine's
+    # security fixes for the packages it carries. The Lint workflow runs
+    # nginx -t with the same image, built from the same file, and image.yml
+    # scans and publishes it for the server.
+    build: ./nginx
     # The image's own nginx user and group (101), never root, as the app runs
     # as psells. nginx/nginx.conf is written for this: port 8080, and its
     # process id and temporary files in /tmp.

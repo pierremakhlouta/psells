@@ -25,6 +25,10 @@ services:
       - "./data/rds-ca.pem:/config/rds-ca.pem:ro"
 
   proxy:
+    # PSells' nginx image that CI built, scanned and published for the commit,
+    # by digest, as for the app; deploy.sh writes it into .env.
+    image: "${PSELLS_NGINX_IMAGE:?set PSELLS_NGINX_IMAGE in .env; deploy/aws/deploy.sh writes it}"
+    build: !reset null
     # On every address, because this server is public: its security group
     # lets in 80 and 443 and nothing else. compose.yaml publishes on
     # 127.0.0.1 only, which on the server would reach no one.

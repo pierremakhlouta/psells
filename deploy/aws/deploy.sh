@@ -73,6 +73,13 @@ if [ -n "${PSELLS_IMAGE_DIGEST:-}" ] && [ "$PSELLS_IMAGE_DIGEST" != "$published"
 fi
 image="$REGISTRY_IMAGE@$published"
 echo "$image"
+# PSells' nginx image for the same commit, published beside the app's under
+# nginx-<commit>, and run by its digest likewise.
+nginx_published=$(docker buildx imagetools inspect "$REGISTRY_IMAGE:nginx-$commit" --format '{{.Manifest.Digest}}') ||
+    fail "no nginx image is published for $commit"
+[[ "$nginx_published" =~ ^sha256:[0-9a-f]{64}$ ]] || fail "unexpected nginx digest for $commit: $nginx_published"
+nginx_image="$REGISTRY_IMAGE@$nginx_published"
+echo "$nginx_image"
 
 echo "== .env from Parameter Store ($PARAMETERS)"
 # name<TAB>value, one per line. The password never reaches the terminal.
@@ -161,6 +168,7 @@ POSTGRES_PASSWORD=$password
 POSTGRES_DB=$database
 PSELLS_CONFIG_FILE=./sample_data/config.json
 PSELLS_IMAGE=$image
+PSELLS_NGINX_IMAGE=$nginx_image
 GRAFANA_METRICS_URL=$metrics_url
 GRAFANA_METRICS_USER=$metrics_user
 GRAFANA_LOGS_URL=$logs_url

@@ -29,14 +29,14 @@ jobs:
   nginx:
     runs-on: ubuntu-latest
 
-    # The image compose.yaml runs nginx from. Dependabot updates compose.yaml
-    # but not this line, so test_container.py fails if the two ever differ.
-    env:
-      NGINX_IMAGE: nginx:1.30.5-alpine-slim@sha256:32463212baf0e7d91aded2e9b843a4f2b9e017804b8c9d5bae7b51dcef64389c
-
     steps:
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      # nginx -t with the image the stack runs: PSells' own, built here from
+      # nginx/Dockerfile exactly as compose.yaml and image.yml build it.
+      - name: Build PSells' nginx image
+        run: docker build --tag psells-nginx:lint nginx
 
       # nginx -t loads the certificate and key it names, so it needs a pair.
       # This one is made by the same script, in a folder of the runner's own,
@@ -61,7 +61,7 @@ jobs:
           --volume "$PWD/nginx/snippets:/etc/nginx/snippets:ro"
           --volume "$PWD/nginx/sites/localhost:/etc/nginx/site:ro"
           --volume "$RUNNER_TEMP/tls:/etc/nginx/tls:ro"
-          "$NGINX_IMAGE" nginx -t
+          psells-nginx:lint nginx -t
 
       # The same configuration with the AWS server's site, which reads its
       # certificate where certbot keeps it. The throwaway pair stands in for
@@ -79,7 +79,7 @@ jobs:
             --volume "$PWD/nginx/sites/aws:/etc/nginx/site:ro" \
             --volume "$RUNNER_TEMP/letsencrypt:/etc/nginx/tls:ro" \
             --volume "$RUNNER_TEMP/acme:/var/www/acme:ro" \
-            "$NGINX_IMAGE" nginx -t
+            psells-nginx:lint nginx -t
 
   terraform:
     runs-on: ubuntu-latest

@@ -690,7 +690,7 @@ def test_nginx_loads_no_modules_because_the_slim_image_has_none():
     # module. A load_module line would stop nginx at startup; this says why
     # before anyone finds out that way.
     assert "load_module" not in [words[0] for _, words in nginx_directives()]
-    assert "-alpine-slim@" in compose()["services"]["proxy"]["image"]
+    assert "-alpine-slim@" in nginx_base_image()
 
 
 def test_nginx_runs_as_its_own_user_and_never_as_root():
@@ -1021,20 +1021,72 @@ def test_every_postgres_is_the_same_pinned_image():
     assert PINNED_IMAGE.match(images.pop())
 
 
-@pytest.mark.parametrize("name", ["lint.yml", "image.yml"])
-def test_nginx_is_checked_and_scanned_in_ci_with_the_image_the_stack_runs(name):
-    # Dependabot updates compose.yaml but not an image named in a workflow.
-    stack = compose()["services"]["proxy"]["image"]
-    ci = workflow(os.path.join(PROJECT_DIR, ".github", "workflows",
-                               name))["jobs"]["nginx"]["env"]["NGINX_IMAGE"]
-
-    assert stack == ci
-    assert PINNED_IMAGE.match(stack), stack
+NGINX_DOCKERFILE = os.path.join(PROJECT_DIR, "nginx", "Dockerfile")
 
 
-# Each image job's exceptions file. The app's image has none.
-GRYPE_EXCEPTIONS = {"nginx": "nginx/grype-exceptions.yaml",
-                    "alloy": "monitoring/grype-exceptions.yaml"}
+def nginx_base_image():
+    """The official nginx image PSells' own is built on, from its FROM line."""
+    with open(NGINX_DOCKERFILE) as dockerfile:
+        (base,) = re.findall(r"^FROM (\S+)$", dockerfile.read(), re.M)
+    return base
+
+
+def test_psells_nginx_is_the_pinned_official_image_with_alpines_fixes_only():
+    with open(NGINX_DOCKERFILE) as dockerfile:
+        lines = [line for line in dockerfile.read().splitlines()
+                 if line and not line.startswith("#")]
+
+    assert PINNED_IMAGE.match(nginx_base_image())
+    assert nginx_base_image().startswith("nginx:")
+    # One upgrade of named packages, from no cache, and nothing copied in:
+    # the configuration stays mounted read-only from nginx/.
+    assert lines[1:] == [
+        "RUN apk upgrade --no-cache zlib pcre2 libssl3 libcrypto3"]
+
+
+def test_the_stack_lint_and_ci_all_use_psells_nginx_image():
+    lint = workflow(os.path.join(PROJECT_DIR, ".github", "workflows",
+                                 "lint.yml"))["jobs"]["nginx"]
+    lint_steps = "\n".join(step.get("run", "") for step in lint["steps"])
+    matrix = workflow(os.path.join(PROJECT_DIR, ".github", "workflows",
+                                   "image.yml"))["jobs"]["app"]["strategy"]["matrix"]["include"]
+
+    # The Mac builds it from nginx/, as it builds the app from the top.
+    assert compose()["services"]["proxy"]["build"] == "./nginx"
+    assert "image" not in compose()["services"]["proxy"]
+    # nginx -t runs on that same image, built the same way, for both sites.
+    assert "docker build --tag psells-nginx:lint nginx" in lint_steps
+    assert lint_steps.count("psells-nginx:lint nginx -t") == 2
+    assert "NGINX_IMAGE" not in lint_steps and "env" not in lint
+    # CI builds, scans and publishes it on both architectures.
+    assert sorted((entry["image"], entry["arch"], entry["context"])
+                  for entry in matrix if entry["image"] == "nginx") == [
+        ("nginx", "amd64", "nginx"), ("nginx", "arm64", "nginx")]
+
+
+def test_the_server_runs_the_published_nginx_image_by_digest():
+    proxy = compose_aws()["services"]["proxy"]
+    with open(os.path.join(PROJECT_DIR, "deploy", "aws", "deploy.sh")) as script:
+        deploy = script.read()
+
+    assert proxy["image"].startswith("${PSELLS_NGINX_IMAGE:?")
+    assert proxy["build"] is RESET
+    assert '"$REGISTRY_IMAGE:nginx-$commit"' in deploy
+    assert 'nginx_image="$REGISTRY_IMAGE@$nginx_published"' in deploy
+    assert "PSELLS_NGINX_IMAGE=$nginx_image" in deploy
+
+
+def test_dependabot_watches_the_nginx_image_psells_builds_on():
+    with open(os.path.join(PROJECT_DIR, ".github", "dependabot.yml")) as file:
+        updates = yaml.safe_load(file)["updates"]
+
+    assert {"package-ecosystem": "docker", "directory": "/nginx"}.items() <= [
+        u for u in updates if u.get("directory") == "/nginx"][0].items()
+
+
+# Each image job's exceptions file. The app's and nginx's images, which PSells
+# builds, have none: only the agent's, which it does not.
+GRYPE_EXCEPTIONS = {"alloy": "monitoring/grype-exceptions.yaml"}
 
 
 def scan_steps(job):
@@ -1104,30 +1156,6 @@ def test_the_agent_is_scanned_as_the_server_runs_it_and_checked_for_openssl():
     assert "packages" not in job.get("permissions", {})
 
 
-@pytest.mark.parametrize("site", SITES)
-def test_nginx_never_compresses_or_decompresses(site):
-    # The zlib exception rests on this: nginx calls zlib only for gzip and
-    # gunzip, both off unless a directive turns them on.
-    directives = {words[0] for _, words in nginx_directives(site)}
-
-    assert directives
-    assert not {d for d in directives if d.startswith(("gzip", "gunzip"))}
-
-
-@pytest.mark.parametrize("site", SITES)
-def test_nginx_evaluates_no_regular_expression(site):
-    # The pcre2 exception rests on this: nginx hands text to pcre2 only to
-    # match the regular expressions in its configuration. Every regular
-    # expression nginx accepts starts with ~ (a location, a map key, a
-    # server_name), or sits in rewrite or if.
-    words = [word for blocks, directive in nginx_directives(site)
-             for word in [*directive,
-                          *(w for _, opening in blocks for w in opening)]]
-
-    assert not [word for word in words if word.startswith("~")]
-    assert not {"rewrite", "if", "regex"} & set(words)
-
-
 def test_every_commit_is_scanned_for_secrets_with_a_pinned_scanner():
     job = workflow(os.path.join(PROJECT_DIR, ".github", "workflows",
                                 "security.yml"))["jobs"]["secrets"]
@@ -1166,11 +1194,14 @@ def test_what_is_published_is_what_was_scanned():
                                  "image.yml"))["jobs"]
     app = "\n".join(step.get("run", "") for step in jobs["app"]["steps"])
     publish = "\n".join(step.get("run", "") for step in jobs["publish"]["steps"])
-    arches = {entry["arch"]: entry["runner"]
-              for entry in jobs["app"]["strategy"]["matrix"]["include"]}
+    builds = sorted((entry["image"], entry["arch"], entry["runner"])
+                    for entry in jobs["app"]["strategy"]["matrix"]["include"])
 
-    # Both architectures, each built on its own kind of machine.
-    assert arches == {"amd64": "ubuntu-24.04", "arm64": "ubuntu-24.04-arm"}
+    # Both images on both architectures, each built on its own kind of machine.
+    assert builds == [("app", "amd64", "ubuntu-24.04"),
+                      ("app", "arm64", "ubuntu-24.04-arm"),
+                      ("nginx", "amd64", "ubuntu-24.04"),
+                      ("nginx", "arm64", "ubuntu-24.04-arm")]
     # The ID of the scanned image is recorded, and a loaded image that does
     # not have it is refused before anything is pushed.
     assert "docker image inspect --format '{{.Id}}' psells:ci > image-id" in app
@@ -1178,7 +1209,8 @@ def test_what_is_published_is_what_was_scanned():
     assert publish.index('[ "$id" = "$scanned" ]') < publish.index("docker push")
     # Tagged by commit, never by a name that moves, such as latest.
     assert "latest" not in publish
-    assert '"$IMAGE:${{ github.sha }}"' in publish
+    assert '"$IMAGE:${prefix}${{ github.sha }}"' in publish
+    assert '[ "$image" = nginx ] && prefix="nginx-"' in publish
 
 
 def deploy_workflow():

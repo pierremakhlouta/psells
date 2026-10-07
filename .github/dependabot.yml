@@ -44,6 +44,15 @@ updates:
       images:
         patterns: ["*"]
 
+  # nginx/Dockerfile's FROM line: PSells' nginx image is built on it.
+  - package-ecosystem: "docker"
+    directory: "/nginx"
+    schedule:
+      interval: "weekly"
+    groups:
+      nginx:
+        patterns: ["*"]
+
   - package-ecosystem: "docker-compose"
     directory: "/"
     schedule:
