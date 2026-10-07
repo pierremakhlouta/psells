@@ -1105,6 +1105,16 @@ def test_the_agent_is_scanned_as_the_server_runs_it_and_checked_for_openssl():
 
 
 @pytest.mark.parametrize("site", SITES)
+def test_nginx_never_compresses_or_decompresses(site):
+    # The zlib exception rests on this: nginx calls zlib only for gzip and
+    # gunzip, both off unless a directive turns them on.
+    directives = {words[0] for _, words in nginx_directives(site)}
+
+    assert directives
+    assert not {d for d in directives if d.startswith(("gzip", "gunzip"))}
+
+
+@pytest.mark.parametrize("site", SITES)
 def test_nginx_evaluates_no_regular_expression(site):
     # The pcre2 exception rests on this: nginx hands text to pcre2 only to
     # match the regular expressions in its configuration. Every regular

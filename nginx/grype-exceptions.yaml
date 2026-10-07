@@ -14,10 +14,24 @@
 # tests/test_container.py fails if one is added. Remove this entry, and update
 # the nginx pin, once nginx publishes an image with pcre2 10.49 or later. From
 # the date above the nginx job fails until this file is dealt with.
+#
+# CVE-2026-85091, high, in zlib 1.3.2-r0, fixed in 1.3.2-r1. Found 7 October
+# 2026, in the same two images, which nginx had not rebuilt since 21 September,
+# though Alpine 3.24 already has the fixed zlib (and pcre2 10.49). nginx calls
+# zlib only to compress a response (gzip) or to decompress one (gunzip), and
+# PSells' configuration turns neither on: gzip is off unless a directive says
+# otherwise. tests/test_container.py fails if any gzip or gunzip directive is
+# added. Both entries go once PSells builds its own nginx image with Alpine's
+# fixed packages, planned next, or nginx publishes one.
 
 ignore:
   - vulnerability: CVE-2026-103111
     package:
       name: pcre2
       version: 10.48-r0
+      type: apk
+  - vulnerability: CVE-2026-85091
+    package:
+      name: zlib
+      version: 1.3.2-r0
       type: apk
