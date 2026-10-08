@@ -1,4 +1,5 @@
-"""Tests for sample_data/seed.sql, the invented records the demo shows.
+"""Tests for sample_data/seed.sql, the invented records the demo shows, which
+sample_data/generate_seed.py writes.
 
 The seed is what the AWS server and the psells-sample stack load, and what any
 screenshot is taken from, so it has to show every list with something in it
@@ -9,6 +10,8 @@ it back through the psells functions the pages use.
 
 import os
 import re
+import subprocess
+import sys
 from collections import Counter
 
 import pytest
@@ -39,10 +42,6 @@ def seeded(db, monkeypatch):
     return db
 
 
-def ids(rows):
-    return [row["id"] for row in rows]
-
-
 def test_the_seed_is_one_transaction():
     with open(SEED) as file:
         lines = [line for line in file.read().splitlines()
@@ -52,29 +51,57 @@ def test_the_seed_is_one_transaction():
     assert lines[-1] == "COMMIT;"
 
 
-def test_products_in_stock_include_two_glasses_a_search_finds(seeded):
+def test_the_seed_is_exactly_what_its_generator_writes():
+    # seed.sql is generated; a hand edit would drift from the script that
+    # holds it to the application's rules.
+    result = subprocess.run(
+        [sys.executable, os.path.join(psells.PROJECT_DIR, "sample_data",
+                                      "generate_seed.py"), "--check"],
+        capture_output=True, text=True)
+
+    assert result.returncode == 0, "run sample_data/generate_seed.py"
+
+
+def test_a_business_of_some_size_over_a_year(seeded):
+    sales = psells.sales_history(seeded)
+    months = {(sale["date"].year, sale["date"].month) for sale in sales}
+
+    assert len(psells.all_products(seeded)) >= 60
+    assert len({row["category"] for row in psells.all_products(seeded)}) >= 8
+    assert len(sales) >= 150
+    assert len(months) == 12
+
+
+def test_products_in_stock_include_glasses_a_search_finds(seeded):
     in_stock = psells.in_stock_products(seeded)
     glasses = psells.find_items_by_name_or_category(in_stock, "glasses")
 
-    assert ids(in_stock) == [1, 3, 4, 5, 6, 7]
-    assert len(glasses) == 2
-    assert all("glasses" in row["name"].lower() for row in glasses)
+    assert len(in_stock) >= 20
+    assert len(glasses) >= 2
+    assert all("glasses" in (row["name"] + row["category"]).lower()
+               for row in glasses)
 
 
-def test_one_product_out_of_stock_for_each_reason(seeded):
-    reasons = {row["id"]: psells.out_of_stock_reason(row)
+def test_products_out_of_stock_for_every_reason(seeded):
+    reasons = {psells.out_of_stock_reason(row)
                for row in psells.out_of_stock_products(seeded)}
 
-    assert reasons == {2: "Sold out", 8: "Returned",
-                       9: "2 sold, 1 returned of 3"}
+    assert "Sold out" in reasons
+    assert "Returned" in reasons
+    # Some sold and some returned, such as "2 sold, 1 returned of 3".
+    assert any(re.fullmatch(r"\d+ sold, \d+ returned of \d+", reason)
+               for reason in reasons)
+
+
+def test_a_discontinued_product_is_there(seeded):
+    assert any(row["retail_discontinued"] for row in psells.all_products(seeded))
 
 
 def test_the_sales_show_a_shared_date_and_more_than_one_unit(seeded):
     sales = psells.sales_history(seeded)
     dates = Counter(sale["date"] for sale in sales)
 
-    assert len(dates) >= 4
-    assert max(dates.values()) == 2
+    assert max(dates.values()) >= 2
     assert any(sale["quantity"] > 1 for sale in sales)
 
 

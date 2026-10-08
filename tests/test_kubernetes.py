@@ -498,7 +498,8 @@ def test_ci_checks_up_sh_changes_nothing_and_both_pods_are_replaced():
     assert 'k8s/up.sh' in again and '[ "$before" = "$after" ]' in again
     assert 'kube delete pod database-0 "${old#pod/}"' in kill
     assert "SELECT count(*) FROM products" in kill
-    assert '[ "$products" = 9 ]' in kill
+    assert "seeded=$(grep -c '^INSERT INTO products ' sample_data/seed.sql)" in kill
+    assert '[ "$products" = "$seeded" ]' in kill
     assert "--retry" not in kill
     assert '[ "$(ask 2> /dev/null)" != 000 ] && break' in kill
     assert '[ "$code" = 200 ]' in kill

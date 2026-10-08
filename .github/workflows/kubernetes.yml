@@ -139,7 +139,9 @@ jobs:
           [ "$old" != "$new" ]
           products=$(kube exec database-0 -- psql -U psells -d psells -tAc 'SELECT count(*) FROM products')
           echo "products after the restart: $products"
-          [ "$products" = 9 ]
+          # Every product the seed loaded, still there.
+          seeded=$(grep -c '^INSERT INTO products ' sample_data/seed.sql)
+          [ "$products" = "$seeded" ]
           # Waited out while the Service catches up with the new pod, as
           # before the first checks, then asked once.
           ask() {

@@ -162,9 +162,16 @@ stacks cannot share one and the real stack keeps its network while it is
 stopped. Only one of the two stacks can hold ports 443 and 80 at a time. Both
 use the same certificate from `data/tls/`.
 
-The sample set is small and invented, but it covers the cases worth seeing: all
-three partner-share modes, a product discontinued at retail, one that has sold
-out, a return, and two partner payments.
+The sample set is an invented business of about 80 products in nine
+categories, with a year of sales to September 2026, a dozen returns and
+monthly payments to the partner, and it covers the cases worth seeing: all
+three partner-share modes, a product discontinued at retail, products out of
+stock for each reason, and a balance still owed. It is written by
+`sample_data/generate_seed.py`, from a fixed random seed, so it is the same
+on every run; the script checks each invented product with the application's
+own rules and works out each sale's partner cut with its own function, and a
+test fails if `seed.sql` is ever edited by hand. Change the script and run it
+again: `venv/bin/python sample_data/generate_seed.py`.
 
 ## The web interface
 
