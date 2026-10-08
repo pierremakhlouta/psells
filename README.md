@@ -1119,5 +1119,7 @@ Terraform too, and run behind a switch. The demo is monitored from outside and
 inside against two service level objectives, with one alert and a dashboard,
 all in code, and a deliberate outage was written up as an incident. The same
 images run on a local Kubernetes cluster from manifests in the repository,
-built from nothing and checked on every push. Planned next is Ansible,
-carrying the same data model and business rules through each step.
+built from nothing and checked on every push. Planned next is an analytics
+layer on the same database, from extracting the data to a sales dashboard and
+a forecast, then architecture documents for the whole system, carrying the
+same data model and business rules through each step.
