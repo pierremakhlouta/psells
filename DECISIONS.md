@@ -1084,5 +1084,16 @@ calls only, not every detail, and no specific business figures.
   browser would, so a manifest that only looks right fails before it ships.
   kind is the release binary checked against a hash written in the workflow,
   rather than a community action, so no third-party code runs. A pod is ready
-  a moment before its Service routes to it, so CI retries a failed connection,
-  but never an HTTP answer.
+  a moment before its Service routes to it, so CI first waits, up to twenty
+  seconds, until anything answers, then asks each question once. curl's own
+  `--retry` was used at first and dropped: it also retries a 503 or a 504,
+  which are answers to report, not to wait out.
+
+- **PostgreSQL is ready when it answers over TCP.** On a new volume the image
+  first runs a temporary server on its socket alone while it loads the init
+  files, and `pg_isready` over the socket passed against that. On 8 October
+  2026 CI's first request reached the app while the cluster's database was
+  restarting into the real server, and got a 503. Every check now asks
+  `pg_isready -h 127.0.0.1`: the cluster's probes, Compose's db and db-test,
+  and the Tests workflow's service. The real database was recreated once for
+  it, for about two seconds, with its volume kept.

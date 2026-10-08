@@ -159,7 +159,11 @@ services:
     healthcheck:
       # $$ passes a literal $ through Compose, so the variables are read inside
       # the container rather than substituted from .env when the file is read.
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      # -h 127.0.0.1 asks over TCP, not the socket. On a new volume the image
+      # first runs a temporary server on its socket alone while it loads the
+      # init files, and a check over the socket passes against that; over TCP
+      # it passes only once the real server is up.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 2s
       timeout: 5s
       retries: 15
@@ -186,7 +190,10 @@ services:
       # collide with, a PostgreSQL on its usual 5432.
       - "127.0.0.1:5433:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U psells_test -d psells_test"]
+      # Over TCP, not the socket: on a new volume, and this one is new every
+      # time, the image first runs a temporary server on its socket alone, and
+      # a socket check passes against that before the real server is up.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U psells_test -d psells_test"]
       interval: 2s
       timeout: 5s
       retries: 15

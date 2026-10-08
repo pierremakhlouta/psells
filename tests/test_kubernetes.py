@@ -137,8 +137,11 @@ def test_the_database_keeps_its_own_volume_and_is_checked_by_pg_isready():
     (claim,) = statefulset["spec"]["volumeClaimTemplates"]
     assert mounts["/var/lib/postgresql"]["name"] == claim["metadata"]["name"]
     assert mounts["/docker-entrypoint-initdb.d"]["readOnly"] is True
+    # Over TCP: a socket check passes against the image's temporary init
+    # server (see test_container's test of every postgres).
     for probe in ("readinessProbe", "livenessProbe"):
-        assert "pg_isready" in " ".join(container[probe]["exec"]["command"])
+        assert "pg_isready -h 127.0.0.1 " in " ".join(
+            container[probe]["exec"]["command"])
 
 
 def test_the_app_reaches_the_database_by_the_name_it_has_in_compose():
@@ -479,9 +482,12 @@ def test_ci_asks_what_a_browser_would_and_checks_the_certificate():
     for expected in ('"$site/login")" 200', '"$site/")" "$site/login"',
                      '"$site/login")" 421', '"$site/login")" 401'):
         assert expected in ask, expected
-    # Retries a connection, never an HTTP answer.
-    assert "--retry-all-errors" in ask
+    # Waits only while nothing answers, then asks each question once: curl's
+    # --retry would also retry a 503 or 504, the answers being checked.
+    assert "--retry" not in ask
     assert "--fail" not in ask and not re.search(r"curl -\w*f", ask)
+    assert '"$site/login" 2> /dev/null)" != 000 ] && break' in ask
+    assert ask.index("!= 000") < ask.index('check "login page"')
 
 
 def test_ci_checks_up_sh_changes_nothing_and_both_pods_are_replaced():
@@ -493,3 +499,6 @@ def test_ci_checks_up_sh_changes_nothing_and_both_pods_are_replaced():
     assert 'kube delete pod database-0 "${old#pod/}"' in kill
     assert "SELECT count(*) FROM products" in kill
     assert '[ "$products" = 9 ]' in kill
+    assert "--retry" not in kill
+    assert '[ "$(ask 2> /dev/null)" != 000 ] && break' in kill
+    assert '[ "$code" = 200 ]' in kill

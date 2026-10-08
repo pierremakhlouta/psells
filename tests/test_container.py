@@ -273,6 +273,25 @@ def test_the_test_database_starts_only_when_asked_for_and_keeps_nothing():
     assert test_db["environment"]["POSTGRES_DB"].endswith("_test")
 
 
+
+def test_every_postgres_is_called_ready_only_once_it_answers_over_tcp():
+    # On a new volume the image first runs a temporary server on its socket
+    # alone while it loads the init files. A pg_isready over the socket passed
+    # against that, and on 8 October 2026 CI's first request reached the app
+    # while the database was restarting into the real server. Over TCP the
+    # check passes only once that server is up.
+    with open(os.path.join(PROJECT_DIR, ".github", "workflows",
+                           "tests.yml")) as file:
+        ci = yaml.safe_load(file)["jobs"]["test"]["services"]["postgres"]
+    checks = {name: " ".join(compose()["services"][name]["healthcheck"]["test"])
+              for name in ("db", "db-test")}
+    checks["tests.yml"] = re.search(r'--health-cmd "([^"]+)"',
+                                    ci["options"]).group(1)
+
+    for name, check in checks.items():
+        assert "pg_isready -h 127.0.0.1 " in check, name
+
+
 # nginx in front ----------------------------------------------------------------
 
 NGINX_CONF = os.path.join(PROJECT_DIR, "nginx", "nginx.conf")

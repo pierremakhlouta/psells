@@ -78,13 +78,17 @@ spec:
               drop: ["ALL"]
           # Ready only when PostgreSQL accepts connections, as Compose's health
           # check does; restarted if it stops answering for half a minute.
+          # Over TCP, not the socket: on a new volume the image first runs a
+          # temporary server on its socket alone while it loads the init
+          # files, and a socket check passed against that, so the app was
+          # started against a database that then restarted.
           readinessProbe:
             exec:
-              command: ["sh", "-c", "pg_isready -U psells -d psells"]
+              command: ["sh", "-c", "pg_isready -h 127.0.0.1 -U psells -d psells"]
             periodSeconds: 5
           livenessProbe:
             exec:
-              command: ["sh", "-c", "pg_isready -U psells -d psells"]
+              command: ["sh", "-c", "pg_isready -h 127.0.0.1 -U psells -d psells"]
             initialDelaySeconds: 30
             periodSeconds: 10
             failureThreshold: 3

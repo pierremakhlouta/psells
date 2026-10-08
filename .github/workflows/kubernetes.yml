@@ -61,18 +61,22 @@ jobs:
         run: |
           set -euo pipefail
           site=https://psells.localhost:9443
-          # A pod is Ready a moment before the Service sends it connections,
-          # so a refused or reset connection is tried again, ten times a second
-          # apart. Without --fail an HTTP status is an answer, never retried.
           ask() {
             curl -sS --cacert "$RUNNER_TEMP/ca/ca.crt" \
-              --resolve psells.localhost:9443:127.0.0.1 \
-              --retry 10 --retry-delay 1 --retry-all-errors "$@"
+              --resolve psells.localhost:9443:127.0.0.1 "$@"
           }
           check() {
             echo "$1: $2"
             [ "$2" = "$3" ] || { echo "expected $3"; exit 1; }
           }
+          # A pod is Ready a moment before the Service sends it connections,
+          # so first wait, up to twenty seconds, until anything answers at
+          # all. Only no answer (000) is waited out; curl's own --retry would
+          # also retry a 503 or a 504, and hide the very answer being checked.
+          for _ in $(seq 20); do
+            [ "$(ask -o /dev/null -w '%{http_code}' "$site/login" 2> /dev/null)" != 000 ] && break
+            sleep 1
+          done
 
           check "login page" "$(ask -o /dev/null -w '%{http_code}' "$site/login")" 200
           headers=$(ask -o /dev/null -D - "$site/login")
@@ -126,10 +130,20 @@ jobs:
           products=$(kube exec database-0 -- psql -U psells -d psells -tAc 'SELECT count(*) FROM products')
           echo "products after the restart: $products"
           [ "$products" = 9 ]
-          # Again tried while the Service catches up with the new pod.
-          curl -sSf --cacert "$RUNNER_TEMP/ca/ca.crt" --resolve psells.localhost:9443:127.0.0.1 \
-            --retry 10 --retry-delay 1 --retry-all-errors \
-            -o /dev/null -w 'login page after the restart: %{http_code}\n' https://psells.localhost:9443/login
+          # Waited out while the Service catches up with the new pod, as
+          # before the first checks, then asked once.
+          ask() {
+            curl -sS --cacert "$RUNNER_TEMP/ca/ca.crt" \
+              --resolve psells.localhost:9443:127.0.0.1 \
+              -o /dev/null -w '%{http_code}' https://psells.localhost:9443/login
+          }
+          for _ in $(seq 20); do
+            [ "$(ask 2> /dev/null)" != 000 ] && break
+            sleep 1
+          done
+          code=$(ask)
+          echo "login page after the restart: $code"
+          [ "$code" = 200 ]
 
       - name: Show the cluster
         if: failure()
