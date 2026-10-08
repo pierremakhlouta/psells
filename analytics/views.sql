@@ -184,3 +184,16 @@ SELECT products::bigint, products_in_stock::bigint,
        first_sale, last_sale,
        (SELECT finished_at FROM etl_run)                AS built_at
 FROM stock, money, paid;
+
+
+-- What the app reads, and all it reads: these five views, as psells_reader,
+-- given again here because the views were just made again. Only if the role
+-- exists, so a warehouse without the analytics page builds the same way.
+DO $$
+BEGIN
+    IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'psells_reader') THEN
+        GRANT SELECT ON sales_by_month, sales_by_week, category_performance,
+            product_performance, kpis TO psells_reader;
+    END IF;
+END
+$$;

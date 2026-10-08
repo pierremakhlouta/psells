@@ -214,6 +214,7 @@ def test_the_env_example_names_both_analytics_passwords_with_placeholders():
 
     assert "PSELLS_WAREHOUSE_PASSWORD=change-me\n" in example
     assert "PSELLS_ETL_PASSWORD=change-me\n" in example
+    assert "PSELLS_READER_PASSWORD=change-me\n" in example
 
 
 # The analytics image -----------------------------------------------------------
@@ -304,3 +305,145 @@ def test_the_etl_reads_as_the_read_only_role_and_writes_nothing_of_its_own():
     assert etl_service["cap_drop"] == ["ALL"]
     assert etl_service["security_opt"] == ["no-new-privileges:true"]
     assert "ports" not in etl_service and "volumes" not in etl_service
+
+
+# The warehouse's reader --------------------------------------------------------
+
+READER_SQL = os.path.join(ANALYTICS_DIR, "reader_role.sql")
+READER_SCRIPT = os.path.join(ANALYTICS_DIR, "create-reader-role.sh")
+VIEWS_SQL = os.path.join(ANALYTICS_DIR, "views.sql")
+WAREHOUSE_SQL = os.path.join(ANALYTICS_DIR, "warehouse.sql")
+VIEWS = {"sales_by_month", "sales_by_week", "category_performance",
+         "product_performance", "kpis"}
+WAREHOUSE_TABLES = {"dim_product", "dim_date", "fact_sales", "fact_returns",
+                    "fact_payments", "etl_run"}
+
+
+def drop_warehouse(connection):
+    """warehouse.sql's DROP statements alone."""
+    drops = read(WAREHOUSE_SQL).split("CREATE TABLE")[0]
+    connection.execute(drops)
+
+
+@pytest.fixture
+def reader():
+    """A connection as psells_reader to a warehouse built and committed in
+    the test database, which is dropped again afterwards. Committed, because
+    the reader is another connection and cannot see an open transaction."""
+    from analytics import etl
+    from datetime import datetime, timezone
+
+    owner = psycopg.connect(TEST_DATABASE_URL, autocommit=True,
+                            row_factory=psycopg.rows.dict_row)
+    owner.execute(read(READER_SQL))
+    owner.execute(sql.SQL("ALTER ROLE psells_reader LOGIN PASSWORD {}").format(
+        sql.Literal(INVENTED_PASSWORD)))
+    data = etl.extract(owner)
+    etl.load(owner, etl.transform(data), data["totals"],
+             datetime(2026, 10, 8, tzinfo=timezone.utc))
+    url = make_conninfo(TEST_DATABASE_URL, user="psells_reader",
+                        password=INVENTED_PASSWORD)
+    try:
+        with psycopg.connect(url, autocommit=True,
+                             row_factory=psycopg.rows.dict_row) as connection:
+            yield connection, owner
+    finally:
+        drop_warehouse(owner)
+        owner.close()
+
+
+def test_the_reader_reads_every_view(reader):
+    connection, _ = reader
+    for name in VIEWS:
+        assert count(connection, name) >= 0, name
+
+
+def test_the_reader_reads_no_table_of_the_warehouse_or_the_business(reader):
+    connection, _ = reader
+    for name in WAREHOUSE_TABLES | {"products", "sales", "users", "sessions"}:
+        with pytest.raises(errors.InsufficientPrivilege):
+            count(connection, name)
+
+
+def test_the_reader_cannot_write_even_with_read_only_switched_off(reader):
+    connection, _ = reader
+    # Read-only by default, so a write fails with a sentence saying why.
+    with pytest.raises(errors.ReadOnlySqlTransaction):
+        connection.execute("CREATE TABLE stolen (x int)")
+    connection.execute("SET default_transaction_read_only = off")
+    for statement in ("CREATE TABLE stolen (x int)",
+                      "DELETE FROM fact_sales",
+                      "CREATE VIEW stolen AS SELECT 1"):
+        with pytest.raises(errors.InsufficientPrivilege):
+            connection.execute(statement)
+
+
+def test_the_reader_has_exactly_the_views_and_keeps_them_across_a_rebuild(reader):
+    from analytics import etl
+    from datetime import datetime, timezone
+
+    connection, owner = reader
+    # A grant added by hand is taken away by running the role file again,
+    # straight away, not only when the next rebuild replaces the table.
+    owner.execute("GRANT SELECT ON fact_sales TO psells_reader")
+    owner.execute(read(READER_SQL))
+    with pytest.raises(errors.InsufficientPrivilege):
+        count(connection, "fact_sales")
+    data = etl.extract(owner)
+    etl.load(owner, etl.transform(data), data["totals"],
+             datetime(2026, 10, 9, tzinfo=timezone.utc))
+    grants = owner.execute(
+        "SELECT table_name, privilege_type FROM "
+        "information_schema.role_table_grants WHERE grantee = 'psells_reader'"
+    ).fetchall()
+
+    assert {(g["table_name"], g["privilege_type"]) for g in grants} == {
+        (name, "SELECT") for name in VIEWS}
+    (kpis,) = connection.execute("SELECT built_at FROM kpis").fetchall()
+    assert kpis["built_at"].day == 9
+
+
+def test_views_sql_grants_exactly_the_views_it_makes():
+    import re
+
+    text = read(VIEWS_SQL)
+    made = set(re.findall(r"^CREATE VIEW (\w+)", text, re.M))
+    granted = re.search(r"GRANT SELECT ON ([^;]+?) TO psells_reader;", text,
+                        re.S).group(1)
+
+    assert made == VIEWS
+    assert {name.strip() for name in granted.split(",")} == made
+    assert "IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'psells_reader')" in text
+
+
+def test_the_reader_script_refuses_without_a_password_and_keeps_it_off_argv(tmp_path):
+    project = tmp_path / "psells"
+    (project / "analytics").mkdir(parents=True)
+    for name in ("reader_role.sql", "create-reader-role.sh"):
+        (project / "analytics" / name).write_text(
+            read(os.path.join(ANALYTICS_DIR, name)))
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    calls = tmp_path / "calls"
+    docker = bin_dir / "docker"
+    docker.write_text(f'#!/bin/sh\necho "$*" >> "{calls}"\ncat >> "{calls}"\n')
+    docker.chmod(0o755)
+    environment = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}")
+    environment.pop("PSELLS_READER_PASSWORD", None)
+
+    refused = subprocess.run(
+        ["bash", str(project / "analytics" / "create-reader-role.sh")],
+        capture_output=True, text=True, env=environment)
+    assert refused.returncode == 1 and not calls.exists()
+    assert "No PSELLS_READER_PASSWORD in .env" in refused.stderr
+
+    accepted = subprocess.run(
+        ["bash", str(project / "analytics" / "create-reader-role.sh")],
+        capture_output=True, text=True,
+        env=dict(environment, PSELLS_READER_PASSWORD=INVENTED_PASSWORD))
+    recorded = calls.read_text()
+    assert accepted.returncode == 0, accepted.stderr
+    assert INVENTED_PASSWORD not in recorded + accepted.stdout + accepted.stderr
+    assert "exec -T -e PSELLS_READER_PASSWORD warehouse psql" in recorded
+    assert "-f " + str(project / "compose.analytics.yaml") in recorded
+    assert read(READER_SQL) in recorded
