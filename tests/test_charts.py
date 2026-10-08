@@ -91,7 +91,9 @@ def test_horizontal_bars_scale_to_the_largest_and_draw_nothing_for_none():
     chart = charts.horizontal_bars(["Watches", "Hats", "Bags"], [57000, 7600, 0])
     widths = [bar["width"] for bar in chart["bars"]]
 
-    assert widths[0] == chart["width"] - 160 - charts.RIGHT
+    assert widths[0] == chart["width"] - 160 - charts.VALUE_WIDTH
+    # The longest bar's value still fits inside the chart.
+    assert chart["bars"][0]["value_x"] + charts.VALUE_WIDTH - 6 <= chart["width"]
     assert widths[1] == pytest.approx(widths[0] * 7600 / 57000, abs=0.1)
     assert widths[2] == 0
     assert chart["height"] == 3 * 26

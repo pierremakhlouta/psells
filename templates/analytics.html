@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+
+{% block title %}Analytics · PSells{% endblock %}
+
+{#- The analysis, from the analytics warehouse's views. Every figure arrives as
+    a view gave it, every position as charts.py worked it out; this template
+    places them and formats them with money and percent, and does no
+    arithmetic (tests/test_web.py reads every template to hold it to that).
+    The charts are SVG in the page, because no page runs scripts; a bar's or a
+    point's <title> is the exact figure, shown on hover. -#}
+
+{% block content %}
+<h1>Analytics</h1>
+
+{% if unavailable %}
+<p class="empty">{{ unavailable }}</p>
+{% else %}
+<p class="lead">From the analytics warehouse{% if built_at %}, built {{ built_at }}{% endif %}. Rebuild it to include records made since.</p>
+
+<dl class="kpis" aria-label="Headline figures">
+  <div><dt>Revenue</dt><dd class="num">{{ kpis.revenue_cents|money }}</dd></div>
+  <div><dt>Profit</dt><dd class="num">{{ kpis.profit_cents|money }}</dd></div>
+  <div><dt>Margin</dt><dd class="num">{{ kpis.margin|percent }}</dd></div>
+  <div><dt>Sell-through</dt><dd class="num">{{ kpis.sell_through|percent }}</dd></div>
+  <div><dt>Units sold</dt><dd class="num">{{ kpis.sold }} of {{ kpis.received }}</dd></div>
+  <div><dt>Products in stock</dt><dd class="num">{{ kpis.products_in_stock }} of {{ kpis.products }}</dd></div>
+  <div><dt>Balance owing</dt><dd class="num">{{ kpis.balance_owing_cents|money }}</dd></div>
+</dl>
+
+<section class="chart" aria-labelledby="monthly-heading">
+  <h2 id="monthly-heading">Revenue and profit by month</h2>
+  <p class="legend"><span class="key revenue"></span> Revenue <span class="key profit"></span> Profit</p>
+  {% if monthly.bars %}
+  <svg viewBox="0 0 {{ monthly.width }} {{ monthly.height }}" role="img" aria-label="Revenue and profit by month, as bars">
+    {% for tick in monthly.ticks %}
+    <line class="grid" x1="{{ monthly.left }}" x2="{{ monthly.right }}" y1="{{ tick.y }}" y2="{{ tick.y }}"/>
+    <text class="tick" x="{{ monthly.tick_x }}" y="{{ tick.label_y }}" text-anchor="end">{{ tick.value|money }}</text>
+    {% endfor %}
+    <line class="zero" x1="{{ monthly.left }}" x2="{{ monthly.right }}" y1="{{ monthly.zero_y }}" y2="{{ monthly.zero_y }}"/>
+    {% for bar in monthly.bars %}
+    <rect class="{% if bar.series == 0 %}revenue{% else %}profit{% endif %}" x="{{ bar.x }}" y="{{ bar.y }}" width="{{ bar.width }}" height="{{ bar.height }}"><title>{{ bar.label }}: {% if bar.series == 0 %}revenue{% else %}profit{% endif %} {{ bar.value|money }}</title></rect>
+    {% endfor %}
+    {% for label in monthly.labels %}
+    <text x="{{ label.x }}" y="{{ label.y }}" text-anchor="middle">{{ label.text }}</text>
+    {% endfor %}
+  </svg>
+  {% else %}
+  <p class="empty">No sales yet.</p>
+  {% endif %}
+</section>
+
+<section class="chart" aria-labelledby="cumulative-heading">
+  <h2 id="cumulative-heading">Revenue so far</h2>
+  {% if cumulative.dots %}
+  <svg viewBox="0 0 {{ cumulative.width }} {{ cumulative.height }}" role="img" aria-label="Cumulative revenue by month, as a line">
+    {% for tick in cumulative.ticks %}
+    <line class="grid" x1="{{ cumulative.left }}" x2="{{ cumulative.right }}" y1="{{ tick.y }}" y2="{{ tick.y }}"/>
+    <text class="tick" x="{{ cumulative.tick_x }}" y="{{ tick.label_y }}" text-anchor="end">{{ tick.value|money }}</text>
+    {% endfor %}
+    <polyline class="line" points="{{ cumulative.points }}"/>
+    {% for dot in cumulative.dots %}
+    <circle class="dot" cx="{{ dot.x }}" cy="{{ dot.y }}" r="3.5"><title>{{ dot.label }}: {{ dot.value|money }} so far</title></circle>
+    {% endfor %}
+    {% for label in cumulative.labels %}
+    <text x="{{ label.x }}" y="{{ label.y }}" text-anchor="middle">{{ label.text }}</text>
+    {% endfor %}
+  </svg>
+  {% else %}
+  <p class="empty">No sales yet.</p>
+  {% endif %}
+</section>
+
+<section class="chart" aria-labelledby="categories-heading">
+  <h2 id="categories-heading">Categories by revenue</h2>
+  {% if category_bars.bars %}
+  <svg viewBox="0 0 {{ category_bars.width }} {{ category_bars.height }}" role="img" aria-label="Revenue by category, as horizontal bars">
+    {% for bar in category_bars.bars %}
+    <text x="{{ category_bars.label_x }}" y="{{ bar.label_y }}" text-anchor="end">{{ bar.label }}</text>
+    <rect class="revenue" x="{{ bar.x }}" y="{{ bar.y }}" width="{{ bar.width }}" height="{{ bar.height }}"><title>{{ bar.label }}: {{ bar.value|money }}</title></rect>
+    <text class="tick" x="{{ bar.value_x }}" y="{{ bar.label_y }}">{{ bar.value|money }}</text>
+    {% endfor %}
+  </svg>
+  {% endif %}
+  <table>
+    <thead>
+      <tr><th>Category</th><th class="num">Products</th><th class="num">Sold</th><th class="num">Received</th><th class="num">Revenue</th><th class="num">Profit</th><th class="num">Margin</th><th class="num">Sell-through</th><th class="num">Share of revenue</th></tr>
+    </thead>
+    <tbody>
+      {% for category in categories %}
+      <tr>
+        <td>{{ category.category }}</td>
+        <td class="num">{{ category.products }}</td>
+        <td class="num">{{ category.sold }}</td>
+        <td class="num">{{ category.received }}</td>
+        <td class="num">{{ category.revenue_cents|money }}</td>
+        <td class="num">{{ category.profit_cents|money }}</td>
+        <td class="num">{{ category.margin|percent }}</td>
+        <td class="num">{{ category.sell_through|percent }}</td>
+        <td class="num">{{ category.revenue_share|percent }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="chart" aria-labelledby="top-heading">
+  <h2 id="top-heading">Most profitable products</h2>
+  <table>
+    <thead>
+      <tr><th class="num">Rank</th><th>Product</th><th>Category</th><th class="num">Sold</th><th class="num">Revenue</th><th class="num">Profit</th><th class="num">Margin</th></tr>
+    </thead>
+    <tbody>
+      {% for product in top %}
+      <tr>
+        <td class="num">{{ product.rank_by_profit }}</td>
+        <td>{{ product.name }}</td>
+        <td>{{ product.category }}</td>
+        <td class="num">{{ product.sold }}</td>
+        <td class="num">{{ product.revenue_cents|money }}</td>
+        <td class="num">{{ product.profit_cents|money }}</td>
+        <td class="num">{{ product.margin|percent }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="chart" aria-labelledby="lowest-heading">
+  <h2 id="lowest-heading">Lowest sell-through</h2>
+  <p class="lead">The products that have sold the smallest share of what came in; among equal shares, the most stock waiting first.</p>
+  <table>
+    <thead>
+      <tr><th>Product</th><th>Category</th><th class="num">Sold</th><th class="num">Received</th><th class="num">Available</th><th class="num">Sell-through</th></tr>
+    </thead>
+    <tbody>
+      {% for product in lowest %}
+      <tr>
+        <td>{{ product.name }}</td>
+        <td>{{ product.category }}</td>
+        <td class="num">{{ product.sold }}</td>
+        <td class="num">{{ product.received }}</td>
+        <td class="num">{{ product.available }}</td>
+        <td class="num">{{ product.sell_through|percent }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+{% endblock %}

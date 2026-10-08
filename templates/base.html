@@ -208,6 +208,54 @@
       background: #ffffff;
       cursor: pointer;
     }
+
+    /* The analytics page: headline figures as tiles, and its SVG charts,
+       coloured here by class because no style attribute is allowed. */
+    .kpis {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 0.75rem;
+      margin: 0 0 1.5rem;
+    }
+    .kpis div {
+      padding: 0.6rem 0.9rem;
+      background: #ffffff;
+      border: 1px solid #d0d7de;
+      border-radius: 6px;
+    }
+    .kpis dt { color: #656d76; font-size: 0.85rem; }
+    .kpis dd { margin: 0.2rem 0 0; font-size: 1.25rem; font-weight: 600; text-align: left; }
+    .chart { margin: 0 0 2rem; }
+    .chart h2 { font-size: 1.1rem; margin: 0 0 0.5rem; }
+    .chart svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      margin-bottom: 0.75rem;
+      background: #ffffff;
+      border: 1px solid #d0d7de;
+      border-radius: 6px;
+    }
+    .chart text { font-size: 11px; fill: #1f2328; }
+    .chart text.tick { fill: #656d76; }
+    .chart .grid { stroke: #eaeef2; }
+    .chart .zero { stroke: #8c959f; }
+    .chart .revenue { fill: #0969da; }
+    .chart .profit { fill: #1a7f37; }
+    .chart .line { fill: none; stroke: #8250df; stroke-width: 2; }
+    .chart .dot { fill: #8250df; }
+    .legend { margin: 0 0 0.5rem; color: #656d76; font-size: 0.85rem; }
+    .legend .key {
+      display: inline-block;
+      width: 0.8rem;
+      height: 0.8rem;
+      margin: 0 0.25rem 0 0.75rem;
+      vertical-align: -0.1rem;
+      border-radius: 2px;
+    }
+    .legend .key:first-child { margin-left: 0; }
+    .legend .key.revenue { background: #0969da; }
+    .legend .key.profit { background: #1a7f37; }
   </style>
 </head>
 <body>
@@ -222,6 +270,7 @@
       <a href="{{ url_for('sales_history_page') }}">Sales</a>
       <a href="{{ url_for('returns_history_page') }}">Returns</a>
       <a href="{{ url_for('payments_history_page') }}">Payments</a>
+      <a href="{{ url_for('analytics_page') }}">Analytics</a>
       <a href="{{ url_for('add_product_page') }}">Add product</a>
       <a href="{{ url_for('add_payment_page') }}">Record payment</a>
       {#- A form, not a link: logging out is a POST. -#}

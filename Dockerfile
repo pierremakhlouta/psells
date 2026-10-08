@@ -47,7 +47,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # is in the folder, and this folder holds the real data. Naming each file means
 # a new data file can never reach an image by accident; .dockerignore keeps the
 # data out of the build context as well. tests/test_container.py holds both.
-COPY psells.py api.py web.py dependencies.py cross_site.py auth.py set_password.py ./
+COPY psells.py api.py web.py dependencies.py cross_site.py auth.py set_password.py warehouse.py charts.py ./
 COPY templates/ templates/
 
 # COPY keeps each file's permissions from the machine that built the image and

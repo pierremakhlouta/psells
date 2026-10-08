@@ -7,7 +7,10 @@ Three rules hold this file to that. They are recorded in DECISIONS.md, and
 tests/test_web.py enforces them wherever a test can:
 
 1. A route that renders a page calls psells functions and nothing else. No
-   arithmetic on money, stock or partner share happens here.
+   arithmetic on money, stock or partner share happens here. The analytics
+   page is the one exception in where it reads: warehouse.py, for the
+   warehouse's views, and charts.py, to place them; still nothing is worked
+   out here.
 2. Wherever a page shows a figure the API also serves, a test asserts that the
    two agree.
 3. Templates, and the filters they use, format. They never compute.
@@ -29,8 +32,12 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
+import psycopg
+
 import auth
+import charts
 import psells
+import warehouse
 from dependencies import (
     SESSION_COOKIE, Connection, Session, check_form_token,
     require_page_session)
@@ -56,6 +63,8 @@ templates = Jinja2Templates(
 # The one money formatter, under a name a template can use. This is not a
 # second implementation: it is the function the command line prints with.
 templates.env.filters["money"] = psells.format_cents
+# And the one ratio formatter, for the analytics page's margins and shares.
+templates.env.filters["percent"] = psells.format_ratio
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -142,6 +151,62 @@ def inventory_page(request: Request, connection: Connection, q: str = "",
             "paid": payment_recorded,
         },
     )
+
+
+@router.get("/analytics", response_class=HTMLResponse)
+def analytics_page(request: Request):
+    """The analysis of the business, from the analytics warehouse.
+
+    Every figure is a row of one of the warehouse's views, read by
+    warehouse.py as its read-only role; charts.py places them as SVG, since no
+    page runs scripts. Nothing is worked out here: the month labels are
+    formatted and the view's columns picked out for the charts, nothing more.
+
+    Not set up here, as on the demo and the cluster for now, is a sentence
+    and a 200: nothing is wrong. Set up and not answering, or not built yet,
+    is the same page with a 503, as a page without its database is.
+    """
+    def unavailable(error, status_code):
+        return templates.TemplateResponse(
+            request, "analytics.html", {"unavailable": str(error)},
+            status_code=status_code)
+
+    try:
+        connection = warehouse.connect()
+    except warehouse.WarehouseNotSetUp as error:
+        return unavailable(error, 200)
+    except warehouse.WarehouseUnavailable as error:
+        return unavailable(error, 503)
+
+    try:
+        kpis = warehouse.kpis(connection)
+        months = warehouse.sales_by_month(connection)
+        categories = warehouse.category_performance(connection)
+        top = warehouse.top_by_profit(connection)
+        lowest = warehouse.lowest_sell_through(connection)
+    except psycopg.Error:
+        return unavailable("The analytics warehouse could not be read. It may "
+                           "not have been built yet.", 503)
+    finally:
+        connection.close()
+
+    labels = [month["month"].strftime("%b %Y") for month in months]
+    return templates.TemplateResponse(request, "analytics.html", {
+        "kpis": kpis,
+        "built_at": (kpis["built_at"].strftime("%-d %B %Y, %H:%M UTC")
+                     if kpis["built_at"] else None),
+        "monthly": charts.bar_chart(
+            labels, [[month["revenue_cents"] for month in months],
+                     [month["profit_cents"] for month in months]]),
+        "cumulative": charts.line_chart(
+            labels, [month["cumulative_revenue_cents"] for month in months]),
+        "categories": categories,
+        "category_bars": charts.horizontal_bars(
+            [category["category"] for category in categories],
+            [category["revenue_cents"] for category in categories]),
+        "top": top,
+        "lowest": lowest,
+    })
 
 
 @router.get("/out-of-stock", response_class=HTMLResponse)

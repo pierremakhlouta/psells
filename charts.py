@@ -94,10 +94,12 @@ def bar_chart(labels, series, width=720, height=260):
             })
         chart["labels"].append({"x": round(LEFT + index * group + group / 2, 1),
                                 "y": height - 8, "text": label})
-    chart["ticks"] = [{"y": y(value), "value": value} for value in ticks]
+    chart["ticks"] = [{"y": y(value), "label_y": round(y(value) + 4, 1),
+                       "value": value} for value in ticks]
     chart["zero_y"] = zero
     chart["left"] = LEFT
     chart["right"] = width - RIGHT
+    chart["tick_x"] = LEFT - 6
     return chart
 
 
@@ -120,23 +122,30 @@ def line_chart(labels, values, width=720, height=200):
                               "value": value})
         chart["labels"].append({"x": x, "y": height - 8, "text": label})
     chart["points"] = " ".join(f"{d['x']},{d['y']}" for d in chart["dots"])
-    chart["ticks"] = [{"y": y(value), "value": value} for value in ticks]
+    chart["ticks"] = [{"y": y(value), "label_y": round(y(value) + 4, 1),
+                       "value": value} for value in ticks]
     chart["left"] = LEFT
     chart["right"] = width - RIGHT
+    chart["tick_x"] = LEFT - 6
     return chart
 
 
+# Room after the longest horizontal bar for its value.
+VALUE_WIDTH = 100
+
+
 def horizontal_bars(labels, values, width=720, row=26, label_width=160):
-    """One horizontal bar per label, the longest for the largest value;
-    a value of 0 or less draws no bar."""
+    """One horizontal bar per label, the longest for the largest value, with
+    room after it for the value; a value of 0 or less draws no bar."""
     largest = max([value for value in values if value > 0], default=0)
-    plot_width = width - label_width - RIGHT
+    plot_width = width - label_width - VALUE_WIDTH
     bars = []
     for index, (label, value) in enumerate(zip(labels, values)):
         length = plot_width * value / largest if largest and value > 0 else 0
         bars.append({"x": label_width, "y": index * row + 4,
                      "width": round(length, 1), "height": row - 8,
                      "label_y": index * row + row / 2 + 4,
+                     "value_x": round(label_width + length + 6, 1),
                      "label": label, "value": value})
     return {"width": width, "height": len(labels) * row, "bars": bars,
             "label_x": label_width - 8}

@@ -247,6 +247,23 @@ def format_cents(cents, *, symbol=True):
     return f"{sign}{cents // 100}.{cents % 100:02d}"
 
 
+def format_ratio(ratio):
+    """Format a ratio as a percentage, for display only: 0.6123 is "61.2%".
+
+    The analytics warehouse's views give margins, sell-through and shares as
+    unrounded fractions, and this is the one place they become text: one
+    decimal place, half away from zero, through Decimal so a value such as
+    0.0005 is not lost to a float's representation. None, which a view gives
+    when there is nothing to divide by, is "n/a" rather than 0%: a month
+    without a sale has no margin, not a margin of nothing.
+    """
+    if ratio is None:
+        return "n/a"
+    percent = (Decimal(str(ratio)) * 100).quantize(
+        Decimal("0.1"), rounding=ROUND_HALF_UP)
+    return f"{percent}%"
+
+
 def parse_money(text):
     """Turn a typed dollar figure into a whole number of cents.
 

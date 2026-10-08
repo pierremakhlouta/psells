@@ -201,11 +201,18 @@ def test_the_warehouse_is_its_own_postgres_on_the_same_pinned_image():
     assert "pg_isready -h 127.0.0.1 " in " ".join(warehouse["healthcheck"]["test"])
 
 
-def test_the_real_stack_never_reads_an_analytics_variable():
+def test_the_real_stack_requires_no_analytics_variable():
     # Compose reads every variable in a file it is given, even for a service
-    # it is not starting; one required here would stop the real stack.
+    # it is not starting; one required here would stop the real stack, its
+    # login job, its backup and the demo's deploy.
+    import re
+
     text = read(COMPOSE)
-    assert "PSELLS_WAREHOUSE" not in text and "PSELLS_ETL" not in text
+    used = set(re.findall(r"\$\{(PSELLS_(?:WAREHOUSE|ETL|READER)\w*)(:?[-?])", text))
+    # The app's warehouse address is the one, and it is optional.
+    assert used == {("PSELLS_WAREHOUSE_URL", ":-")}
+    assert compose_file(COMPOSE)["services"]["app"]["environment"][
+        "PSELLS_WAREHOUSE_URL"] == "${PSELLS_WAREHOUSE_URL:-}"
     assert "warehouse" not in compose_file(COMPOSE)["services"]
 
 

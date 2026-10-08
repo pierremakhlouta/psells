@@ -21,6 +21,11 @@ class WarehouseUnavailable(Exception):
     """No warehouse to read, with a sentence the page can show."""
 
 
+class WarehouseNotSetUp(WarehouseUnavailable):
+    """No warehouse is configured here at all, which is not a failure: the
+    demo and the cluster have none yet."""
+
+
 def connect():
     """A read-only connection to the warehouse, as the page reads it.
 
@@ -30,7 +35,7 @@ def connect():
     """
     url = os.environ.get("PSELLS_WAREHOUSE_URL", "")
     if not url:
-        raise WarehouseUnavailable(
+        raise WarehouseNotSetUp(
             "No analytics warehouse is set up here, so there is nothing to "
             "show yet.")
     try:

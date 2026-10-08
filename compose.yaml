@@ -108,6 +108,11 @@ services:
       # ignores them. nginx's one address, nothing wider: whoever this names
       # can tell the app a request arrived over HTTPS.
       FORWARDED_ALLOW_IPS: "${PSELLS_NETWORK:-10.213.47}.10"
+      # The analytics page's warehouse, read as psells_reader, where there is
+      # one. Optional, with :- and never :?, because Compose reads every
+      # variable in this file: a stack without analytics, like the demo, has
+      # none, and the page says so.
+      PSELLS_WAREHOUSE_URL: "${PSELLS_WAREHOUSE_URL:-}"
     volumes:
       # The one file the application reads from disk, the default partner
       # percentage, mounted read-only: the container can read the rate and

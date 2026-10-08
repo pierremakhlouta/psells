@@ -1966,7 +1966,9 @@ ARITHMETIC = (nodes.Add, nodes.Sub, nodes.Mul, nodes.Div, nodes.FloorDiv,
 
 # Every filter a template may use. Adding one here is a decision, and the
 # question to ask is whether it formats or computes.
-ALLOWED_FILTERS = {"money"}
+# percent is the analytics page's, psells.format_ratio: it turns a view's
+# fraction into text, as money turns cents into text, and works out nothing.
+ALLOWED_FILTERS = {"money", "percent"}
 
 
 def every_template():
@@ -1997,6 +1999,7 @@ def test_there_are_templates_to_check():
     assert "record_delete.html" in names
     assert "record_not_found.html" in names
     assert "macros.html" in names
+    assert "analytics.html" in names
 
 
 def test_no_template_does_arithmetic():
