@@ -9,8 +9,11 @@
 #
 # Both images are the ones CI scanned and published for one commit, pinned by
 # digest; the tag beside each digest names that commit and is ignored when the
-# image is pulled. Taken on 7 October 2026 with docker buildx imagetools
-# inspect. A test holds the two to the same commit.
+# image is pulled. Taken on 8 October 2026 with docker buildx imagetools
+# inspect, for the commit that added the analytics page and so changed the
+# style block whose hash nginx's headers carry: the app's image and nginx's
+# files must agree on it, and the Kubernetes workflow checks they do. A test
+# holds the two to the same commit.
 #
 # nginx runs the same nginx.conf and snippets as the Compose stack, and the
 # Mac's site folder, nginx/sites/localhost: the same name, psells.localhost,
@@ -69,7 +72,7 @@ spec:
           hostnames: ["app"]
       containers:
         - name: app
-          image: ghcr.io/pierremakhlouta/psells:307d404b5748f77e2231d5b65aaa79f112e040ff@sha256:d2125bfe03faeccc2988b35f6e86c7af0e50a2bf185095db07ff42884262027e
+          image: ghcr.io/pierremakhlouta/psells:3065fd349bc3435f0dc83c29dbdfed20baa2d107@sha256:ef84e53b1d13f84cf9dcd354e9b0a7dcd89321312a3930c819c755d53792bde1
           # The image's own command, but on the pod's loopback only.
           command: ["uvicorn", "api:app", "--host", "127.0.0.1", "--port", "8000"]
           env:
@@ -122,7 +125,7 @@ spec:
               mountPath: /tmp
 
         - name: nginx
-          image: ghcr.io/pierremakhlouta/psells:nginx-307d404b5748f77e2231d5b65aaa79f112e040ff@sha256:694ee87df67fe44555df33c10acabd6c9ab6233df8f60537664c76fbd7019284
+          image: ghcr.io/pierremakhlouta/psells:nginx-3065fd349bc3435f0dc83c29dbdfed20baa2d107@sha256:f64653c8aeed3c889267b21bae1565f6df9f6e2210e30f6cd58adf4af45047fb
           ports:
             - name: https
               containerPort: 8443

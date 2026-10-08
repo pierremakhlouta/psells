@@ -82,6 +82,16 @@ jobs:
           headers=$(ask -o /dev/null -D - "$site/login")
           grep -qi '^content-security-policy: default-src' <<< "$headers"
           grep -qi '^strict-transport-security:' <<< "$headers"
+          # The page's one style block must hash to what the policy allows:
+          # the app's image brings the block and the repository's nginx files
+          # the hash, and if the two differ the browser shows a page without
+          # its styles while every status code says it is fine.
+          served=$(ask "$site/login" | python3 -c '
+          import base64, hashlib, re, sys
+          block = re.search(r"<style>(.*?)</style>", sys.stdin.read(), re.S).group(1)
+          print("sha256-" + base64.b64encode(hashlib.sha256(block.encode()).digest()).decode())')
+          allowed=$(grep -i '^content-security-policy:' <<< "$headers" | grep -o "sha256-[A-Za-z0-9+/=]*")
+          check "style hash" "$served" "$allowed"
           # The Host reaches the app with its port, so redirects stay on 9443.
           check "redirect" "$(ask -o /dev/null -w '%{redirect_url}' "$site/")" "$site/login"
           # No other name is answered.

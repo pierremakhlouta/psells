@@ -502,3 +502,15 @@ def test_ci_checks_up_sh_changes_nothing_and_both_pods_are_replaced():
     assert "--retry" not in kill
     assert '[ "$(ask 2> /dev/null)" != 000 ] && break' in kill
     assert '[ "$code" = 200 ]' in kill
+
+
+def test_ci_checks_the_served_style_block_hashes_to_what_the_policy_allows():
+    # The pinned app image brings the style block and the repository's nginx
+    # files bring its hash; a mismatch serves pages without their styles while
+    # every status code is fine.
+    _, steps = workflow_steps()
+    ask = steps["Ask PSells what a browser would"]["run"]
+
+    assert 'block = re.search(r"<style>(.*?)</style>", sys.stdin.read(), re.S).group(1)' in ask
+    assert "hashlib.sha256(block.encode())" in ask
+    assert 'check "style hash" "$served" "$allowed"' in ask
