@@ -1154,3 +1154,28 @@ calls only, not every detail, and no specific business figures.
   had a Power BI dashboard, but Power BI Desktop does not run on a Mac, and a
   page in PSells can be seen on the demonstration. No page runs scripts, so
   its charts will be SVG drawn on the server.
+
+- **Each analytics figure is worked out once, in a warehouse view.** Margin,
+  sell-through, shares and ranks are new figures psells has no answer for, so
+  `analytics/views.sql` is their one implementation, and whatever shows them
+  reads the views and works out nothing. A view that needs one of psells'
+  own rules, such as whether a product is in stock, takes psells' answer,
+  carried in by the ETL, rather than restating it in SQL.
+
+- **Margin is summed profit over summed revenue; sell-through is units sold
+  over units received.** A month's or a category's margin is its total
+  profit over its total revenue, never an average of each sale's, which
+  would weigh a small sale like a large one. A unit returned to the partner
+  counts as not sold, the usual retail meaning. Ratios are left as unrounded
+  fractions and are empty where there is nothing to divide by; rounding is
+  for whatever displays them.
+
+- **No average sale price, for now.** It would be a fractional number of
+  cents, and PSells rounds money in one place only, where a percentage
+  becomes a cut. It waits until something that shows the analysis needs it
+  and the rounding can be decided.
+
+- **No inventory aging, for now.** It needs the date each product came in,
+  and products have none; working it out from sales would be wrong for
+  exactly the products it is about, the ones that never sold. An intake date
+  is a change to the business data model, left for later.

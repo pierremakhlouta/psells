@@ -469,6 +469,12 @@ business database stores 0, and a `CHECK` keeps the two in step. Notes are not
 copied. A run commits only if the warehouse adds up to all nine dashboard
 figures.
 
+Over the tables, `analytics/views.sql` makes five views, the one place the
+analysis's own figures are worked out: margin (summed profit over summed
+revenue), sell-through (units sold over units received), shares and ranks.
+Ratios are unrounded fractions, NULL where the denominator is zero.
+`dim_product.in_stock` is psells' own answer, from `in_stock_products`.
+
 The ETL reads the business database as `psells_etl`, a role made by
 `analytics/etl_role.sql` that can only `SELECT` from `products`, `sales`,
 `returns`, `payments` and `products_view`.

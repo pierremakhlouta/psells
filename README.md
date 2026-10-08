@@ -826,7 +826,19 @@ use invented data.
   with each sale's total, partner cut and profit, `fact_returns`,
   `fact_payments`, and `etl_run`, which says when it was built. A product
   discontinued at retail has no retail price there, rather than the 0 the
-  business database stores, so averages leave it out. Notes are left out.
+  business database stores, so averages leave it out. Whether a product is
+  in stock is psells' own answer. Notes are left out.
+- **The views**, in `analytics/views.sql`, answer the business questions once,
+  for whatever shows them: `sales_by_month` (every month, gaps as zeros, with
+  a running total and the change from the month before), `sales_by_week` (by
+  ISO week), `category_performance` (stock, revenue, margin, sell-through and
+  share of revenue), `product_performance` (every product, sold or not,
+  ranked by units, revenue and profit, overall and within its category) and
+  `kpis` (one row of headline figures and when they were built). Margin is
+  summed profit over summed revenue; sell-through is units sold over units
+  received. Ratios are fractions, unrounded, and empty where there is nothing
+  to divide by. The ETL makes the views after each load, in the same
+  transaction.
 
 Set up once, from the project folder: add two passwords to `.env`, each made
 with `openssl rand -hex 24` (`.env.example` names them), and create the
@@ -863,7 +875,7 @@ database it is pointed at, so it refuses any whose name does not end in
 Every warning is an error (`pytest.ini`), apart from one known deprecation in
 Starlette's test client on Python 3.14, matched on its exact message.
 
-Twenty-three files, and the split is deliberate, so a red run says what kind of
+Twenty-four files, and the split is deliberate, so a red run says what kind of
 thing broke before you read a line of it.
 
 `test_domain.py` covers everything in `psells.py` that has no input or output:
@@ -997,6 +1009,13 @@ rather than adding, and a warehouse that does not add up being refused with
 the last one kept. It also holds the ETL to reading through psells, in one
 read-only snapshot, and to printing counts only.
 
+`test_views.py` builds invented records with a month and a category that sold
+nothing, an unsold product and a tie, has the ETL build the warehouse, and
+compares every view with psells' own answers: sums by month, week and
+category, each product's stock and whether it is in stock, ranks that share
+ties and restart in each category, margins summed rather than averaged, and
+headline figures equal to the dashboard.
+
 `test_analytics.py` runs `analytics/etl_role.sql` in the test database and
 connects as the role it makes: it can read what psells' readers need, cannot
 read the login's tables or the corrections log, and cannot write, with or
@@ -1113,6 +1132,8 @@ Worth stating plainly rather than leaving to be discovered.
   the Ubuntu host number 101 is the `uuidd` service's account, which could
   therefore read it. Worth closing with user-namespace remapping if the server
   ever held anything real.
+- **No inventory aging.** Products carry no date of their own, so how long
+  stock has waited cannot be worked out; it needs an intake date first.
 - **The warehouse is rebuilt by hand.** It is as fresh as the last ETL run,
   which `etl_run` records; running it on a schedule comes later.
 - **The cluster runs the images it was pinned to.** `k8s/app.yaml` names one
@@ -1186,7 +1207,7 @@ all in code, and a deliberate outage was written up as an incident. The same
 images run on a local Kubernetes cluster from manifests in the repository,
 built from nothing and checked on every push. An ETL builds an analytics
 warehouse from the business records through psells' own functions, checked
-against the dashboard before it commits. Planned next are SQL views over the
-warehouse, an analytics page in PSells with charts, a forecast, and a
-scheduled refresh, then architecture documents for the whole system,
+against the dashboard before it commits, and SQL views over it answer the
+business questions. Planned next are an analytics page in PSells with
+charts, a forecast, and a scheduled refresh, then architecture documents for the whole system,
 carrying the same data model and business rules through each step.
