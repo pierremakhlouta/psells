@@ -244,7 +244,9 @@ def test_the_analytics_image_copies_named_files_only_and_runs_as_its_own_user():
 
     # Named files, never a folder, so nothing else can ride along.
     assert [l for l in lines if l.startswith("COPY ")] == [
-        "COPY requirements-analytics.txt .", "COPY psells.py ./"]
+        "COPY requirements-analytics.txt .",
+        "COPY psells.py analytics/etl.py analytics/warehouse.sql ./"]
+    assert lines[-1] == 'CMD ["python", "etl.py"]'
     assert "RUN useradd --create-home --uid 10002 analytics" in lines
     users = [l for l in lines if l.startswith("USER ")]
     assert users == ["USER analytics"]
@@ -282,3 +284,23 @@ def test_the_analytics_requirements_are_tested_audited_and_watched():
     assert {"package-ecosystem": "docker", "directory": "/analytics"}.items() <= {
         **next(u for u in dependabot["updates"]
                if u.get("directory") == "/analytics")}.items()
+
+
+def test_the_etl_reads_as_the_read_only_role_and_writes_nothing_of_its_own():
+    etl_service = compose_file(COMPOSE_ANALYTICS)["services"]["etl"]
+    environment = etl_service["environment"]
+
+    assert environment["PSELLS_DATABASE_URL"].startswith(
+        "postgresql://psells_etl:${PSELLS_ETL_PASSWORD:?")
+    assert environment["PSELLS_DATABASE_URL"].endswith("@db:5432/${POSTGRES_DB:?set POSTGRES_DB in .env}")
+    assert environment["PSELLS_WAREHOUSE_URL"].startswith(
+        "postgresql://psells_warehouse:${PSELLS_WAREHOUSE_PASSWORD:?")
+    assert environment["PSELLS_WAREHOUSE_URL"].endswith("@warehouse:5432/psells_warehouse")
+    # Only when named, never with an "up".
+    assert etl_service["profiles"] == ["etl"]
+    assert etl_service["build"] == {"context": ".",
+                                    "dockerfile": "analytics/Dockerfile"}
+    assert etl_service["read_only"] is True
+    assert etl_service["cap_drop"] == ["ALL"]
+    assert etl_service["security_opt"] == ["no-new-privileges:true"]
+    assert "ports" not in etl_service and "volumes" not in etl_service

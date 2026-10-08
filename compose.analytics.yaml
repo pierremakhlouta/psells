@@ -34,6 +34,32 @@ services:
       timeout: 5s
       retries: 15
 
+  # The ETL: one run, then gone.
+  #     docker compose -f compose.yaml -f compose.analytics.yaml run --rm etl
+  # Behind a profile, so an "up" never starts it; "run" names it directly.
+  etl:
+    profiles: ["etl"]
+    build:
+      context: .
+      dockerfile: analytics/Dockerfile
+    # Reads the business database as psells_etl, the read-only role that
+    # analytics/create-etl-role.sh makes, and writes the warehouse as its
+    # owner. Both passwords from .env; neither is in the image.
+    environment:
+      PSELLS_DATABASE_URL: "postgresql://psells_etl:${PSELLS_ETL_PASSWORD:?set PSELLS_ETL_PASSWORD in .env}@db:5432/${POSTGRES_DB:?set POSTGRES_DB in .env}"
+      PSELLS_WAREHOUSE_URL: "postgresql://psells_warehouse:${PSELLS_WAREHOUSE_PASSWORD:?set PSELLS_WAREHOUSE_PASSWORD in .env}@warehouse:5432/psells_warehouse"
+    # Writes nothing of its own: no file, no privilege, no port.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    depends_on:
+      db:
+        condition: service_healthy
+      warehouse:
+        condition: service_healthy
+
 volumes:
   # Derived data only: removing it loses nothing the next ETL run cannot make
   # again.

@@ -31,13 +31,12 @@ WORKDIR /app
 COPY requirements-analytics.txt .
 RUN pip install --no-cache-dir -r requirements-analytics.txt
 
-# psells.py for its readers, and only it: the ETL asks psells for every figure
-# rather than working one out.
-COPY psells.py ./
+# psells.py for its readers, the ETL, and the warehouse's tables: the ETL asks
+# psells for every figure rather than working one out.
+COPY psells.py analytics/etl.py analytics/warehouse.sql ./
 
 RUN chmod -R a+rX /app
 
 USER analytics
 
-# Until the ETL exists: prove the image imports what it needs.
-CMD ["python", "-c", "import pandas, psells; print('pandas', pandas.__version__)"]
+CMD ["python", "etl.py"]
