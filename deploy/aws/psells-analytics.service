@@ -1,0 +1,17 @@
+# Rebuilds the demo's analytics warehouse from its database. Started by
+# psells-analytics.timer; deploy/aws/deploy.sh installs both into
+# /etc/systemd/system. What it printed, counts only, and any failure, is in
+# journalctl -u psells-analytics.service; the analytics page says when the
+# warehouse is more than two hours old.
+
+[Unit]
+Description=Rebuild the PSells demo's analytics warehouse
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/psells
+# The ETL alone: it never starts or recreates the database, the app or the
+# proxy, and pulls nothing that deploy.sh has not already pulled.
+ExecStart=/usr/bin/docker compose -f compose.yaml -f compose.aws.yaml -f compose.analytics.yaml -f compose.aws-analytics.yaml run --rm --no-deps etl

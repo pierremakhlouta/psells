@@ -192,7 +192,8 @@ def test_deploy_installs_and_enables_every_unit_in_the_folder():
     enable = [line for line in text.splitlines()
               if line.startswith("systemctl enable --now")]
 
-    assert units == ["psells-backup.service", "psells-backup.timer",
+    assert units == ["psells-analytics.service", "psells-analytics.timer",
+                     "psells-backup.service", "psells-backup.timer",
                      "psells-certbot-renew.service", "psells-certbot-renew.timer"]
     for name in units:
         assert f"deploy/aws/{name}" in install, name
@@ -424,7 +425,7 @@ def test_deploy_points_the_app_at_rds_only_when_the_switch_made_a_host():
 def test_an_empty_database_gets_the_schema_then_the_sample_data():
     with open(SCRIPT) as script:
         text = script.read()
-    data = text[text.index('echo "== sample data"'):text.index('echo "== timers')]
+    data = text[text.index('echo "== sample data"'):text.index('echo "== analytics')]
 
     assert "live psql -q -v ON_ERROR_STOP=1 --single-transaction < schema.sql" in data
     assert data.index("schema.sql") < data.index("sample_data/seed.sql")
@@ -441,3 +442,111 @@ def test_the_backup_dumps_the_live_database_and_proves_it_in_the_container():
     assert 'in_db "pg_restore -U' in text
     # And the Mac guard still comes before .env is read.
     assert text.index("[ ! -e data/config.json ]") < text.index(". ./.env")
+
+
+# The analytics on the server ---------------------------------------------------
+
+ANALYTICS_SERVICE = os.path.join(DEPLOY_DIR, "psells-analytics.service")
+ANALYTICS_TIMER = os.path.join(DEPLOY_DIR, "psells-analytics.timer")
+AWS_ANALYTICS = os.path.join(psells.PROJECT_DIR, "compose.aws-analytics.yaml")
+SERVER_FILES = ("-f compose.yaml -f compose.aws.yaml "
+                "-f compose.analytics.yaml -f compose.aws-analytics.yaml")
+
+
+def read(path):
+    with open(path) as file:
+        return file.read()
+
+
+def test_the_servers_analytics_pull_their_image_under_a_memory_ceiling():
+    services = yaml.load(read(AWS_ANALYTICS), Loader=ComposeLoader)["services"]
+
+    assert services["warehouse"] == {"mem_limit": "128m"}
+    etl = services["etl"]
+    assert etl["image"].startswith("${PSELLS_ANALYTICS_IMAGE:?")
+    assert etl["mem_limit"] == "192m"
+    # Whichever database the app uses, RDS included, as the app's address does.
+    assert etl["environment"]["PSELLS_DATABASE_URL"] == (
+        "postgresql://psells_etl:${PSELLS_ETL_PASSWORD:?set PSELLS_ETL_PASSWORD in .env}"
+        "@${POSTGRES_HOST:-db}:5432/${POSTGRES_DB:?set POSTGRES_DB in .env}"
+        "${POSTGRES_URL_OPTIONS:-}")
+    assert etl["volumes"] == ["./data/rds-ca.pem:/config/rds-ca.pem:ro"]
+    # Built nowhere on the server: !reset clears the analytics file's build.
+    assert "build" in etl and etl["build"] is None
+    assert "build: !reset null" in read(AWS_ANALYTICS)
+
+
+def test_the_backup_and_renewal_files_name_no_analytics_service():
+    # They lay compose.aws.yaml over compose.yaml alone, where a warehouse or
+    # etl setting would name a service that does not exist.
+    services = set(yaml.load(read(os.path.join(psells.PROJECT_DIR, "compose.aws.yaml")),
+                             Loader=ComposeLoader)["services"])
+    assert not services & {"warehouse", "etl"}
+    assert "-f compose.yaml -f compose.aws.yaml run --rm certbot" in read(SERVICE)
+    assert 'docker compose -f compose.yaml -f compose.aws.yaml "$@"' in read(BACKUP)
+
+
+def test_deploy_runs_the_stack_with_its_analytics_and_the_published_etl():
+    text = read(SCRIPT)
+
+    assert ("docker compose -f compose.yaml -f compose.aws.yaml \\\n"
+            "        -f compose.analytics.yaml -f compose.aws-analytics.yaml") in text
+    assert 'docker buildx imagetools inspect "$REGISTRY_IMAGE:analytics-$commit"' in text
+    assert "PSELLS_ANALYTICS_IMAGE=$analytics_image\n" in text
+    assert text.index("analytics_published=") < text.index("cat > .env.new")
+
+
+def test_deploy_takes_the_three_analytics_passwords_from_parameter_store():
+    text = read(SCRIPT)
+
+    for name in ("warehouse_password", "etl_password", "reader_password"):
+        assert f'"$PARAMETERS/{name}") {name}="$value" ;;' in text
+    # Refused unless all three are there, before .env is written.
+    assert ('if [ -z "$warehouse_password" ] || [ -z "$etl_password" ] || '
+            '[ -z "$reader_password" ]; then\n'
+            '    fail "expected warehouse_password, etl_password and reader_password '
+            'under $PARAMETERS"') in text
+    assert text.index('[ -z "$reader_password" ]') < text.index("cat > .env.new")
+    for line in ("PSELLS_WAREHOUSE_PASSWORD=$warehouse_password",
+                 "PSELLS_ETL_PASSWORD=$etl_password",
+                 "PSELLS_READER_PASSWORD=$reader_password",
+                 "PSELLS_WAREHOUSE_URL=postgresql://psells_reader:$reader_password"
+                 "@warehouse:5432/psells_warehouse"):
+        assert line + "\n" in text, line
+
+
+def test_deploy_makes_both_roles_with_passwords_on_stdin_then_builds_the_warehouse():
+    text = read(SCRIPT)
+    analytics = text[text.index("== analytics"):text.index("== timers")]
+
+    # The ETL's role where the app's database is, through live(), RDS included.
+    assert "cat analytics/etl_role.sql" in analytics
+    assert ("printf \"ALTER ROLE psells_etl LOGIN PASSWORD '%s';\\n\" \"$etl_password\"\n"
+            "} | live psql -q -v ON_ERROR_STOP=1") in analytics
+    assert "cat analytics/reader_role.sql" in analytics
+    assert ("} | compose exec -T warehouse psql -q -v ON_ERROR_STOP=1 "
+            "-U psells_warehouse -d psells_warehouse") in analytics
+    # printf is a shell builtin: the password is in no process's arguments.
+    assert "-v etl_password" not in analytics and "PASSWORD=$" not in analytics
+    assert 'compose run --rm --no-deps etl || fail "the analytics ETL did not complete"' in analytics
+    # After the tables and sample records exist.
+    assert text.index("== sample data") < text.index("== analytics")
+
+
+def test_the_hourly_service_runs_the_etl_alone_where_deploy_puts_it():
+    service = configparser.ConfigParser()
+    service.read(ANALYTICS_SERVICE)
+    timer = configparser.ConfigParser()
+    timer.read(ANALYTICS_TIMER)
+
+    assert service["Service"]["WorkingDirectory"] == "/opt/psells"
+    assert service["Service"]["Type"] == "oneshot"
+    assert service["Service"]["ExecStart"] == (
+        f"/usr/bin/docker compose {SERVER_FILES} run --rm --no-deps etl")
+    assert timer["Timer"]["OnCalendar"] == "hourly"
+    assert timer["Timer"]["Persistent"] == "true"
+
+
+def test_live_picks_one_postgres_image_though_the_warehouse_runs_it_too():
+    assert ("image=$(compose config --images | grep '^postgres:' | sort -u)"
+            in read(os.path.join(DEPLOY_DIR, "live-database.sh")))

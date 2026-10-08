@@ -55,8 +55,12 @@ fail() {
 [ "$PROJECT_DIR" = /opt/psells ] ||
     fail "the project is at $PROJECT_DIR; the server keeps it at /opt/psells"
 
+# The stack with its analytics: the warehouse and the ETL, under the server's
+# own settings for them. The backup and the certificate renewal use the first
+# two files alone.
 compose() {
-    docker compose -f compose.yaml -f compose.aws.yaml "$@"
+    docker compose -f compose.yaml -f compose.aws.yaml \
+        -f compose.analytics.yaml -f compose.aws-analytics.yaml "$@"
 }
 
 echo "== image"
@@ -80,6 +84,12 @@ nginx_published=$(docker buildx imagetools inspect "$REGISTRY_IMAGE:nginx-$commi
 [[ "$nginx_published" =~ ^sha256:[0-9a-f]{64}$ ]] || fail "unexpected nginx digest for $commit: $nginx_published"
 nginx_image="$REGISTRY_IMAGE@$nginx_published"
 echo "$nginx_image"
+# And the analytics ETL's, under analytics-<commit>.
+analytics_published=$(docker buildx imagetools inspect "$REGISTRY_IMAGE:analytics-$commit" --format '{{.Manifest.Digest}}') ||
+    fail "no analytics image is published for $commit"
+[[ "$analytics_published" =~ ^sha256:[0-9a-f]{64}$ ]] || fail "unexpected analytics digest for $commit: $analytics_published"
+analytics_image="$REGISTRY_IMAGE@$analytics_published"
+echo "$analytics_image"
 
 echo "== .env from Parameter Store ($PARAMETERS)"
 # name<TAB>value, one per line. The password never reaches the terminal.
@@ -87,6 +97,7 @@ values=$(aws ssm get-parameters-by-path --region "$REGION" --path "$PARAMETERS" 
     --with-decryption --query 'Parameters[].[Name,Value]' --output text)
 
 user="" password="" database="" host=""
+warehouse_password="" etl_password="" reader_password=""
 while IFS=$'\t' read -r name value; do
     # Letters, digits, _ and - only, and dots in a host name, so nothing in a
     # value can break .env or the database address the app builds from it.
@@ -100,10 +111,18 @@ while IFS=$'\t' read -r name value; do
         "$PARAMETERS/db") database="$value" ;;
         # Only while infra/aws's managed_services switch is on: RDS's address.
         "$PARAMETERS/host") host="$value" ;;
+        # The analytics warehouse's owner, and the two read-only roles: the
+        # ETL's in the database, the app's in the warehouse.
+        "$PARAMETERS/warehouse_password") warehouse_password="$value" ;;
+        "$PARAMETERS/etl_password") etl_password="$value" ;;
+        "$PARAMETERS/reader_password") reader_password="$value" ;;
     esac
 done <<< "$values"
 if [ -z "$user" ] || [ -z "$password" ] || [ -z "$database" ]; then
     fail "expected user, password and db under $PARAMETERS"
+fi
+if [ -z "$warehouse_password" ] || [ -z "$etl_password" ] || [ -z "$reader_password" ]; then
+    fail "expected warehouse_password, etl_password and reader_password under $PARAMETERS"
 fi
 
 # AWS's certificate authorities for RDS in this region, which the app and
@@ -169,6 +188,11 @@ POSTGRES_DB=$database
 PSELLS_CONFIG_FILE=./sample_data/config.json
 PSELLS_IMAGE=$image
 PSELLS_NGINX_IMAGE=$nginx_image
+PSELLS_ANALYTICS_IMAGE=$analytics_image
+PSELLS_WAREHOUSE_PASSWORD=$warehouse_password
+PSELLS_ETL_PASSWORD=$etl_password
+PSELLS_READER_PASSWORD=$reader_password
+PSELLS_WAREHOUSE_URL=postgresql://psells_reader:$reader_password@warehouse:5432/psells_warehouse
 GRAFANA_METRICS_URL=$metrics_url
 GRAFANA_METRICS_USER=$metrics_user
 GRAFANA_LOGS_URL=$logs_url
@@ -245,13 +269,32 @@ else
     echo "the database has $products products; left as it is"
 fi
 
-echo "== timers: certificate renewal and the daily backup to S3"
+echo "== analytics"
+# The ETL's read-only role in whichever database the app uses, and the app's
+# read-only role in the warehouse, each made or brought up to date from its
+# file, with its password from Parameter Store on standard input, never on a
+# command line. The passwords were checked above to be letters, digits, _ and
+# -, so they cannot break out of the quotes.
+{
+    cat analytics/etl_role.sql
+    printf "ALTER ROLE psells_etl LOGIN PASSWORD '%s';\n" "$etl_password"
+} | live psql -q -v ON_ERROR_STOP=1
+{
+    cat analytics/reader_role.sql
+    printf "ALTER ROLE psells_reader LOGIN PASSWORD '%s';\n" "$reader_password"
+} | compose exec -T warehouse psql -q -v ON_ERROR_STOP=1 -U psells_warehouse -d psells_warehouse
+# The warehouse built once now, which also grants the reader its views; the
+# timer below rebuilds it every hour after.
+compose run --rm --no-deps etl || fail "the analytics ETL did not complete"
+
+echo "== timers: certificate renewal, the daily backup to S3, the hourly analytics"
 install -m 644 deploy/aws/psells-certbot-renew.service deploy/aws/psells-certbot-renew.timer \
     deploy/aws/psells-backup.service deploy/aws/psells-backup.timer \
+    deploy/aws/psells-analytics.service deploy/aws/psells-analytics.timer \
     /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable --now psells-certbot-renew.timer psells-backup.timer
-systemctl list-timers psells-certbot-renew.timer psells-backup.timer --no-pager
+systemctl enable --now psells-certbot-renew.timer psells-backup.timer psells-analytics.timer
+systemctl list-timers psells-certbot-renew.timer psells-backup.timer psells-analytics.timer --no-pager
 
 echo "== deployed $(git log --oneline -1)"
 # What the application's container is really running, which the Deploy

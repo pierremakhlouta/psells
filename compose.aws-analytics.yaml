@@ -1,0 +1,30 @@
+# The analytics warehouse and its ETL on the AWS server, laid over
+# compose.yaml, compose.aws.yaml and compose.analytics.yaml, by
+# deploy/aws/deploy.sh and the hourly psells-analytics.service only:
+#
+#     docker compose -f compose.yaml -f compose.aws.yaml \
+#         -f compose.analytics.yaml -f compose.aws-analytics.yaml ...
+#
+# A file of its own, not more of compose.aws.yaml, because the backup and the
+# certificate renewal use compose.yaml and compose.aws.yaml alone, and there a
+# setting for warehouse or etl would name a service that does not exist.
+#
+# The server pulls the ETL's image by digest, as it does the app's, and builds
+# nothing. Both get a hard memory ceiling: on 8 October 2026 the server had
+# about 361 MiB available, the warehouse idles at about 34 MiB and the ETL
+# peaks at about 97 MiB, so neither can ever squeeze the database or the app.
+
+services:
+  warehouse:
+    mem_limit: 128m
+
+  etl:
+    image: "${PSELLS_ANALYTICS_IMAGE:?set PSELLS_ANALYTICS_IMAGE in .env; deploy/aws/deploy.sh writes it}"
+    build: !reset null
+    mem_limit: 192m
+    environment:
+      # Whichever database the app uses: the container, or RDS while
+      # infra/aws's managed_services switch is on, over verified TLS.
+      PSELLS_DATABASE_URL: "postgresql://psells_etl:${PSELLS_ETL_PASSWORD:?set PSELLS_ETL_PASSWORD in .env}@${POSTGRES_HOST:-db}:5432/${POSTGRES_DB:?set POSTGRES_DB in .env}${POSTGRES_URL_OPTIONS:-}"
+    volumes:
+      - "./data/rds-ca.pem:/config/rds-ca.pem:ro"

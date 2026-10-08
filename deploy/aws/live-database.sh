@@ -24,7 +24,9 @@ live() {
         compose exec -T db "$tool" -U "$POSTGRES_USER" -d "$POSTGRES_DB" "$@"
     else
         local image
-        image=$(compose config --images | grep '^postgres:')
+        # The database's pinned PostgreSQL image; the warehouse runs the same
+        # one, so it is listed twice.
+        image=$(compose config --images | grep '^postgres:' | sort -u)
         PGPASSWORD="$POSTGRES_PASSWORD" docker run --rm -i -e PGPASSWORD \
             -v "$PWD/data/rds-ca.pem:/rds-ca.pem:ro" "$image" "$tool" \
             -d "host=$POSTGRES_HOST port=5432 dbname=$POSTGRES_DB user=$POSTGRES_USER sslmode=verify-full sslrootcert=/rds-ca.pem" \
