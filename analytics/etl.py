@@ -10,8 +10,9 @@ runs cannot make the rows and the totals disagree. Transform gives each table
 its types and names, makes the date dimension, and blanks the retail price of
 a product discontinued at retail; it works out no business figure, because
 psells already has. Load recreates the warehouse's tables and fills them in
-one transaction, then checks the warehouse adds up to psells' own dashboard
-figures, and commits only if every one is equal.
+one transaction, checks the warehouse adds up to psells' own dashboard
+figures, makes the views of analytics/views.sql over the tables, and commits
+only if every figure is equal.
 
 It prints how many rows it wrote, never a figure: on the Mac the rows are the
 real records.
@@ -30,8 +31,9 @@ import psells
 
 
 # Beside this file, wherever it is run from: in the image both are in /app.
-WAREHOUSE_SQL = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                             "warehouse.sql")
+HERE = os.path.dirname(os.path.abspath(__file__))
+WAREHOUSE_SQL = os.path.join(HERE, "warehouse.sql")
+VIEWS_SQL = os.path.join(HERE, "views.sql")
 
 # Each warehouse table's columns, in the order warehouse.sql makes them, with
 # the type pandas holds them as. Int64 and boolean are pandas' own types that
@@ -50,7 +52,7 @@ TABLES = {
         "partner_share_mode": "string", "partner_share_percent": "Float64",
         "partner_share_amount_cents": "Int64", "quantity_received": "Int64",
         "quantity_sold": "Int64", "quantity_returned": "Int64",
-        "quantity_available": "Int64",
+        "quantity_available": "Int64", "in_stock": "boolean",
     },
     "fact_sales": {
         "sale_id": "Int64", "date": "object", "product_id": "Int64",
@@ -92,6 +94,7 @@ def extract(source):
     """Every row and figure the warehouse is made from, from psells."""
     return {
         "products": psells.all_products(source),
+        "in_stock": psells.in_stock_products(source),
         "sales": psells.sales_history(source),
         "returns": psells.returns_history(source),
         "payments": psells.payments_history(source),
@@ -132,6 +135,9 @@ def transform(data):
         # Stored as 0 when discontinued, by the business rules; here "none".
         products["retail_price_cents"] = products["retail_price_cents"].where(
             ~products["retail_discontinued"])
+        # psells' answer, not the rule restated here.
+        products["in_stock"] = products["product_id"].isin(
+            [row["id"] for row in data["in_stock"]])
     sales = pd.DataFrame(data["sales"]).rename(
         columns={"id": "sale_id", "item_id": "product_id"})
     returns = pd.DataFrame(data["returns"]).rename(
@@ -185,6 +191,8 @@ def load(warehouse, tables, totals, finished_at):
             raise WarehouseMismatch(
                 "The warehouse does not add up to psells' figures, so it was "
                 "not changed: " + ", ".join(different))
+        with open(VIEWS_SQL) as views:
+            warehouse.execute(views.read())
         warehouse.execute(
             "INSERT INTO etl_run (finished_at, products, sales, returns, "
             "payments) VALUES (%s, %s, %s, %s, %s)",

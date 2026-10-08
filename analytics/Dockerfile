@@ -31,9 +31,9 @@ WORKDIR /app
 COPY requirements-analytics.txt .
 RUN pip install --no-cache-dir -r requirements-analytics.txt
 
-# psells.py for its readers, the ETL, and the warehouse's tables: the ETL asks
+# psells.py for its readers, the ETL, and the warehouse's tables and views: the ETL asks
 # psells for every figure rather than working one out.
-COPY psells.py analytics/etl.py analytics/warehouse.sql ./
+COPY psells.py analytics/etl.py analytics/warehouse.sql analytics/views.sql ./
 
 RUN chmod -R a+rX /app
 

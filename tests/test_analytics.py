@@ -245,7 +245,7 @@ def test_the_analytics_image_copies_named_files_only_and_runs_as_its_own_user():
     # Named files, never a folder, so nothing else can ride along.
     assert [l for l in lines if l.startswith("COPY ")] == [
         "COPY requirements-analytics.txt .",
-        "COPY psells.py analytics/etl.py analytics/warehouse.sql ./"]
+        "COPY psells.py analytics/etl.py analytics/warehouse.sql analytics/views.sql ./"]
     assert lines[-1] == 'CMD ["python", "etl.py"]'
     assert "RUN useradd --create-home --uid 10002 analytics" in lines
     users = [l for l in lines if l.startswith("USER ")]

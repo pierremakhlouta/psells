@@ -8,11 +8,15 @@
 -- Money is whole cents, as everywhere in PSells; turning it into dollars is
 -- for whatever displays it.
 
+-- The views read the tables, so they go first; analytics/views.sql makes
+-- them again after the tables are filled.
+DROP VIEW IF EXISTS sales_by_month, sales_by_week, category_performance,
+    product_performance, kpis;
 DROP TABLE IF EXISTS fact_sales, fact_returns, fact_payments, dim_product,
     dim_date, etl_run;
 
 -- One row per product, as psells' products_view has it, with the stock
--- psells works out. retail_price_cents is NULL for a product discontinued at
+-- psells works out, and whether psells counts it in stock. retail_price_cents is NULL for a product discontinued at
 -- retail, which the business database stores as 0: here it means "no retail
 -- price", so averages and comparisons leave it out.
 CREATE TABLE dim_product (
@@ -30,6 +34,7 @@ CREATE TABLE dim_product (
     quantity_sold              integer NOT NULL,
     quantity_returned          integer NOT NULL,
     quantity_available         integer NOT NULL,
+    in_stock                   boolean NOT NULL,
     CHECK ((retail_price_cents IS NULL) = retail_discontinued)
 );
 
