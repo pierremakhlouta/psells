@@ -1,0 +1,40 @@
+# The analytics side of PSells, laid over compose.yaml only when asked for:
+#
+#     docker compose -f compose.yaml -f compose.analytics.yaml up -d --wait warehouse
+#
+# A file of its own rather than services in compose.yaml, because Compose
+# reads every variable in a file it is given, even for a service it is not
+# starting: a warehouse password required in compose.yaml would stop the real
+# stack, its login job and its backup from starting until every .env had one.
+# Nothing that runs the real stack reads this file.
+#
+# The warehouse is a second PostgreSQL that holds what the ETL makes from the
+# business database: derived figures, rebuilt in full on every run, so the
+# business database goes on storing facts only. It publishes no port and
+# shares nothing with db: not its volume, its password or its user.
+
+services:
+  warehouse:
+    # The same image as db, pinned the same way; a test holds them equal.
+    image: postgres:18.6@sha256:86c951e05bf56c93d95d397747fb8820ac76cc3bedb78f43abd83eedbe3666ae
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: psells_warehouse
+      POSTGRES_PASSWORD: "${PSELLS_WAREHOUSE_PASSWORD:?set PSELLS_WAREHOUSE_PASSWORD in .env}"
+      POSTGRES_DB: psells_warehouse
+    volumes:
+      - "warehouse:/var/lib/postgresql"
+    # No ports: the ETL reaches it over the stack's network, and so will
+    # whatever reads it later.
+    healthcheck:
+      # Over TCP, as db's is: a socket check passes against the image's
+      # temporary server on a new volume.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U psells_warehouse -d psells_warehouse"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+volumes:
+  # Derived data only: removing it loses nothing the next ETL run cannot make
+  # again.
+  warehouse:
