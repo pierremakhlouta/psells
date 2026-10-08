@@ -449,7 +449,9 @@ Not part of the business database, and outside the rule that nothing derived
 is stored: a second PostgreSQL, in `compose.analytics.yaml`, that
 `analytics/etl.py` rebuilds in full from the business database on every run.
 Nothing in it is ever edited, and nothing in PSells reads it to decide
-anything; removing it loses nothing the next run cannot make again. Its tables
+anything; removing it loses nothing the next run cannot make again. It is
+rebuilt every hour, on the Mac and on the demonstration server, and the kpis
+view's `stale` column is true once it is more than two hours old. Its tables
 are made by `analytics/warehouse.sql`.
 
 | Table           | One row represents                                  |

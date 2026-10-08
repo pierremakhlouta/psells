@@ -1212,3 +1212,41 @@ calls only, not every detail, and no specific business figures.
   by a reload of the proxy, and the cluster's pinned image fell behind the
   repository's nginx files without any status code changing. The Kubernetes
   workflow now hashes the served block and compares it with the policy.
+
+- **The analytics rebuild themselves every hour.** On the Mac a launchd job runs
+  `refresh-analytics.sh` on the hour and at login; on the server a systemd
+  timer runs the ETL. A run takes seconds and only reads the records, so an
+  hour behind at most costs nothing. The Mac's job waits for a healthy
+  database and never starts it, since starting the stack is the login job's,
+  and never builds, so it runs only an image someone built on purpose.
+
+- **A stale warehouse is said on the page.** The Mac is unmonitored and the
+  server's agent reads only nginx's journal, so a failing refresh would show
+  only as old figures. The kpis view marks the warehouse stale when it is
+  more than two hours old, two missed runs, and the page says so above the
+  figures; each run's line, with the reason for a failure, is in the
+  refresh's log or journal.
+
+- **The demonstration got its warehouse inside its memory.** Measured first:
+  about 361 MiB available, the warehouse idling at about 34 MiB and the ETL
+  peaking at about 97 MiB. Each runs under a hard ceiling, 128 MiB and
+  192 MiB, so neither can squeeze the database or the app. The ETL's image is
+  published by CI and pulled by digest like the others, its address follows
+  the app's to RDS when that switch is on, and the three new passwords live
+  in Parameter Store beside the database's, made by hand and never in
+  Terraform's state.
+
+- **The server's analytics settings are a file of their own.** The backup and
+  the certificate renewal lay `compose.aws.yaml` over `compose.yaml` alone;
+  settings there for the warehouse or the ETL would name services those two
+  never load, and break them. `compose.aws-analytics.yaml` is used only by
+  the deploy and the hourly service.
+
+- **The sample data is generated, by the application's rules.** A business big
+  enough for the charts, 80 products and a year of sales, is too much to
+  write by hand correctly. `sample_data/generate_seed.py` writes it from a
+  fixed random seed, so it is the same every time; it checks each product
+  with psells' own rules and takes each sale's cut from psells' own function,
+  so the invented records cannot break a rule the real ones must keep, and a
+  test fails if the file is ever edited by hand. Its tests state what the
+  seed must show as properties rather than naming its rows.

@@ -863,10 +863,35 @@ read-only role in the running stack, which changes no table:
 
     analytics/create-etl-role.sh
 
-Then, whenever the warehouse should catch up with the records:
+Then build it once, which also builds the analytics image:
 
     docker compose -f compose.yaml -f compose.analytics.yaml up -d --wait warehouse
     docker compose -f compose.yaml -f compose.analytics.yaml run --rm --build etl
+
+After that it rebuilds itself every hour. `refresh-analytics.sh`, run by a
+third launchd job on the hour and once at login, waits for Docker Desktop
+and a healthy database without ever starting it, brings up the warehouse and
+runs the ETL alone, and appends one line to `~/Library/Logs/psells-etl.log`:
+ok with the counts, or FAILED with the reason. It never builds, so a change
+to the analytics code reaches it with the `--build` command above. Install
+it as the other two are:
+
+    sed -e "s|__PROJECT_DIR__|$PWD|" -e "s|__HOME__|$HOME|" \
+        launchd/local.psells.analytics.plist > ~/Library/LaunchAgents/local.psells.analytics.plist
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.psells.analytics.plist
+
+The analytics page warns when the warehouse is more than two hours old, two
+missed runs, so a failing refresh is seen where the figures are read.
+
+On the demonstration server the same warehouse runs with its ETL's published
+image, each under a hard memory ceiling (128 MiB and 192 MiB, against about
+361 MiB the server had free), with settings in `compose.aws-analytics.yaml`,
+a file of its own because the backup and the certificate renewal use
+`compose.aws.yaml` without the analytics files. The deploy makes both
+read-only roles, builds the warehouse once and installs
+`psells-analytics.timer`, which runs the ETL every hour; its output is in
+`journalctl -u psells-analytics.service`. The passwords are in Parameter
+Store beside the database's.
 
 For the analytics page, the app reads the warehouse's five views as
 `psells_reader`, a role that can read those and nothing else. Set up once,
@@ -935,8 +960,10 @@ kind, the log row written with every change and none for a save that changes
 nothing, and a change undone when its log row cannot be written.
 
 `test_seed.py` loads `sample_data/seed.sql` into the test database and fails if
-it stops filling every list, breaks a rule the application enforces, freezes a
-cut its product would not give, or leaves a sequence behind its highest id.
+it is not exactly what `generate_seed.py` writes, stops being a business of
+some size over a year, stops filling every list or showing every case,
+breaks a rule the application enforces, freezes a cut its product would not
+give, or leaves a sequence behind its highest id.
 
 `test_api.py` drives the HTTP endpoints through FastAPI's test client, with the
 connection dependency pointed at the test's own connection. That client is
@@ -986,7 +1013,11 @@ runs the script daily at 09:00, and carries no personal paths. It holds the
 login job the same way, and runs `start-stack.sh` in a copy of the project with
 stand-ins for `docker` and `sleep`: it must start the stack with
 `--no-recreate` and nothing harsher, wait for Docker, and refuse outside the
-real stack's folder.
+real stack's folder. And it holds the hourly analytics job and runs
+`refresh-analytics.sh` the same way: it brings up the warehouse and runs the
+ETL alone, never builds or touches the business stack, waits for a healthy
+database without starting it, logs a failure with its reason, and refuses
+outside the real folder.
 
 `test_tls.py` runs `make-certificate.sh` into a temporary folder with the
 `openssl` on the machine, and proves the CA's limit by having it sign
@@ -1008,7 +1039,11 @@ every command line. It runs the deploy's monitoring block with a stand-in `aws`,
 accept the Grafana settings only in their expected shapes and stop on any
 other or a missing one, and checks the deploy reloads nginx after checking
 its configuration, since a changed mounted file is invisible to
-`compose up`.
+`compose up`. For the analytics it holds the server's warehouse and ETL to
+the published image, their memory ceilings and RDS's address, keeps
+`compose.aws.yaml` free of them, and holds the deploy to the three
+passwords, both roles with their passwords on standard input, the first
+build and the hourly timer.
 
 `test_infra.py` reads the Terraform in `infra/aws/` and fails if a state or
 variables file could be committed, if the provider is not pinned to one exact
@@ -1179,14 +1214,20 @@ Worth stating plainly rather than leaving to be discovered.
   ever held anything real.
 - **No inventory aging.** Products carry no date of their own, so how long
   stock has waited cannot be worked out; it needs an intake date first.
-- **The demonstration has no analytics yet.** Its page says no warehouse is
-  set up; a warehouse there comes with a scheduled refresh.
+- **The analytics refresh is not in Grafana.** The monitoring agent reads the
+  proxy's journal only, so on the server a failing hourly run shows as the
+  page's warning for a warehouse more than two hours old, and its reason is
+  in the service's journal.
 - **A pod being replaced on the cluster can drop a request.** During a rolling
   update the old pod's app can stop while its nginx still takes a
   connection; a short pause before a pod stops would let nginx drain first.
   CI builds the cluster from nothing, so it never sees it.
-- **The warehouse is rebuilt by hand.** It is as fresh as the last ETL run,
-  which `etl_run` records; running it on a schedule comes later.
+- **The sample business cannot restock.** Products carry no intake date, so
+  every invented product arrives at the start and sales thin out as stock
+  sells; the demonstration's busiest months are its first.
+- **A new seed does not reach a running demonstration by itself.** The deploy
+  loads it only into a database with no products; the server's records are
+  replaced by hand, in one transaction that keeps its login.
 - **The cluster runs the images it was pinned to.** `k8s/app.yaml` names one
   commit's published images by digest, and they move only when that line is
   changed by hand, so the cluster can run older code than `main`. Dependabot
