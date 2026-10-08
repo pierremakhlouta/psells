@@ -442,3 +442,33 @@ are computed from the four business tables as they now are.
 An existing database gets the table from `migrations/0002_corrections.sql`; a
 new one gets it from the end of `schema.sql`.
 
+
+## The analytics warehouse
+
+Not part of the business database, and outside the rule that nothing derived
+is stored: a second PostgreSQL, in `compose.analytics.yaml`, that
+`analytics/etl.py` rebuilds in full from the business database on every run.
+Nothing in it is ever edited, and nothing in PSells reads it to decide
+anything; removing it loses nothing the next run cannot make again. Its tables
+are made by `analytics/warehouse.sql`.
+
+| Table           | One row represents                                  |
+|-----------------|-----------------------------------------------------|
+| `dim_product`   | a product, with the stock psells works out for it   |
+| `dim_date`      | a day, from the first sale, return or payment to the last |
+| `fact_sales`    | a sale, with its total, partner cut and profit      |
+| `fact_returns`  | a return                                            |
+| `fact_payments` | a payment                                           |
+| `etl_run`       | the run that built it, with its row counts          |
+
+Every figure comes from psells' own readers: a sale's total, cut and profit
+are the ones `sales_history` works out from the sale's frozen columns, and a
+product's quantities are the ones `products_view` gives. Money is whole cents.
+A product discontinued at retail has a NULL retail price here, where the
+business database stores 0, and a `CHECK` keeps the two in step. Notes are not
+copied. A run commits only if the warehouse adds up to all nine dashboard
+figures.
+
+The ETL reads the business database as `psells_etl`, a role made by
+`analytics/etl_role.sql` that can only `SELECT` from `products`, `sales`,
+`returns`, `payments` and `products_view`.

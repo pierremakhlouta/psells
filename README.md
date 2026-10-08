@@ -55,6 +55,8 @@ Jinja2 for the templates, python-multipart to read form posts, psycopg, the
 PostgreSQL driver, and argon2-cffi, which hashes the login password. `requirements-dev.txt` adds pytest, httpx2 for the test
 client, PyYAML so a test can read `compose.yaml`, and openpyxl for
 `import_excel.py`, the one-time script that read the original spreadsheet.
+It also includes `requirements-analytics.txt`, the analytics image's own:
+pandas, numpy and the same psycopg, so the tests can import the ETL.
 
 ## Running it
 
@@ -797,6 +799,50 @@ pods deleted and replaced with the records intact. kind there is its release
 binary, run only once it matches the hash written in the workflow. Deploy
 waits for it.
 
+## Analytics
+
+The analytics side turns the business records into tables built for analysis,
+in a database of its own, the warehouse. It runs on the Mac, against the real
+records, and nothing it makes leaves the Mac; tests, CI and anything published
+use invented data.
+
+- **The warehouse** is a second PostgreSQL, in `compose.analytics.yaml`, which
+  is laid over `compose.yaml` only for analytics: it has its own user,
+  password and volume and publishes no port. It holds derived figures only,
+  rebuilt in full on every run, so the business database goes on storing
+  facts and nothing else.
+- **The ETL**, `analytics/etl.py`, runs in an image of its own built from
+  `analytics/Dockerfile`, with pandas, so the app's image carries none of it.
+  It reads the business database as `psells_etl`, a role that can read the
+  four business tables and the products view and nothing else, through
+  psells' own functions and inside one read-only snapshot. It reshapes their
+  rows and works out no figure of its own. It recreates the warehouse's tables
+  and fills them in one transaction, and commits only if the warehouse adds
+  up to all nine of the dashboard's figures; otherwise the last warehouse
+  stays. It prints counts, never a figure.
+- **The tables** form a small star, in whole cents, described in
+  `analytics/warehouse.sql`: `dim_product` with each product's stock,
+  `dim_date` with every day from the first event to the last, `fact_sales`
+  with each sale's total, partner cut and profit, `fact_returns`,
+  `fact_payments`, and `etl_run`, which says when it was built. A product
+  discontinued at retail has no retail price there, rather than the 0 the
+  business database stores, so averages leave it out. Notes are left out.
+
+Set up once, from the project folder: add two passwords to `.env`, each made
+with `openssl rand -hex 24` (`.env.example` names them), and create the
+read-only role in the running stack, which changes no table:
+
+    analytics/create-etl-role.sh
+
+Then, whenever the warehouse should catch up with the records:
+
+    docker compose -f compose.yaml -f compose.analytics.yaml up -d --wait warehouse
+    docker compose -f compose.yaml -f compose.analytics.yaml run --rm --build etl
+
+The sample stack takes the same commands with `COMPOSE_PROJECT_NAME=psells-sample`,
+its `PSELLS_NETWORK` and `PSELLS_CONFIG_FILE` as above, and invented passwords
+in the environment, so its warehouse holds the invented records.
+
 ## Running the tests
 
 The suite needs a PostgreSQL to run against: `db-test` in `compose.yaml`, a
@@ -817,7 +863,7 @@ database it is pointed at, so it refuses any whose name does not end in
 Every warning is an error (`pytest.ini`), apart from one known deprecation in
 Starlette's test client on Python 3.14, matched on its exact message.
 
-Twenty-one files, and the split is deliberate, so a red run says what kind of
+Twenty-three files, and the split is deliberate, so a red run says what kind of
 thing broke before you read a line of it.
 
 `test_domain.py` covers everything in `psells.py` that has no input or output:
@@ -943,6 +989,23 @@ certificate, or would no longer fit the free tier, if either SLO changes, if
 there is more than one alert or it stops being the site down or stops alerting
 on no data, or if the dashboard names a data source other than by placeholder.
 
+`test_etl.py` builds invented records, runs the ETL's three steps against the
+test database, and compares the warehouse with psells' own answers: every
+sale's figures, every product's stock, all nine dashboard figures, the retail
+price of a discontinued product, the date dimension, a second run rebuilding
+rather than adding, and a warehouse that does not add up being refused with
+the last one kept. It also holds the ETL to reading through psells, in one
+read-only snapshot, and to printing counts only.
+
+`test_analytics.py` runs `analytics/etl_role.sql` in the test database and
+connects as the role it makes: it can read what psells' readers need, cannot
+read the login's tables or the corrections log, and cannot write, with or
+without its read-only default. It holds the role's password off every command
+line, the warehouse to the business database's image with no port,
+`compose.yaml` to no analytics variable, and the analytics image to the app's
+base, named files, its own user, and exact requirements that share the app's
+driver.
+
 `test_kubernetes.py` reads `k8s/` as kustomize renders it, and the Kubernetes
 workflow, and fails if the cluster could be reached beyond this machine or on
 443 or 80, if the database stops being built from `schema.sql` and the seed as
@@ -1000,9 +1063,9 @@ never see each other's rows and nothing has to be cleaned up. On GitHub Actions
 the test database is a service container of the same image, on the same
 port. Everything runs on every push through GitHub Actions, alongside a
 dependency vulnerability audit, a shellcheck pass and an `nginx -t` check, the
-Kubernetes cluster built from nothing and checked from outside, and
-a scan with Grype of the app's and nginx's images, both built here, on both
-architectures, and of the monitoring agent's image, each failing on a high or
+Kubernetes cluster built from nothing and checked from outside, and a scan
+with Grype of the app's, nginx's and the analytics images, all built here, on
+both architectures, and of the monitoring agent's image, each failing on a high or
 critical vulnerability that has a fix and listing the rest (the agent's scan
 skips only what `monitoring/grype-exceptions.yaml` lists, with its reason,
 until the date written in it), and a scan of every commit in the history with
@@ -1050,6 +1113,8 @@ Worth stating plainly rather than leaving to be discovered.
   the Ubuntu host number 101 is the `uuidd` service's account, which could
   therefore read it. Worth closing with user-namespace remapping if the server
   ever held anything real.
+- **The warehouse is rebuilt by hand.** It is as fresh as the last ETL run,
+  which `etl_run` records; running it on a schedule comes later.
 - **The cluster runs the images it was pinned to.** `k8s/app.yaml` names one
   commit's published images by digest, and they move only when that line is
   changed by hand, so the cluster can run older code than `main`. Dependabot
@@ -1119,7 +1184,9 @@ Terraform too, and run behind a switch. The demo is monitored from outside and
 inside against two service level objectives, with one alert and a dashboard,
 all in code, and a deliberate outage was written up as an incident. The same
 images run on a local Kubernetes cluster from manifests in the repository,
-built from nothing and checked on every push. Planned next is an analytics
-layer on the same database, from extracting the data to a sales dashboard and
-a forecast, then architecture documents for the whole system, carrying the
-same data model and business rules through each step.
+built from nothing and checked on every push. An ETL builds an analytics
+warehouse from the business records through psells' own functions, checked
+against the dashboard before it commits. Planned next are SQL views over the
+warehouse, an analytics page in PSells with charts, a forecast, and a
+scheduled refresh, then architecture documents for the whole system,
+carrying the same data model and business rules through each step.

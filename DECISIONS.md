@@ -1097,3 +1097,60 @@ calls only, not every detail, and no specific business figures.
   `pg_isready -h 127.0.0.1`: the cluster's probes, Compose's db and db-test,
   and the Tests workflow's service. The real database was recreated once for
   it, for about two seconds, with its volume kept.
+
+- **Analytics runs on the real records, on the Mac, and publishes nothing
+  real.** The point of the analysis is the business, so the ETL reads the
+  real database; everything it makes stays on the Mac, and the tests, CI and
+  anything shown use invented records, as everywhere else.
+
+- **The analytics live in a database of their own.** An analysis table holds
+  revenue and profit per sale, which are derived figures, and the business
+  database stores facts only, with no exceptions. So the derived tables go in
+  a separate PostgreSQL, the warehouse, rebuilt in full by every run and
+  never edited, and whatever reads them later never touches the real
+  records' database. Files under `data/` were turned down because the SQL
+  views and the page that come next want a database; a schema inside the
+  business database because it would have put derived figures beside the
+  facts.
+
+- **Analytics has its own Compose file.** Compose reads every variable in a
+  file it is given, even for a service whose profile is not active, so a
+  warehouse password required in `compose.yaml` would have stopped the real
+  stack, its login job, its backup and the AWS deploy until each `.env` had
+  one. `compose.analytics.yaml` is laid over `compose.yaml` only for
+  analytics, as `compose.aws.yaml` is on the server, and a test keeps every
+  analytics variable out of `compose.yaml`.
+
+- **The ETL reads as a read-only role.** `psells_etl` can SELECT the four
+  business tables and the products view, which is what psells' own readers
+  use, and nothing else: not the login's tables, not the corrections log, no
+  write. Its transactions are read-only by default, and the grants stop a
+  write even when that is switched off, so a bug or a compromised package in
+  the analytics image cannot change a record. It cost one change to the real
+  database, a role and its grants, made after a backup.
+
+- **pandas gets an image of its own.** pandas and numpy are most of an
+  image; the app's image, which serves the web, carries none of them, so
+  there is nothing more there to scan or patch. The analytics image starts
+  from the app's base, holds psells.py and the ETL, is built and scanned in
+  CI on both architectures, and is not published, because only the Mac runs
+  it.
+
+- **The ETL asks psells for every figure.** It reads through psells' own
+  readers, never its own SQL against the business tables, and works out no
+  business figure, so the warehouse cannot hold a second version of a rule.
+  It reads in one repeatable-read snapshot, so the rows and the totals come
+  from the same moment, and it commits only if the warehouse adds up to all
+  nine of the dashboard's figures. The sums it checks with are a comparison,
+  never a figure the warehouse serves.
+
+- **In the warehouse, a discontinued product has no retail price.** The
+  business rules store 0 for it, which an average or a comparison with the
+  listed price would read as free. The warehouse leaves it empty, keeps the
+  flag beside it, and a constraint holds the two together; the business
+  database keeps its 0.
+
+- **The analysis is shown on a page in PSells, not in Power BI.** The plan
+  had a Power BI dashboard, but Power BI Desktop does not run on a Mac, and a
+  page in PSells can be seen on the demonstration. No page runs scripts, so
+  its charts will be SVG drawn on the server.
