@@ -1223,19 +1223,19 @@ def test_what_is_published_is_what_was_scanned():
                       ("app", "arm64", "ubuntu-24.04-arm"),
                       ("nginx", "amd64", "ubuntu-24.04"),
                       ("nginx", "arm64", "ubuntu-24.04-arm")]
-    # Each from its own Dockerfile; only the app and nginx are published, since
-    # the analytics image runs only on the Mac, built there. A matrix entry
-    # that is not published never hands its image to the publish job.
+    # Each from its own Dockerfile, and all three published, since the server
+    # pulls each by digest. A matrix entry that is not published never hands
+    # its image to the publish job.
     entries = jobs["app"]["strategy"]["matrix"]["include"]
     assert {(e["image"], e["file"], e["publish"]) for e in entries} == {
         ("app", "Dockerfile", True), ("nginx", "nginx/Dockerfile", True),
-        ("analytics", "analytics/Dockerfile", False)}
+        ("analytics", "analytics/Dockerfile", True)}
     assert "--file ${{ matrix.file }} ${{ matrix.context }}" in app
     for step in jobs["app"]["steps"]:
         if step.get("name") in ("Save the scanned image",
                                 "Hand the scanned image to the publish job"):
             assert step["if"].startswith("matrix.publish && "), step["name"]
-    assert "for image in app nginx; do" in publish
+    assert "for image in app nginx analytics; do" in publish
     # The ID of the scanned image is recorded, and a loaded image that does
     # not have it is refused before anything is pushed.
     assert "docker image inspect --format '{{.Id}}' psells:ci > image-id" in app
@@ -1244,7 +1244,7 @@ def test_what_is_published_is_what_was_scanned():
     # Tagged by commit, never by a name that moves, such as latest.
     assert "latest" not in publish
     assert '"$IMAGE:${prefix}${{ github.sha }}"' in publish
-    assert '[ "$image" = nginx ] && prefix="nginx-"' in publish
+    assert '[ "$image" != app ] && prefix="$image-"' in publish
 
 
 def deploy_workflow():

@@ -34,8 +34,8 @@ jobs:
     # are free for public repositories. Each build is scanned where it is
     # built. Three images: the app's, from the Dockerfile at the top,
     # nginx's, from nginx/Dockerfile, and the analytics ETL's, from
-    # analytics/Dockerfile, each built and scanned the same way. The analytics
-    # image is not published: it runs only on the Mac, built there.
+    # analytics/Dockerfile, each built, scanned and published the same way;
+    # the server pulls all three by digest, and the Mac builds its own.
     strategy:
       matrix:
         include:
@@ -68,13 +68,13 @@ jobs:
             image: analytics
             context: .
             file: analytics/Dockerfile
-            publish: false
+            publish: true
           - runner: ubuntu-24.04-arm
             arch: arm64
             image: analytics
             context: .
             file: analytics/Dockerfile
-            publish: false
+            publish: true
     runs-on: ${{ matrix.runner }}
 
     steps:
@@ -166,10 +166,11 @@ jobs:
           set -euo pipefail
           echo "$TOKEN" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
           # The app under the commit's own tag, as the server has always pulled
-          # it, and nginx under nginx-<commit> in the same package.
-          for image in app nginx; do
+          # it, and nginx and the analytics ETL under nginx-<commit> and
+          # analytics-<commit> in the same package.
+          for image in app nginx analytics; do
             prefix=""
-            [ "$image" = nginx ] && prefix="nginx-"
+            [ "$image" != app ] && prefix="$image-"
             for arch in amd64 arm64; do
               folder="image-$image-$arch"
               loaded=$(gunzip -c "$folder/image.tar.gz" | docker load --quiet | sed -n 's/^Loaded image ID: //p;s/^Loaded image: //p')
