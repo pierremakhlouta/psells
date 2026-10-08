@@ -475,6 +475,10 @@ revenue), sell-through (units sold over units received), shares and ranks.
 Ratios are unrounded fractions, NULL where the denominator is zero.
 `dim_product.in_stock` is psells' own answer, from `in_stock_products`.
 
+The app reads the five views, and only them, as `psells_reader`, a role made
+by `analytics/reader_role.sql`; `views.sql` grants them to it again each time
+it makes them.
+
 The ETL reads the business database as `psells_etl`, a role made by
 `analytics/etl_role.sql` that can only `SELECT` from `products`, `sales`,
 `returns`, `payments` and `products_view`.

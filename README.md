@@ -195,13 +195,23 @@ behind it. One process serves the pages and the API.
 - **Sell**, **Return** and **Edit** from each row with stock, **Edit** from each
   out-of-stock row, **Record payment** from the navigation, and **Delete** from a
   product's edit page.
+- **Analytics**: the analysis, from the analytics warehouse described under
+  "Analytics" below: headline figures, revenue and profit by month as bars
+  with cumulative revenue as a line, revenue by category with each one's
+  margin, sell-through and share, the ten most profitable products and the
+  ten with the lowest sell-through. The charts are SVG drawn on the server,
+  since no page runs scripts, and each bar's exact figure is its tooltip.
+  Where no warehouse is set up, as on the demonstration for now, the page
+  says so.
 
 The pages are a view, not a second implementation, and three rules keep them
 one. A page route calls the same `psells` functions the command line calls and
-does no arithmetic on money, stock or partner share. Wherever a page shows a
-figure the API also serves, a test asserts the two agree. And templates format
-and never compute, which a test enforces by parsing every template and failing
-on any arithmetic or any filter other than the one that formats money.
+does no arithmetic on money, stock or partner share; the analytics page reads
+the warehouse's views instead, and `charts.py` works out where to draw them.
+Wherever a page shows a figure the API also serves, a test asserts the two
+agree. And templates format and never compute, which a test enforces by
+parsing every template and failing on any arithmetic or any filter other than
+the two that format: `money` for cents and `percent` for a view's ratios.
 
 Every form answers a successful save with a 303 redirect, so refreshing the page
 afterwards cannot repeat it. A refusal shows the form again with a sentence
@@ -851,6 +861,21 @@ Then, whenever the warehouse should catch up with the records:
     docker compose -f compose.yaml -f compose.analytics.yaml up -d --wait warehouse
     docker compose -f compose.yaml -f compose.analytics.yaml run --rm --build etl
 
+For the analytics page, the app reads the warehouse's five views as
+`psells_reader`, a role that can read those and nothing else. Set up once,
+after the warehouse exists: add `PSELLS_READER_PASSWORD` to `.env`, and
+`PSELLS_WAREHOUSE_URL` with it (`.env.example` shows the form), create the
+role, rebuild the warehouse so its views are granted to it, and rebuild the
+app so it has the address:
+
+    analytics/create-reader-role.sh
+    docker compose -f compose.yaml -f compose.analytics.yaml run --rm etl
+    docker compose up -d --build --wait --no-deps app
+
+A change to the pages' style block changes the hash in nginx's headers too,
+so the app's rebuild is followed by a reload of the proxy:
+`docker compose exec proxy nginx -s reload`.
+
 The sample stack takes the same commands with `COMPOSE_PROJECT_NAME=psells-sample`,
 its `PSELLS_NETWORK` and `PSELLS_CONFIG_FILE` as above, and invented passwords
 in the environment, so its warehouse holds the invented records.
@@ -875,7 +900,7 @@ database it is pointed at, so it refuses any whose name does not end in
 Every warning is an error (`pytest.ini`), apart from one known deprecation in
 Starlette's test client on Python 3.14, matched on its exact message.
 
-Twenty-four files, and the split is deliberate, so a red run says what kind of
+Twenty-six files, and the split is deliberate, so a red run says what kind of
 thing broke before you read a line of it.
 
 `test_domain.py` covers everything in `psells.py` that has no input or output:
@@ -1009,6 +1034,18 @@ rather than adding, and a warehouse that does not add up being refused with
 the last one kept. It also holds the ETL to reading through psells, in one
 read-only snapshot, and to printing counts only.
 
+`test_analytics_page.py` builds the warehouse from invented records and points
+the page at it: every figure on the page is its view's, formatted by the same
+filters, one bar per month and series, the product tables in the views'
+order, no script and no style attribute, a 200 with a sentence where no
+warehouse is set up, a 503 where one does not answer or is not built, the
+login, and the percent filter's rounding.
+
+`test_charts.py` checks `charts.py`'s geometry as geometry, bars in proportion
+on either side of zero, nothing outside the chart and round ticks covering
+every value, and `warehouse.py`'s readers against the views, with records
+where the orders they choose differ from the obvious ones.
+
 `test_views.py` builds invented records with a month and a category that sold
 nothing, an unsold product and a tie, has the ETL build the warehouse, and
 compares every view with psells' own answers: sums by month, week and
@@ -1039,7 +1076,8 @@ alone, to a password made once and never printed, to a certificate from
 outside the repository and a restart only when it changed; runs `down.sh`
 against a stand-in kind that shows it deletes the psells cluster and nothing
 else; and holds the workflow to kind's checked binary, the scripts, a
-throwaway certificate and the answers it expects.
+throwaway certificate, the answers it expects, and a served style block that
+hashes to what the policy allows.
 
 `test_container.py` reads the `Dockerfile`, `.dockerignore`, `compose.yaml`,
 `compose.aws.yaml`, `nginx/nginx.conf` with each site's files, and the
@@ -1134,6 +1172,12 @@ Worth stating plainly rather than leaving to be discovered.
   ever held anything real.
 - **No inventory aging.** Products carry no date of their own, so how long
   stock has waited cannot be worked out; it needs an intake date first.
+- **The demonstration has no analytics yet.** Its page says no warehouse is
+  set up; a warehouse there comes with a scheduled refresh.
+- **A pod being replaced on the cluster can drop a request.** During a rolling
+  update the old pod's app can stop while its nginx still takes a
+  connection; a short pause before a pod stops would let nginx drain first.
+  CI builds the cluster from nothing, so it never sees it.
 - **The warehouse is rebuilt by hand.** It is as fresh as the last ETL run,
   which `etl_run` records; running it on a schedule comes later.
 - **The cluster runs the images it was pinned to.** `k8s/app.yaml` names one
@@ -1208,6 +1252,7 @@ images run on a local Kubernetes cluster from manifests in the repository,
 built from nothing and checked on every push. An ETL builds an analytics
 warehouse from the business records through psells' own functions, checked
 against the dashboard before it commits, and SQL views over it answer the
-business questions. Planned next are an analytics page in PSells with
-charts, a forecast, and a scheduled refresh, then architecture documents for the whole system,
-carrying the same data model and business rules through each step.
+business questions, shown on a page in PSells with charts drawn on the
+server. Planned next are a forecast and a scheduled refresh, then
+architecture documents for the whole system, carrying the same data model and
+business rules through each step.

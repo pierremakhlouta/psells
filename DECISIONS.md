@@ -1179,3 +1179,36 @@ calls only, not every detail, and no specific business figures.
   and products have none; working it out from sales would be wrong for
   exactly the products it is about, the ones that never sold. An intake date
   is a change to the business data model, left for later.
+
+- **The analysis is read from the warehouse's views.** The page shows figures
+  the views are the one home of, so the app reads them, as `psells_reader`, a
+  role that can read the five views and nothing else. Moving the views' logic
+  into psells.py would have let the page work everywhere today, at the price
+  of a second copy of every figure. Where no warehouse is set up the page says
+  so with a 200; where one is set up and does not answer, a 503, as a page
+  without its database is. The address is optional in `compose.yaml`, so a
+  stack without analytics needs nothing in `.env`.
+
+- **The reader's grant is given again with every rebuild.** A grant goes with
+  the view it is on, and the ETL drops and makes the views on every run, so
+  the grant is at the end of `views.sql`, in the same transaction, only if the
+  role exists. The role's own file only makes the role.
+
+- **Charts are SVG drawn on the server.** No page runs scripts and no style
+  attribute is allowed, so a chart library was out. `charts.py` works out the
+  geometry, the template places it, and colours come from classes in the one
+  style block; a bar's exact figure is its tooltip, which needs no script.
+  The cumulative revenue is a small chart of its own rather than a second
+  axis on the monthly bars, which reads badly.
+
+- **Ratios are shown by one formatter.** `psells.format_ratio`, the `percent`
+  filter, turns a view's fraction into one decimal place, half away from
+  zero, and shows "n/a" where there was nothing to divide by, as
+  `format_cents` is the one place cents become text.
+
+- **The style block and its hash are checked where they meet.** The block is in
+  the app's image and its hash in nginx's files, which ship separately: the
+  demo's deploy brings both together, the Mac needs the app's rebuild followed
+  by a reload of the proxy, and the cluster's pinned image fell behind the
+  repository's nginx files without any status code changing. The Kubernetes
+  workflow now hashes the served block and compares it with the policy.
