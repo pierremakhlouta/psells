@@ -32,8 +32,10 @@ jobs:
     # Built natively on each architecture: amd64 for anyone's laptop and CI,
     # arm64 for the AWS server and the Mac's cluster. GitHub's arm64 runners
     # are free for public repositories. Each build is scanned where it is
-    # built. Two images: the app's, from the Dockerfile at the top, and
-    # nginx's, from nginx/Dockerfile, each built and scanned the same way.
+    # built. Three images: the app's, from the Dockerfile at the top,
+    # nginx's, from nginx/Dockerfile, and the analytics ETL's, from
+    # analytics/Dockerfile, each built and scanned the same way. The analytics
+    # image is not published: it runs only on the Mac, built there.
     strategy:
       matrix:
         include:
@@ -41,18 +43,38 @@ jobs:
             arch: amd64
             image: app
             context: .
+            file: Dockerfile
+            publish: true
           - runner: ubuntu-24.04-arm
             arch: arm64
             image: app
             context: .
+            file: Dockerfile
+            publish: true
           - runner: ubuntu-24.04
             arch: amd64
             image: nginx
             context: nginx
+            file: nginx/Dockerfile
+            publish: true
           - runner: ubuntu-24.04-arm
             arch: arm64
             image: nginx
             context: nginx
+            file: nginx/Dockerfile
+            publish: true
+          - runner: ubuntu-24.04
+            arch: amd64
+            image: analytics
+            context: .
+            file: analytics/Dockerfile
+            publish: false
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+            image: analytics
+            context: .
+            file: analytics/Dockerfile
+            publish: false
     runs-on: ${{ matrix.runner }}
 
     steps:
@@ -67,7 +89,7 @@ jobs:
           docker build --tag psells:ci \
             --label org.opencontainers.image.source=https://github.com/${{ github.repository }} \
             --label org.opencontainers.image.revision=${{ github.sha }} \
-            ${{ matrix.context }}
+            --file ${{ matrix.file }} ${{ matrix.context }}
           docker image inspect --format '{{.Id}}' psells:ci > image-id
 
       # Two runs of the same scanner, because they answer different questions.
@@ -104,11 +126,11 @@ jobs:
       # which alone may write to the registry. Kept a day: only that job reads
       # them.
       - name: Save the scanned image
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: matrix.publish && github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: docker save psells:ci | gzip > image.tar.gz
 
       - name: Hand the scanned image to the publish job
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: matrix.publish && github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: image-${{ matrix.image }}-${{ matrix.arch }}

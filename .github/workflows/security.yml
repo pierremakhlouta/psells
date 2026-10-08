@@ -30,7 +30,7 @@ jobs:
           pip install pip-audit
 
       - name: Audit dependencies
-        run: pip-audit --requirement requirements.txt --requirement requirements-dev.txt
+        run: pip-audit --requirement requirements.txt --requirement requirements-dev.txt --requirement requirements-analytics.txt
   secrets:
     runs-on: ubuntu-latest
 

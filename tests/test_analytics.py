@@ -214,3 +214,71 @@ def test_the_env_example_names_both_analytics_passwords_with_placeholders():
 
     assert "PSELLS_WAREHOUSE_PASSWORD=change-me\n" in example
     assert "PSELLS_ETL_PASSWORD=change-me\n" in example
+
+
+# The analytics image -----------------------------------------------------------
+
+def dockerfile_lines(path):
+    """The instructions of a Dockerfile, continuation lines joined."""
+    text = read(path).replace("\\\n", " ")
+    return [" ".join(line.split()) for line in text.splitlines()
+            if line.strip() and not line.lstrip().startswith("#")]
+
+
+ANALYTICS_DOCKERFILE = os.path.join(ANALYTICS_DIR, "Dockerfile")
+APP_DOCKERFILE = os.path.join(psells.PROJECT_DIR, "Dockerfile")
+
+
+def test_the_analytics_image_starts_from_the_apps_pinned_base_with_its_fixes():
+    analytics = dockerfile_lines(ANALYTICS_DOCKERFILE)
+    app = dockerfile_lines(APP_DOCKERFILE)
+
+    assert [l for l in analytics if l.startswith("FROM ")] == [
+        l for l in app if l.startswith("FROM ")]
+    assert [l for l in analytics if l.startswith("RUN apt-get")] == [
+        l for l in app if l.startswith("RUN apt-get")]
+
+
+def test_the_analytics_image_copies_named_files_only_and_runs_as_its_own_user():
+    lines = dockerfile_lines(ANALYTICS_DOCKERFILE)
+
+    # Named files, never a folder, so nothing else can ride along.
+    assert [l for l in lines if l.startswith("COPY ")] == [
+        "COPY requirements-analytics.txt .", "COPY psells.py ./"]
+    assert "RUN useradd --create-home --uid 10002 analytics" in lines
+    users = [l for l in lines if l.startswith("USER ")]
+    assert users == ["USER analytics"]
+    assert lines.index("USER analytics") > max(
+        i for i, l in enumerate(lines) if l.startswith(("RUN ", "COPY ")))
+
+
+def requirement_pins(path):
+    return [line.split("#")[0].strip() for line in read(path).splitlines()
+            if line.split("#")[0].strip()]
+
+
+def test_the_analytics_requirements_are_exact_and_share_the_apps_driver():
+    root = psells.PROJECT_DIR
+    analytics = requirement_pins(os.path.join(root, "requirements-analytics.txt"))
+    app = requirement_pins(os.path.join(root, "requirements.txt"))
+
+    assert analytics and all("==" in pin for pin in analytics)
+    assert [p for p in analytics if p.startswith("psycopg")] == [
+        p for p in app if p.startswith("psycopg")]
+    # Nothing of the web's.
+    assert not {p.split("==")[0] for p in analytics} & {
+        "fastapi", "uvicorn", "jinja2", "python-multipart", "argon2-cffi"}
+
+
+def test_the_analytics_requirements_are_tested_audited_and_watched():
+    root = psells.PROJECT_DIR
+    workflows = os.path.join(root, ".github", "workflows")
+
+    assert "-r requirements-analytics.txt" in requirement_pins(
+        os.path.join(root, "requirements-dev.txt"))
+    assert "--requirement requirements-analytics.txt" in read(
+        os.path.join(workflows, "security.yml"))
+    dependabot = yaml.safe_load(read(os.path.join(root, ".github", "dependabot.yml")))
+    assert {"package-ecosystem": "docker", "directory": "/analytics"}.items() <= {
+        **next(u for u in dependabot["updates"]
+               if u.get("directory") == "/analytics")}.items()

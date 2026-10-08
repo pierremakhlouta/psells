@@ -1,0 +1,16 @@
+# The analytics image's dependencies, and nothing of the web's: the ETL runs
+# psells' own readers and reshapes their rows with pandas, in an image of its
+# own built from analytics/Dockerfile, so the app's image carries none of it.
+#
+# requirements-dev.txt includes this file, so the tests can import the ETL and
+# Dependabot and pip-audit cover it with the others.
+
+# Tables in memory: typing, reshaping, the date dimension. numpy is pinned too,
+# though only pandas uses it, because it is most of the image.
+pandas==3.0.6
+numpy==2.5.3
+
+# The same driver and version as requirements.txt, which psells.connect needs;
+# a test holds the two equal. It also loads the warehouse, with COPY, so pandas
+# needs no SQLAlchemy.
+psycopg[binary]==3.3.6

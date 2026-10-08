@@ -2,6 +2,8 @@
 # to test and maintain it. This is the file to install when working on the
 # project. A deployment installs requirements.txt instead.
 -r requirements.txt
+# The analytics image's packages, so the tests can import the ETL.
+-r requirements-analytics.txt
 
 pytest==9.1.1
 

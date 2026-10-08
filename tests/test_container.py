@@ -1216,11 +1216,26 @@ def test_what_is_published_is_what_was_scanned():
     builds = sorted((entry["image"], entry["arch"], entry["runner"])
                     for entry in jobs["app"]["strategy"]["matrix"]["include"])
 
-    # Both images on both architectures, each built on its own kind of machine.
-    assert builds == [("app", "amd64", "ubuntu-24.04"),
+    # Every image on both architectures, each built on its own kind of machine.
+    assert builds == [("analytics", "amd64", "ubuntu-24.04"),
+                      ("analytics", "arm64", "ubuntu-24.04-arm"),
+                      ("app", "amd64", "ubuntu-24.04"),
                       ("app", "arm64", "ubuntu-24.04-arm"),
                       ("nginx", "amd64", "ubuntu-24.04"),
                       ("nginx", "arm64", "ubuntu-24.04-arm")]
+    # Each from its own Dockerfile; only the app and nginx are published, since
+    # the analytics image runs only on the Mac, built there. A matrix entry
+    # that is not published never hands its image to the publish job.
+    entries = jobs["app"]["strategy"]["matrix"]["include"]
+    assert {(e["image"], e["file"], e["publish"]) for e in entries} == {
+        ("app", "Dockerfile", True), ("nginx", "nginx/Dockerfile", True),
+        ("analytics", "analytics/Dockerfile", False)}
+    assert "--file ${{ matrix.file }} ${{ matrix.context }}" in app
+    for step in jobs["app"]["steps"]:
+        if step.get("name") in ("Save the scanned image",
+                                "Hand the scanned image to the publish job"):
+            assert step["if"].startswith("matrix.publish && "), step["name"]
+    assert "for image in app nginx; do" in publish
     # The ID of the scanned image is recorded, and a loaded image that does
     # not have it is refused before anything is pushed.
     assert "docker image inspect --format '{{.Id}}' psells:ci > image-id" in app

@@ -53,6 +53,16 @@ updates:
       nginx:
         patterns: ["*"]
 
+  # analytics/Dockerfile's FROM line, the analytics image's base. A test holds
+  # it equal to the app's, so the two pull requests are merged together.
+  - package-ecosystem: "docker"
+    directory: "/analytics"
+    schedule:
+      interval: "weekly"
+    groups:
+      analytics:
+        patterns: ["*"]
+
   - package-ecosystem: "docker-compose"
     directory: "/"
     schedule:
