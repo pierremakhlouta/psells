@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The launchd job that runs refresh-analytics.sh on the hour and once at
+  login, so the analytics warehouse, and the page that reads it, keep up with
+  the real records with no step by hand. See refresh-analytics.sh.
+
+  A template, like the others here: __PROJECT_DIR__ and __HOME__ are filled in
+  when it is installed into ~/Library/LaunchAgents. The README has the install
+  command. launchd never starts a job again while it is still running, so a
+  slow run cannot overlap the next.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>local.psells.analytics</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__PROJECT_DIR__/refresh-analytics.sh</string>
+    </array>
+
+    <!-- On the hour, every hour. A Mac asleep on the hour runs it on waking. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <!-- And once when the job is loaded: at login, and when it is installed. -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- refresh-analytics.sh writes its verdict to psells-etl.log. Anything a
+         command prints on the way lands here. -->
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/psells-etl.launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/psells-etl.launchd.log</string>
+</dict>
+</plist>

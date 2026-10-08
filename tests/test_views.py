@@ -269,3 +269,16 @@ def test_a_rebuild_with_the_views_in_place_works(warehouse):
     assert len(view(warehouse, "sales_by_month")) == 4
     (kpis,) = view(warehouse, "kpis")
     assert kpis["sales"] == 6
+
+
+def test_the_warehouse_is_stale_once_built_more_than_two_hours_ago(db):
+    from datetime import timedelta
+
+    data = etl.extract(db)
+    tables = etl.transform(data)
+    now = db.execute("SELECT now() AS now").fetchone()["now"]
+
+    etl.load(db, tables, data["totals"], now - timedelta(hours=1, minutes=59))
+    assert view(db, "kpis")[0]["stale"] is False
+    etl.load(db, tables, data["totals"], now - timedelta(hours=2, minutes=1))
+    assert view(db, "kpis")[0]["stale"] is True

@@ -1253,6 +1253,6 @@ built from nothing and checked on every push. An ETL builds an analytics
 warehouse from the business records through psells' own functions, checked
 against the dashboard before it commits, and SQL views over it answer the
 business questions, shown on a page in PSells with charts drawn on the
-server. Planned next are a forecast and a scheduled refresh, then
-architecture documents for the whole system, carrying the same data model and
-business rules through each step.
+server and kept current by an hourly refresh. Planned next are architecture
+documents for the whole system, carrying the same data model and business
+rules through each step.

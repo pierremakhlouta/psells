@@ -151,7 +151,9 @@ SELECT *,
 FROM products;
 
 
--- The headline figures, one row, with how fresh they are.
+-- The headline figures, one row, with how fresh they are. stale is the one
+-- rule for a warehouse too old to trust: built more than two hours ago, which
+-- on the Mac, where it is rebuilt every hour, means two runs have failed.
 CREATE VIEW kpis AS
 WITH stock AS (
     SELECT count(*)                         AS products,
@@ -182,7 +184,9 @@ SELECT products::bigint, products_in_stock::bigint,
        profit_cents::numeric / NULLIF(revenue_cents, 0) AS margin,
        sold::numeric / NULLIF(received, 0)              AS sell_through,
        first_sale, last_sale,
-       (SELECT finished_at FROM etl_run)                AS built_at
+       (SELECT finished_at FROM etl_run)                AS built_at,
+       COALESCE((SELECT finished_at FROM etl_run) < now() - interval '2 hours',
+                true)                                   AS stale
 FROM stock, money, paid;
 
 

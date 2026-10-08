@@ -182,3 +182,14 @@ def test_a_ratio_is_shown_to_one_decimal_half_away_from_zero():
 
 def test_nothing_to_divide_by_is_not_a_percentage():
     assert psells.format_ratio(None) == "n/a"
+
+
+def test_a_stale_warehouse_is_said_on_the_page(client, built):
+    built.execute("UPDATE etl_run SET finished_at = now()")
+    _, fresh = page(client)
+    built.execute("UPDATE etl_run SET finished_at = now() - interval '3 hours'")
+    _, stale = page(client)
+
+    warning = "The warehouse was last built more than two hours ago"
+    assert warning not in fresh
+    assert warning in stale

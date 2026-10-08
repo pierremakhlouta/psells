@@ -15,7 +15,10 @@
 {% if unavailable %}
 <p class="empty">{{ unavailable }}</p>
 {% else %}
-<p class="lead">From the analytics warehouse{% if built_at %}, built {{ built_at }}{% endif %}. Rebuild it to include records made since.</p>
+<p class="lead">From the analytics warehouse{% if built_at %}, built {{ built_at }}{% endif %}. It is rebuilt every hour.</p>
+{% if kpis.stale %}
+<p class="form-error" role="status">The warehouse was last built more than two hours ago, so the hourly refresh may be failing and these figures may be out of date. See ~/Library/Logs/psells-etl.log.</p>
+{% endif %}
 
 <dl class="kpis" aria-label="Headline figures">
   <div><dt>Revenue</dt><dd class="num">{{ kpis.revenue_cents|money }}</dd></div>
