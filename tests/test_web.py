@@ -12,6 +12,7 @@ markup in the browser.
 """
 
 import os
+import re
 from datetime import date
 
 import pytest
@@ -400,7 +401,8 @@ def test_every_page_links_to_the_out_of_stock_page_from_the_nav(client, db):
     for path in ["/", "/out-of-stock", "/products/new", "/products/1/edit",
                  "/payments/new"]:
         page = client.get(path).text
-        assert 'href="http://testserver/out-of-stock">Out of stock</a>' in page
+        current = ' aria-current="page"' if path == "/out-of-stock" else ""
+        assert f'href="http://testserver/out-of-stock"{current}>Out of stock</a>' in page
 
 
 def test_selling_the_last_unit_is_confirmed_with_a_link_to_out_of_stock(
@@ -502,8 +504,31 @@ def test_every_page_links_to_the_history_pages_from_the_nav(client, db, path):
 
     for page in ["/", "/out-of-stock", *HISTORY_PAGES, "/products/new",
                  "/products/1/edit", "/payments/new"]:
-        assert f'href="http://testserver{path}">{label}</a>' in client.get(
+        # Marked as the current page on its own page, and only there.
+        current = ' aria-current="page"' if page == path else ""
+        assert f'href="http://testserver{path}"{current}>{label}</a>' in client.get(
             page).text, page
+
+
+def current_links(html):
+    return re.findall(r'<a href="[^"]*" aria-current="page">([^<]*)</a>', html)
+
+
+@pytest.mark.parametrize("path, label", [
+    ("/", "Inventory"), ("/out-of-stock", "Out of stock"),
+    ("/sales-history", "Sales"), ("/returns-history", "Returns"),
+    ("/payments-history", "Payments"), ("/analytics", "Analytics"),
+    ("/products/new", "Add product"), ("/payments/new", "Record payment"),
+])
+def test_the_menu_marks_the_page_being_shown(client, db, path, label):
+    assert current_links(client.get(path).text) == [label]
+
+
+def test_a_page_not_in_the_menu_marks_none(client, db):
+    add_product(db, 1, quantity_received=1)
+
+    for page in ["/products/1/edit", "/products/1/sell", "/products/1/return"]:
+        assert current_links(client.get(page).text) == [], page
 
 
 def test_the_sales_page_shows_sales_history_newest_first(client, db):

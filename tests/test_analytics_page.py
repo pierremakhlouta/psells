@@ -166,7 +166,8 @@ def test_the_page_needs_a_login(anonymous):
 
 def test_the_nav_links_the_page(client, built):
     _, html = page(client)
-    assert 'href="http://testserver/analytics">Analytics</a>' in html
+    # Its own page, so marked as the one being shown.
+    assert 'href="http://testserver/analytics" aria-current="page">Analytics</a>' in html
 
 
 # The percent filter --------------------------------------------------------------
