@@ -72,7 +72,7 @@ spec:
           hostnames: ["app"]
       containers:
         - name: app
-          image: ghcr.io/pierremakhlouta/psells:de10ecce35c3e3bb53e215399b050ff84b3f6f8b@sha256:4a972491447c691be7bf7ae418df531372d26286af5fbcffe11f7ded8fc43693
+          image: ghcr.io/pierremakhlouta/psells:5052fe4f69113ce0be2c825afb3599e4a1b38c5b@sha256:c7acb80c4e87168b99facc86b19a338656bc337b8e94396131da17bdf4e3c5cc
           # The image's own command, but on the pod's loopback only.
           command: ["uvicorn", "api:app", "--host", "127.0.0.1", "--port", "8000"]
           env:
@@ -125,7 +125,7 @@ spec:
               mountPath: /tmp
 
         - name: nginx
-          image: ghcr.io/pierremakhlouta/psells:nginx-de10ecce35c3e3bb53e215399b050ff84b3f6f8b@sha256:6d9692a2dc367b18252c4ba863970f510bd044b63358e4b327f6a67de6c8b81d
+          image: ghcr.io/pierremakhlouta/psells:nginx-5052fe4f69113ce0be2c825afb3599e4a1b38c5b@sha256:a7fa9e8f6abe5cabdeafac760cabe8b0b2e56e4563c046ee002fb2b760b4c547
           ports:
             - name: https
               containerPort: 8443
