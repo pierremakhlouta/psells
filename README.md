@@ -1,44 +1,62 @@
 # PSells
 
 [![Tests](https://github.com/pierremakhlouta/psells/actions/workflows/tests.yml/badge.svg)](https://github.com/pierremakhlouta/psells/actions/workflows/tests.yml)
-[![Security](https://github.com/pierremakhlouta/psells/actions/workflows/security.yml/badge.svg)](https://github.com/pierremakhlouta/psells/actions/workflows/security.yml)
 [![Lint](https://github.com/pierremakhlouta/psells/actions/workflows/lint.yml/badge.svg)](https://github.com/pierremakhlouta/psells/actions/workflows/lint.yml)
+[![Security](https://github.com/pierremakhlouta/psells/actions/workflows/security.yml/badge.svg)](https://github.com/pierremakhlouta/psells/actions/workflows/security.yml)
+[![Image](https://github.com/pierremakhlouta/psells/actions/workflows/image.yml/badge.svg)](https://github.com/pierremakhlouta/psells/actions/workflows/image.yml)
 [![Kubernetes](https://github.com/pierremakhlouta/psells/actions/workflows/kubernetes.yml/badge.svg)](https://github.com/pierremakhlouta/psells/actions/workflows/kubernetes.yml)
 
-An inventory and profit tracker for my reselling business, used from a browser
-or from the terminal.
+The inventory and profit system I run my reselling business on, used from a
+browser or from the terminal, and built one layer at a time as a DevOps,
+cloud and SRE portfolio: from a Python program that replaced a spreadsheet to
+containers, HTTPS, CI that ships to AWS, monitoring against service level
+objectives, Kubernetes, and an analytics warehouse.
 
-PSells replaces the spreadsheet that used to run the business. It tracks the
-products held, the sales made, stock returned to the supplying partner, and the
-payouts made to that partner, and computes a live dashboard from all four.
+The real business runs on a Mac. A copy holding invented records only runs on
+AWS at `https://psells.lakeshorefreight.me`.
 
-How the whole system fits together, with diagrams, is in
-[ARCHITECTURE.md](ARCHITECTURE.md); what to do, from everyday tasks to
-incidents and rebuilding, in [RUNBOOK.md](RUNBOOK.md); why each part is the
-way it is, in
-[DECISIONS.md](DECISIONS.md); what the data means, in
-[DATA_MODEL.md](DATA_MODEL.md).
+## What it covers
 
-## What it does
+- **The business.** Products held, sales, stock returned to the supplying
+  partner and payouts to that partner, each item's partner cut from a rule
+  of its own, and a live dashboard of stock, revenue, profit and the balance
+  owed. The web pages, the terminal application and the HTTP API call the
+  same functions, so they always agree. A sale keeps its own figures, and a
+  correction keeps the record as it was in a log that only grows.
+- **Running it on the Mac.** nginx, the application and PostgreSQL in
+  containers under Compose, served over HTTPS from a certificate authority of
+  its own, behind a login. It starts at login, backs itself up every morning
+  and proves each backup restores, keeps an encrypted copy off the Mac, and
+  shows a notification when a job fails or a certificate nears its end.
+- **CI and delivery.** Five workflows on every push: the tests against a real
+  PostgreSQL, lint for the shell scripts, nginx and Terraform, a dependency
+  audit and a secret scan of the whole history, the images built for two
+  architectures and scanned, and the Kubernetes manifests deployed to a
+  throwaway cluster. A push to `main` that passes them ships to AWS, with no
+  stored keys.
+- **The cloud.** The AWS server is described in Terraform and rebuilt from
+  it, with a managed database and a load balancer behind a switch.
+- **Reliability.** The demonstration is monitored from outside and inside
+  against two service level objectives, with one alert and a dashboard, all
+  in code, and a deliberate outage was written up as a
+  [postmortem](postmortems/2026-10-05-demo-database-stopped.md).
+- **Kubernetes.** The same images run on a local cluster from the manifests
+  in `k8s/`.
+- **Analytics.** An ETL builds a star-schema warehouse from the records, checked
+  against the dashboard before it commits; SQL views answer the business
+  questions, on a page with charts drawn on the server, refreshed hourly.
 
-- Full inventory management: view, browse by category, search, add, edit, delete
-- Records sales, returns to the partner, and partner payouts
-- Lists the products in stock apart from those that are not, with the reason
-  each ran out, and the full history of sales, returns and payments
-- Corrects a sale, return or payment entered wrongly, by editing or deleting
-  it, and keeps the record as it was in a log that only grows
-- Does all of it from a browser, in server-rendered pages, or from the terminal
-- Works out each item's partner cut from a rule set per item
-- Computes stock levels, revenue, profit, and the balance owing to the partner
-- Refuses to delete a product that has sales or returns against it
-- Asks for a login before every page and endpoint, with a token in every form
-- Runs as three containers, nginx in front of the application and a PostgreSQL
-  database beside it, with one command
-- Backs itself up daily, on a schedule, and proves each copy restores
-- Runs a public demonstration on AWS, with invented records only, at
-  `https://psells.lakeshorefreight.me`
-- Watches that demonstration from outside and inside, against two service
-  level objectives, with one alert and a dashboard, all described in code
+## Where to read next
+
+- [ARCHITECTURE.md](ARCHITECTURE.md): how the whole system fits together, with
+  diagrams.
+- [RUNBOOK.md](RUNBOOK.md): what to do, from everyday tasks to incidents and
+  rebuilding from nothing.
+- [DECISIONS.md](DECISIONS.md): why each part is the way it is, indexed by
+  area.
+- [DATA_MODEL.md](DATA_MODEL.md): what the data means.
+- The rest of this file: running it, each part in turn, the tests, and the
+  known limitations.
 
 Every figure that can be derived is computed on demand rather than stored, so no
 total can drift out of sync with the records it came from. See
@@ -1341,5 +1359,8 @@ against the dashboard before it commits, and SQL views over it answer the
 business questions, shown on a page in PSells with charts drawn on the
 server and kept current by an hourly refresh. The whole system is described,
 with diagrams, in ARCHITECTURE.md, and how to run and repair it in
-RUNBOOK.md, each procedure tried before it was written down. The same data
+RUNBOOK.md, each procedure tried before it was written down. On the Mac, where
+the business lives, each morning's backup also leaves the machine encrypted,
+and every background job says when it fails, as does a certificate a month
+before it expires. The same data
 model and business rules have been carried through every step.
