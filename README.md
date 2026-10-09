@@ -535,9 +535,17 @@ without its grants, in one transaction, after which the ETL's role is made
 again. The command given here until 9 October 2026 failed on a new stack for
 both reasons.
 
-Every copy of the real database is on the same disk as it. The demonstration
-server's backups go to S3, described below, but they hold invented records
-only: the real data never leaves the Mac.
+Each morning's backup also leaves the Mac, encrypted. `offsite-backup.sh`
+packs the dump and the configuration into one archive, encrypts it with
+[age](https://age-encryption.org) to the public key in
+`data/backup-recipient.txt`, writes it into iCloud Drive's `PSells-Backups`
+folder, keeps 30 days there too, and proves each copy the morning it is made
+by decrypting it with the private key in the Mac's Keychain and comparing it
+with the original. iCloud only ever holds ciphertext. The private key is kept
+twice, in the Keychain and in a password manager, so a lost Mac loses
+nothing; restoring from that copy is in RUNBOOK.md. This is the one way the
+real records leave the Mac, and they leave encrypted. The demonstration
+server's backups go to S3, described below, and hold invented records only.
 
 ## The demonstration on AWS
 

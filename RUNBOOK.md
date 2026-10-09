@@ -130,8 +130,27 @@ say ok. A backup by hand, before a risky change:
 ./backup.sh && tail -1 ~/PSells-Backups/backup.log
 ```
 
-Every copy is on the same disk as the database; the demonstration's backups
-go to S3 but hold invented records only.
+Each backup is also encrypted and copied to iCloud Drive's `PSells-Backups`
+folder, kept 30 days, and proved by decrypting it with the Keychain's key; the
+log's second line for the day says `offsite ok`. The private key is also in
+your password manager, as "PSells backup key (age)". The demonstration's
+backups go to S3 and hold invented records only.
+
+### Restore from the off-Mac copy
+
+When the Mac and its backups are gone. On the new Mac, with age installed
+(`brew install age`) and iCloud Drive signed in, copy the key from your
+password manager to the clipboard, then unpack the newest copy into a folder
+of its own:
+
+```
+mkdir -p ~/PSells-Restore && cd ~/PSells-Restore && ls -1t ~/Library/Mobile\ Documents/com~apple~CloudDocs/PSells-Backups/*.tar.age | head -1 | xargs -I{} sh -c 'pbpaste | age -d -i - "{}" | tar -xf -' && pbcopy < /dev/null && ls -1
+```
+
+It lists the dump and the configuration copy. Put the configuration in place
+as `data/config.json`, then restore the dump as in "Restore a backup", with
+`dump=~/PSells-Restore/psells-...dump`. Tried with invented files and a
+throwaway key, 9 October 2026: the dump comes back identical.
 
 ### Restore a backup
 
@@ -310,10 +329,10 @@ Tried: many times, 7 to 9 October 2026.
    AWS CLI and its `session-manager-plugin`, Terraform, `kind` and `kubectl`;
    clone the repository; `python3 -m venv venv && venv/bin/pip install -r
    requirements-dev.txt`.
-2. Put back the two things that are not in the repository and not in the
-   dumps: `.env` (from `.env.example`, with new passwords) and
-   `data/config.json`, the real partner percentage, which must be written by
-   hand from what was agreed.
+2. Put back what is not in the repository: `.env`, from `.env.example` with
+   new passwords, and `data/config.json`, the real partner percentage, whose
+   copy every backup carries beside its dump (`config-STAMP.json`; from the
+   off-Mac copy, see "Restore from the off-Mac copy").
 3. Make the CA and the certificate and trust the CA, as README's "The
    certificate" says: `./make-certificate.sh`.
 4. Start the database alone, restore the latest dump as in "Restore a

@@ -7,7 +7,8 @@
 #
 # Takes a pg_dump of the database in the Compose stack into
 # ~/PSells-Backups/daily/, proves the dump restores, appends a line to
-# ~/PSells-Backups/backup.log, and removes copies older than KEEP_DAYS.
+# ~/PSells-Backups/backup.log, puts an encrypted copy into iCloud Drive with
+# offsite-backup.sh, and removes copies older than KEEP_DAYS.
 
 # -e  stop at the first command that fails, rather than carrying on and
 #     reporting success at the end.
@@ -134,6 +135,14 @@ cp "$CONFIG_FILE" "$BACKUP_DIR/config-$STAMP.json" \
 BYTES="$(wc -c < "$TARGET" | tr -d ' ')"
 
 log "ok  psells-$STAMP.dump  ${BYTES} bytes  ${RESTORED} products, restored and counted"
+
+# Every copy above is on the Mac's own disk. offsite-backup.sh puts the dump
+# and the configuration, encrypted, into iCloud Drive, and proves the copy
+# decrypts; see it for how. A failure there is logged as one, after the line
+# above, so the local backup still counts.
+OFFSITE="$("$SCRIPT_DIR/offsite-backup.sh" "psells-$STAMP.dump" "config-$STAMP.json" 2>&1)" \
+    || fail "the off-Mac copy: $OFFSITE"
+log "offsite ok  $OFFSITE"
 
 # Remove old copies. The -name filters matter: a -delete with a loose pattern
 # is how people remove things they meant to keep. The .db pattern retires the

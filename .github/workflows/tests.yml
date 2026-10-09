@@ -48,5 +48,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
 
+      # The off-Mac backup's tests encrypt and decrypt for real, with age,
+      # which the runner lacks; Ubuntu's own package, as Homebrew's on the Mac.
+      - name: Install age
+        run: sudo apt-get install --yes --no-install-recommends age && age --version
+
       - name: Run tests
         run: pytest -v

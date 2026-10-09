@@ -42,6 +42,9 @@ def named_files(text):
     names = set()
     for token in re.findall(r"`([^`\s]+)`", text):
         token = token.removeprefix("./")
+        # A placeholder for a file in the backups, not one in the repository.
+        if "STAMP" in token or "..." in token or "=" in token:
+            continue
         if token.startswith(("~", "data/", ".env", "/", "http")):
             continue
         if "/" in token or re.fullmatch(r"[\w.-]+\.(py|sh|sql|yaml|yml|md|conf|txt|json|plist|service|timer)", token) \
