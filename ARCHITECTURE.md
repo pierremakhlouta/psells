@@ -212,7 +212,8 @@ flowchart LR
   (published images, the server's site and certificate, the monitoring agent)
   and `compose.aws-analytics.yaml` for the warehouse and ETL, each under a
   memory ceiling. systemd timers renew the certificate, back the database up
-  to S3 and rebuild the warehouse every hour.
+  to S3, rebuild the warehouse every hour, and put the invented records back
+  every night, since the demo's login is public.
 - **Secrets** are in Parameter Store, written into a root-only `.env` on each
   deploy; nothing secret is in the repository or in Terraform's state.
 - **Terraform** (`infra/aws/`, state in S3) describes all of it. A managed

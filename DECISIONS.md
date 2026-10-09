@@ -110,6 +110,7 @@ part, says so in its last line and points to what replaced it.
 - [The password is set from inside the stack, never from a page](#the-password-is-set-from-inside-the-stack-never)
 - [Passwords are at least fifteen characters, since the login went public](#passwords-are-at-least-fifteen-characters-since-the-login)
 - [Every commit is scanned for secrets on every push](#every-commit-is-scanned-for-secrets-on-every-push)
+- [The demo's login is public, and its records are put back every night](#the-demos-login-is-public-and-its-records-reset-nightly)
 
 ### Containers and the Mac
 
@@ -1545,3 +1546,17 @@ part, says so in its last line and points to what replaced it.
   holds it there. Having nginx look the name up on every request was turned
   down: it changes how each request is proxied, and the cluster would need a
   different setting.
+
+- <a id="the-demos-login-is-public-and-its-records-reset-nightly"></a>**The demo's login is public, and its records are put back every night.** A
+  demonstration nobody can log in to shows a login page and nothing else. Its
+  username and password are published, so anyone can use every page,
+  including adding, editing and deleting the invented records, and each
+  night a timer empties the records and the corrections log and loads the
+  seed again, in one transaction that keeps the login. The corrections go
+  with the records they describe, whose ids the seed hands out again. The
+  password can be changed only on the server, never from the web, and the
+  script refuses to run beside the real configuration. Turned down: a demo
+  with no login, which would need a switch in the one check every route
+  passes, a switch that set on the Mac would open the real business; and a
+  read-only account, a new kind of account in every write route. The cost is
+  that, until the night, what one visitor writes is seen by the next.

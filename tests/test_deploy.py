@@ -22,6 +22,7 @@ import subprocess
 import pytest
 import yaml
 
+import auth
 import psells
 
 
@@ -32,6 +33,9 @@ SERVICE = os.path.join(DEPLOY_DIR, "psells-certbot-renew.service")
 TIMER = os.path.join(DEPLOY_DIR, "psells-certbot-renew.timer")
 BACKUP_SERVICE = os.path.join(DEPLOY_DIR, "psells-backup.service")
 BACKUP_TIMER = os.path.join(DEPLOY_DIR, "psells-backup.timer")
+RESET = os.path.join(DEPLOY_DIR, "reset-demo.sh")
+RESET_SERVICE = os.path.join(DEPLOY_DIR, "psells-reset.service")
+RESET_TIMER = os.path.join(DEPLOY_DIR, "psells-reset.timer")
 
 ORIGINAL_ENV = "POSTGRES_PASSWORD=the-real-one\n"
 
@@ -45,6 +49,7 @@ def project(tmp_path):
     (folder / "deploy" / "aws").mkdir(parents=True)
     shutil.copy(SCRIPT, folder / "deploy" / "aws" / "deploy.sh")
     shutil.copy(BACKUP, folder / "deploy" / "aws" / "backup-to-s3.sh")
+    shutil.copy(RESET, folder / "deploy" / "aws" / "reset-demo.sh")
     (folder / ".env").write_text(ORIGINAL_ENV)
 
     bin_dir = tmp_path / "bin"
@@ -194,7 +199,8 @@ def test_deploy_installs_and_enables_every_unit_in_the_folder():
 
     assert units == ["psells-analytics.service", "psells-analytics.timer",
                      "psells-backup.service", "psells-backup.timer",
-                     "psells-certbot-renew.service", "psells-certbot-renew.timer"]
+                     "psells-certbot-renew.service", "psells-certbot-renew.timer",
+                     "psells-reset.service", "psells-reset.timer"]
     for name in units:
         assert f"deploy/aws/{name}" in install, name
     assert len(enable) == 1
@@ -550,3 +556,94 @@ def test_the_hourly_service_runs_the_etl_alone_where_deploy_puts_it():
 def test_live_picks_one_postgres_image_though_the_warehouse_runs_it_too():
     assert ("image=$(compose config --images | grep '^postgres:' | sort -u)"
             in read(os.path.join(DEPLOY_DIR, "live-database.sh")))
+
+
+# The nightly reset of the demo's records ----------------------------------------
+
+def test_the_reset_refuses_where_the_real_records_are(project):
+    folder, bin_dir, calls = project
+    (folder / "data").mkdir()
+    (folder / "data" / "config.json").write_text("{}")
+
+    result = run(folder, bin_dir, "reset-demo.sh")
+
+    assert result.returncode == 1
+    assert "data/config.json exists" in result.stderr
+    assert not calls.exists()
+
+
+def reset_statements():
+    """What reset-demo.sh sends to psql, split into statements."""
+    text = subprocess.run(["bash", "-c", f'. "{RESET}" && reset_sql'],
+                          capture_output=True, text=True, check=True).stdout
+    statements = [re.sub(r"^--.*$", "", s, flags=re.M).strip()
+                  for s in text.split(";\n")]
+    return [s.rstrip(";") for s in statements if s]
+
+
+def test_the_reset_is_one_transaction_that_empties_then_loads():
+    statements = reset_statements()
+
+    assert statements[0] == "BEGIN"
+    assert statements[1] == ("TRUNCATE corrections, sales, returns, payments, "
+                             "products RESTART IDENTITY")
+    assert statements[-1] == "COMMIT"
+    assert statements.count("BEGIN") == 1 and statements.count("COMMIT") == 1
+
+
+def copy_a_product(db, category, name):
+    """A new product like the first one, under another category and name,
+    whatever columns the schema gives products; returns its id."""
+    columns = [row["column_name"] for row in db.execute(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_name = 'products' AND column_name NOT IN ('id', 'category', 'name') "
+        "ORDER BY ordinal_position")]
+    listed = ", ".join(columns)
+    return db.execute(
+        f"INSERT INTO products (category, name, {listed}) "
+        f"SELECT %s, %s, {listed} FROM products ORDER BY id LIMIT 1 RETURNING id",
+        (category, name)).fetchone()["id"]
+
+
+def test_the_reset_puts_the_seed_back_and_keeps_the_login(db):
+    # A visitor's day: a product added, a sale deleted and logged, and the
+    # demo's one login.
+    auth.set_password(db, "demo", "an-invented-demo-password")
+    for statement in reset_statements()[1:-1]:
+        db.execute(statement)
+    copy_a_product(db, "Visitors", "Something odd")
+    sale = db.execute("SELECT * FROM sales ORDER BY id LIMIT 1").fetchone()
+    db.execute("INSERT INTO corrections (record_type, record_id, action, before) "
+               "VALUES ('sale', %s, 'delete', '{}')", (sale["id"],))
+    db.execute("DELETE FROM sales WHERE id = %s", (sale["id"],))
+
+    # Inside the test's transaction, without its BEGIN and COMMIT.
+    for statement in reset_statements()[1:-1]:
+        db.execute(statement)
+
+    counts = {table: db.execute(f"SELECT count(*) AS n FROM {table}").fetchone()["n"]
+              for table in ("products", "sales", "returns", "payments",
+                            "corrections", "users")}
+    assert counts == {"products": 80, "sales": 240, "returns": 12,
+                      "payments": 11, "corrections": 0, "users": 1}
+    assert db.execute("SELECT count(*) AS n FROM products WHERE category = 'Visitors'"
+                      ).fetchone()["n"] == 0
+    # The ids start again where the seed leaves them.
+    assert copy_a_product(db, "Hats", "Next") == 81
+
+
+def test_the_reset_runs_nightly_before_the_backup_and_then_rebuilds_analytics():
+    service = unit(RESET_SERVICE)["Service"]
+    timer = unit(RESET_TIMER)
+    text = read(RESET)
+
+    assert service["Type"] == "oneshot"
+    assert service["ExecStart"] == "/opt/psells/deploy/aws/reset-demo.sh"
+    assert os.access(RESET, os.X_OK)
+    assert timer["Timer"]["OnCalendar"] == "*-*-* 07:00:00"
+    assert unit(BACKUP_TIMER)["Timer"]["OnCalendar"] == "*-*-* 08:00:00"
+    assert timer["Timer"]["Persistent"] == "true"
+    assert timer["Install"]["WantedBy"] == "timers.target"
+    # The warehouse after the records, through the server's files.
+    assert text.index("live psql -q -v ON_ERROR_STOP=1") < text.index("run --rm --no-deps etl")
+    assert SERVER_FILES.replace(" -f compose.analytics.yaml", " \\\n        -f compose.analytics.yaml") in text

@@ -662,8 +662,15 @@ How it is put together:
   private, encrypted S3 bucket that deletes each copy after thirty days.
 - **The sample records.** A deploy loads `sample_data/seed.sql` only into a
   database with no products, so a new server starts with them and a running one
-  keeps whatever it holds. A change to the seed reaches the demo only once its
-  records are emptied, or the server rebuilt.
+  keeps whatever it holds. A change to the seed reaches the demo at the next
+  nightly reset, or once the server is rebuilt.
+- **A public login, reset every night.** The demo's username and password are
+  published, so anyone can try it, and may add, edit and delete the invented
+  records. At 07:00 UTC `deploy/aws/reset-demo.sh` (`psells-reset.timer`)
+  empties the records and the corrections log and loads the seed again, in
+  one transaction that keeps the login, then rebuilds the warehouse. Nobody
+  can change the password from the web; only `set_password.py` on the server
+  can. It refuses to run beside `data/config.json`, so never on the Mac.
 
 ### Shipping from a push
 
@@ -1120,7 +1127,10 @@ commands, and fails if either would do anything where `data/config.json`
 exists, or `deploy.sh` anywhere but the server's folder. It also checks the
 server gets the sample configuration only, that a backup is proved before it
 is sent, and that the systemd timers agree with `compose.aws.yaml` and with
-the script that installs them. It also checks that a certificate is fetched
+the script that installs them. The nightly reset is refused on the Mac, is
+one transaction, and is run against the test database: a visitor's product,
+deleted sale and correction are gone afterwards, the seed is back, the login
+is kept and the next id follows the seed's. It also checks that a certificate is fetched
 only when there is none, before the stack starts, and that `first-boot.sh`
 deploys only after every step that prepares the host. And it runs
 `live-database.sh` with stand-ins, checking the database container is reached
@@ -1296,8 +1306,10 @@ Worth stating plainly rather than leaving to be discovered.
 - **The login is a password and nothing else.** One account, a minimum of
   fifteen characters, no second factor. Argon2id makes each guess expensive and
   nginx limits how many arrive; a long passphrase is still the real
-  protection. On the Mac it is published on `127.0.0.1` only; the
-  demonstration server's login is public, in front of invented records.
+  protection. On the Mac it is published on `127.0.0.1` only. The
+  demonstration's username and password are published, in front of invented
+  records that are put back every night; until then, what a visitor writes
+  is seen by the next.
 - **Behind Docker Desktop, every browser on the Mac shares one login
   allowance.** nginx sees every connection as coming from Docker's gateway, so
   the five attempts a minute are counted for the machine, not for a browser.

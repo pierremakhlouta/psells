@@ -1,0 +1,13 @@
+# Once a day at 07:00 UTC, the middle of the night in Toronto, an hour
+# before the daily backup, so the backup holds the records as the seed gives
+# them. Persistent runs one the server was off for as soon as it starts.
+
+[Unit]
+Description=Put the PSells demo's invented records back every night
+
+[Timer]
+OnCalendar=*-*-* 07:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

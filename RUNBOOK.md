@@ -220,6 +220,27 @@ renewed, naming the command below.
 
 - **The demonstration's** is Let's Encrypt's, renewed by a timer twice a day.
 
+### The demo's public login and its nightly reset
+
+The demonstration's login is published, and its records are put back every
+night at 07:00 UTC by `deploy/aws/reset-demo.sh`, which keeps the login. Set
+or change the published password in a session on the server (the command
+below, under "The demonstration's alert email arrives"), then:
+
+```
+cd /opt/psells && sudo docker compose -f compose.yaml -f compose.aws.yaml exec app python set_password.py
+```
+
+Give the existing username; given another, it names the one there is. To
+put the records back now rather than tonight:
+
+```
+sudo systemctl start psells-reset.service && journalctl -u psells-reset.service -n 5 --no-pager
+```
+
+Tried: the reset's statements against the test database, and the script's
+refusal beside `data/config.json`; on the server once deployed.
+
 ### Rotate a password
 
 - **The ETL's or the page's read-only role**: change the line in `.env`

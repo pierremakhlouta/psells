@@ -1,0 +1,13 @@
+# Puts the demo's invented records back. Started by psells-reset.timer;
+# deploy/aws/deploy.sh installs both into /etc/systemd/system. What it
+# printed, counts only, and any failure, is in
+# journalctl -u psells-reset.service.
+
+[Unit]
+Description=Put the PSells demo's invented records back
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/psells/deploy/aws/reset-demo.sh

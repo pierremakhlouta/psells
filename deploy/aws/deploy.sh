@@ -287,14 +287,15 @@ echo "== analytics"
 # timer below rebuilds it every hour after.
 compose run --rm --no-deps etl || fail "the analytics ETL did not complete"
 
-echo "== timers: certificate renewal, the daily backup to S3, the hourly analytics"
+echo "== timers: certificate renewal, the daily backup to S3, the hourly analytics, the nightly reset"
 install -m 644 deploy/aws/psells-certbot-renew.service deploy/aws/psells-certbot-renew.timer \
     deploy/aws/psells-backup.service deploy/aws/psells-backup.timer \
     deploy/aws/psells-analytics.service deploy/aws/psells-analytics.timer \
+    deploy/aws/psells-reset.service deploy/aws/psells-reset.timer \
     /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable --now psells-certbot-renew.timer psells-backup.timer psells-analytics.timer
-systemctl list-timers psells-certbot-renew.timer psells-backup.timer psells-analytics.timer --no-pager
+systemctl enable --now psells-certbot-renew.timer psells-backup.timer psells-analytics.timer psells-reset.timer
+systemctl list-timers psells-certbot-renew.timer psells-backup.timer psells-analytics.timer psells-reset.timer --no-pager
 
 echo "== deployed $(git log --oneline -1)"
 # What the application's container is really running, which the Deploy
