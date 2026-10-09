@@ -241,11 +241,13 @@ Give the existing username; given another, it names the one there is. To
 put the records back now rather than tonight:
 
 ```
-sudo systemctl start psells-reset.service && journalctl -u psells-reset.service -n 5 --no-pager
+sudo systemctl start psells-reset.service && sudo journalctl -u psells-reset.service -n 5 --no-pager
 ```
 
-Tried: the reset's statements against the test database, and the script's
-refusal beside `data/config.json`; on the server once deployed.
+Tried: the reset's statements against the test database, the script's
+refusal beside `data/config.json`, and on the server on 9 October 2026 (the
+seed's 80 products and 240 sales back, the warehouse rebuilt). The journal
+needs sudo: without it, it says "No entries".
 
 ### Rotate a password
 
@@ -331,7 +333,7 @@ A notification never carries a figure, only the job's reason.
 
 - **See**: the warning above the figures.
 - **Check**: `tail ~/Library/Logs/psells-etl.log` on the Mac, or on the
-  server `journalctl -u psells-analytics.service --since -3h`. Each line says
+  server `sudo journalctl -u psells-analytics.service --since -3h`. Each line says
   ok or the reason.
 - **Do**: fix the reason (Docker down, the database unhealthy, the warehouse
   down), then `./refresh-analytics.sh`. "does not add up" means the
