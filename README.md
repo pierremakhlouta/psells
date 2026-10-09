@@ -13,7 +13,9 @@ products held, the sales made, stock returned to the supplying partner, and the
 payouts made to that partner, and computes a live dashboard from all four.
 
 How the whole system fits together, with diagrams, is in
-[ARCHITECTURE.md](ARCHITECTURE.md); why each part is the way it is, in
+[ARCHITECTURE.md](ARCHITECTURE.md); what to do, from everyday tasks to
+incidents and rebuilding, in [RUNBOOK.md](RUNBOOK.md); why each part is the
+way it is, in
 [DECISIONS.md](DECISIONS.md); what the data means, in
 [DATA_MODEL.md](DATA_MODEL.md).
 
@@ -526,10 +528,12 @@ Install it as the backup job is, from the project folder:
 It runs once as soon as it is installed, which on a running stack changes
 nothing.
 
-To restore a dump into the stack's database, which must be empty:
-
-    docker compose exec -T db sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --no-owner --exit-on-error' \
-        < ~/PSells-Backups/daily/psells-<date>.dump
+To restore a dump, follow RUNBOOK.md's "Restore a backup": the database is
+emptied first, because a new stack's database already holds the tables
+`schema.sql` built and a restore on top of them fails, and the dump goes in
+without its grants, in one transaction, after which the ETL's role is made
+again. The command given here until 9 October 2026 failed on a new stack for
+both reasons.
 
 Every copy of the real database is on the same disk as it. The demonstration
 server's backups go to S3, described below, but they hold invented records
