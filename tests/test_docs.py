@@ -24,8 +24,10 @@ def read(path):
 
 
 def tracked_files():
-    """Every path git holds, and every folder above one."""
-    listed = subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True,
+    """Every path git holds or is about to (new files not yet committed), and
+    every folder above one."""
+    listed = subprocess.run(["git", "ls-files", "--cached", "--others",
+                             "--exclude-standard"], cwd=ROOT, capture_output=True,
                             text=True, check=True).stdout.split()
     paths = set(listed)
     for path in listed:

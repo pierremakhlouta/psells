@@ -240,6 +240,22 @@ corrections log's trigger come back.
 
 Each is what you see, what to check, and what to do.
 
+### A PSells notification appears
+
+The Mac's three background jobs show a notification, with a sound, when they
+fail, saying why:
+
+- **"PSells backup failed"**: the local backup or its off-Mac copy. The log
+  is `~/PSells-Backups/backup.log`. Fix the reason, then `./backup.sh` by hand
+  and check its last lines say ok and offsite ok.
+- **"PSells did not start"**: the login job. See "The site does not answer on
+  the Mac" below.
+- **"PSells analytics refresh failed"**: shown once, on the first failure
+  after a run that worked, not every hour. See "The analytics page says the
+  warehouse is more than two hours old" below.
+
+A notification never carries a figure, only the job's reason.
+
 ### The site does not answer on the Mac
 
 - **See**: the browser cannot reach `https://psells.localhost`.

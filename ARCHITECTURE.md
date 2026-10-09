@@ -115,7 +115,9 @@ flowchart LR
 - **The certificate** is signed by a certificate authority of PSells' own
   (`make-certificate.sh`), limited to the one name, which the Mac trusts.
 
-Three launchd jobs (`launchd/`) keep it running with no step by hand:
+Three launchd jobs (`launchd/`) keep it running with no step by hand, and
+each shows a macOS notification when it fails (`notify.sh`), since nothing
+else watches the Mac:
 `start-stack.sh` at login, since Docker Desktop's restart policy is not
 reliable across a boot; `backup.sh` at 09:00, which dumps the database,
 proves the dump restores into a throwaway database, and keeps 30 days; and

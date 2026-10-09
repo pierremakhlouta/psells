@@ -33,8 +33,17 @@ log() {
     printf '%s  %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" >> "$LOG_FILE"
 }
 
+# Logged, and shown as a notification only on the first failure after a run
+# that worked: it runs every hour, and Docker down overnight would otherwise
+# be a notification an hour. The page's stale warning covers the rest.
 fail() {
+    local previous
+    previous=$(tail -n 1 "$LOG_FILE" 2> /dev/null || true)
     log "FAILED: $1"
+    case "$previous" in
+        *"  FAILED: "*) ;;
+        *) "$SCRIPT_DIR/notify.sh" "PSells analytics refresh failed" "$1" || true ;;
+    esac
     exit 1
 }
 

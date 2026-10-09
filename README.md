@@ -547,6 +547,13 @@ nothing; restoring from that copy is in RUNBOOK.md. This is the one way the
 real records leave the Mac, and they leave encrypted. The demonstration
 server's backups go to S3, described below, and hold invented records only.
 
+The Mac is not monitored, so its three background jobs say when they fail:
+`backup.sh`, `start-stack.sh` and `refresh-analytics.sh` each show a macOS
+notification, with a sound, through `notify.sh`, giving the job's reason and
+never a figure. The hourly refresh shows one only on its first failure after
+a run that worked, so a night with Docker stopped is one notification, not
+eight.
+
 ## The demonstration on AWS
 
 A copy of PSells runs at `https://psells.lakeshorefreight.me`, on one small

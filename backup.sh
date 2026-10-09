@@ -42,8 +42,11 @@ log() {
     printf '%s  %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" >> "$LOG_FILE"
 }
 
+# A failure is logged and shown as a notification: the Mac is not monitored,
+# and a backup that stops working must not wait to be found when it is needed.
 fail() {
     log "FAILED: $1"
+    "$SCRIPT_DIR/notify.sh" "PSells backup failed" "$1" || true
     exit 1
 }
 

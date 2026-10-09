@@ -33,8 +33,11 @@ log() {
     printf '%s  %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" >> "$LOG_FILE"
 }
 
+# Logged and shown as a notification, since a stack that did not start is
+# otherwise noticed only when PSells does not open.
 fail() {
     log "FAILED: $1"
+    "$SCRIPT_DIR/notify.sh" "PSells did not start" "$1" || true
     exit 1
 }
 

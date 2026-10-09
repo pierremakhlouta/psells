@@ -93,12 +93,29 @@ def stand_in(path, body):
     path.chmod(0o755)
 
 
+NOTIFY_SCRIPT = os.path.join(psells.PROJECT_DIR, "notify.sh")
+
+
+def stand_in_osascript(bin_dir, tmp_path):
+    """An osascript that records each notification's arguments and script."""
+    record = tmp_path / "notifications"
+    stand_in(bin_dir / "osascript",
+             f'for arg in "$@"; do printf "%s|" "$arg" >> "{record}"; done\n'
+             f'echo >> "{record}"\ncat > "{tmp_path}/applescript"\n')
+
+
+def notifications(tmp_path):
+    record = tmp_path / "notifications"
+    return record.read_text().splitlines() if record.exists() else []
+
+
 def run_start(tmp_path, real_stack=True, docker_up=True):
     """start-stack.sh in a copy of the project; returns (exit code, the
     docker calls it made, its log)."""
     project = tmp_path / "psells"
     project.mkdir()
     shutil.copy(START_SCRIPT, project / "start-stack.sh")
+    shutil.copy(NOTIFY_SCRIPT, project / "notify.sh")
     if real_stack:
         (project / "data").mkdir()
         (project / "data" / "config.json").write_text("{}")
@@ -111,6 +128,7 @@ def run_start(tmp_path, real_stack=True, docker_up=True):
              f'[ "$1" = info ] && exit {0 if docker_up else 1}\nexit 0\n')
     # Twenty minutes of waiting, in no time.
     stand_in(bin_dir / "sleep", "exit 0\n")
+    stand_in_osascript(bin_dir, tmp_path)
 
     home = tmp_path / "home"
     result = subprocess.run(
@@ -194,19 +212,22 @@ def test_the_analytics_job_is_a_template_with_no_personal_paths():
     assert os.access(REFRESH_SCRIPT, os.X_OK)
 
 
-def run_refresh(tmp_path, real_stack=True, db_health="healthy", etl_ok=True):
+def run_refresh(tmp_path, real_stack=True, db_health="healthy", etl_ok=True,
+                earlier_log=""):
     """refresh-analytics.sh in a copy of the project; returns (exit code, the
     docker calls it made, its log)."""
     project = tmp_path / "psells"
-    project.mkdir()
+    project.mkdir(parents=True, exist_ok=True)
     shutil.copy(REFRESH_SCRIPT, project / "refresh-analytics.sh")
+    shutil.copy(NOTIFY_SCRIPT, project / "notify.sh")
     if real_stack:
         (project / "data").mkdir()
         (project / "data" / "config.json").write_text("{}")
 
     bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
+    bin_dir.mkdir(parents=True, exist_ok=True)
     calls = tmp_path / "calls"
+    stand_in_osascript(bin_dir, tmp_path)
     stand_in(bin_dir / "docker", f'''echo "$*" >> "{calls}"
 case "$*" in
   info*) exit 0 ;;
@@ -219,6 +240,9 @@ exit 0
     stand_in(bin_dir / "sleep", "exit 0\n")
 
     home = tmp_path / "home"
+    if earlier_log:
+        (home / "Library" / "Logs").mkdir(parents=True, exist_ok=True)
+        (home / "Library" / "Logs" / "psells-etl.log").write_text(earlier_log)
     result = subprocess.run(
         ["bash", str(project / "refresh-analytics.sh")], capture_output=True,
         text=True, env=dict(os.environ, HOME=str(home),
@@ -400,3 +424,71 @@ def test_the_backup_sends_the_copy_only_after_the_dump_is_proved():
     assert text.index('log "ok  psells-$STAMP.dump') < text.index(call)
     assert '|| fail "the off-Mac copy: $OFFSITE"' in text
     assert os.access(OFFSITE_SCRIPT, os.X_OK)
+
+
+
+# Notifications when a job fails ----------------------------------------------
+
+def test_a_stack_that_does_not_start_is_notified(tmp_path):
+    code, _, _ = run_start(tmp_path, docker_up=False)
+
+    assert code == 1
+    assert notifications(tmp_path) == [
+        "-|PSells did not start|Docker Desktop did not start within twenty minutes|"]
+
+
+def test_a_stack_that_starts_notifies_nothing(tmp_path):
+    code, _, _ = run_start(tmp_path)
+
+    assert code == 0
+    assert notifications(tmp_path) == []
+
+
+def test_the_refresh_notifies_its_first_failure_and_not_the_next(tmp_path):
+    ok = "2026-10-09 09:00:00  ok  Warehouse rebuilt: 1 products.\n"
+    failed = "2026-10-09 10:00:00  FAILED: the business database was not healthy\n"
+
+    run_refresh(tmp_path / "after_ok", etl_ok=False, earlier_log=ok)
+    run_refresh(tmp_path / "after_failed", etl_ok=False, earlier_log=ok + failed)
+    run_refresh(tmp_path / "first_ever", etl_ok=False)
+    run_refresh(tmp_path / "working", earlier_log=ok + failed)
+
+    assert len(notifications(tmp_path / "after_ok")) == 1
+    assert notifications(tmp_path / "after_ok")[0].startswith(
+        "-|PSells analytics refresh failed|the ETL did not complete: ")
+    assert notifications(tmp_path / "after_failed") == []
+    assert len(notifications(tmp_path / "first_ever")) == 1
+    assert notifications(tmp_path / "working") == []
+
+
+def test_a_message_reaches_applescript_as_an_argument_never_as_code(tmp_path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    stand_in_osascript(bin_dir, tmp_path)
+    message = 'odd "quotes" & do shell script "touch owned"'
+
+    result = subprocess.run(["bash", NOTIFY_SCRIPT, "PSells", message],
+                            env=dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}"))
+
+    assert result.returncode == 0
+    assert notifications(tmp_path) == [f"-|PSells|{message}|"]
+    assert "touch owned" not in (tmp_path / "applescript").read_text()
+
+
+def test_a_notification_that_cannot_be_shown_never_fails_the_job(tmp_path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    stand_in(bin_dir / "osascript", "exit 1\n")
+
+    result = subprocess.run(["bash", NOTIFY_SCRIPT, "PSells", "x"],
+                            env=dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}"))
+    assert result.returncode == 0
+
+
+def test_the_backup_notifies_every_failure():
+    with open(BACKUP_SCRIPT) as file:
+        text = file.read()
+
+    fail = text[text.index("fail() {"):text.index("}", text.index("fail() {"))]
+    assert '"$SCRIPT_DIR/notify.sh" "PSells backup failed" "$1" || true' in fail
+    assert os.access(NOTIFY_SCRIPT, os.X_OK)
