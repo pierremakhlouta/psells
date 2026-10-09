@@ -61,6 +61,12 @@ carry a new hash; reload nginx after the rebuild, or pages lose their styles:
 docker compose exec proxy nginx -t && docker compose exec proxy nginx -s reload
 ```
 
+The cluster takes nginx's files from the repository but runs the app image
+pinned in `k8s/app.yaml`, so a change to the style block also needs that pin
+moved, in a commit after it, to the images CI published for it (their
+digests from `docker buildx imagetools inspect`). Until then the Kubernetes
+check fails on the style hash, which is what it is for.
+
 A change to `nginx/` itself needs only that reload. A change to the analytics
 code needs the analytics image rebuilt:
 
