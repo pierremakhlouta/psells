@@ -17,6 +17,11 @@ services:
     # resolves the digest for the commit it deploys and writes it into .env.
     image: "${PSELLS_IMAGE:?set PSELLS_IMAGE in .env; deploy/aws/deploy.sh writes it}"
     build: !reset null
+    environment:
+      # Every page says it is a demonstration whose records are put back every
+      # night, since its login is public. Here only: the Mac and the cluster
+      # never read this file.
+      PSELLS_DEMO: "1"
     volumes:
       # AWS's certificate authorities for RDS in this region, which deploy.sh
       # fetches on every deploy. With RDS switched on, the app checks RDS's

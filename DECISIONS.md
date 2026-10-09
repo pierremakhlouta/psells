@@ -1559,4 +1559,6 @@ part, says so in its last line and points to what replaced it.
   with no login, which would need a switch in the one check every route
   passes, a switch that set on the Mac would open the real business; and a
   read-only account, a new kind of account in every write route. The cost is
-  that, until the night, what one visitor writes is seen by the next.
+  that, until the night, what one visitor writes is seen by the next. Every
+  page of the demo says so, from a setting only the server's
+  compose.aws.yaml makes.

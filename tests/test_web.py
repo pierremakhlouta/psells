@@ -2051,3 +2051,33 @@ def test_templates_use_only_the_allowed_filters():
         assert used <= ALLOWED_FILTERS, (
             f"{name} uses {sorted(used - ALLOWED_FILTERS)}"
         )
+
+
+# The demonstration's notice ------------------------------------------------------
+
+NOTICE = 'class="demo-notice"'
+
+
+def test_only_a_demo_setting_of_1_is_the_demo(monkeypatch):
+    for value, expected in [("1", True), ("", False), ("0", False),
+                            ("true", False), (None, False)]:
+        if value is None:
+            monkeypatch.delenv("PSELLS_DEMO", raising=False)
+        else:
+            monkeypatch.setenv("PSELLS_DEMO", value)
+        assert web.is_demo() is expected, value
+
+
+def test_the_demo_says_so_on_every_page_the_login_included(client, anonymous, monkeypatch):
+    monkeypatch.setitem(web.templates.env.globals, "demo", True)
+
+    assert NOTICE in anonymous.get("/login").text
+    for path in ["/", "/analytics", "/sales-history", "/products/new"]:
+        assert NOTICE in client.get(path).text, path
+
+
+def test_anywhere_else_no_page_says_it_is_a_demo(client, anonymous):
+    # The tests, like the Mac, set no PSELLS_DEMO.
+    assert web.templates.env.globals["demo"] is False
+    assert NOTICE not in anonymous.get("/login").text
+    assert NOTICE not in client.get("/").text

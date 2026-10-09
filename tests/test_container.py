@@ -1463,3 +1463,12 @@ def test_the_app_is_unhealthy_when_the_database_does_not():
 
     assert result.returncode != 0
     assert "DatabaseUnavailable" in result.stderr
+
+
+def test_only_the_aws_server_is_the_demo():
+    assert compose_aws()["services"]["app"]["environment"] == {"PSELLS_DEMO": "1"}
+    assert "PSELLS_DEMO" not in compose()["services"]["app"]["environment"]
+    # Nor the cluster, which runs the sample records on the Mac.
+    for name in os.listdir(os.path.join(PROJECT_DIR, "k8s")):
+        with open(os.path.join(PROJECT_DIR, "k8s", name), errors="ignore") as file:
+            assert "PSELLS_DEMO" not in file.read(), name

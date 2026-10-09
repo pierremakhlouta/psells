@@ -671,6 +671,9 @@ How it is put together:
   one transaction that keeps the login, then rebuilds the warehouse. Nobody
   can change the password from the web; only `set_password.py` on the server
   can. It refuses to run beside `data/config.json`, so never on the Mac.
+  Every page there, the login included, says it is a demonstration whose
+  records are put back every night: `compose.aws.yaml` sets `PSELLS_DEMO=1`,
+  which the Mac and the cluster never read.
 
 ### Shipping from a push
 

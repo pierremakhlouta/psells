@@ -44,6 +44,16 @@
 
     nav a { color: #f6f8fa; text-decoration: none; }
     nav a:hover { text-decoration: underline; }
+
+    /* Shown on the AWS demonstration only. */
+    .demo-notice {
+      margin: 0;
+      padding: 0.5rem 1rem;
+      text-align: center;
+      background: #fff8c5;
+      border-bottom: 1px solid #d4a72c;
+      color: #3b2300;
+    }
     /* The page being shown, marked in the markup with aria-current. */
     nav a[aria-current="page"] {
       font-weight: 600;
@@ -302,6 +312,11 @@
       {% endblock %}
     </nav>
   </header>
+
+  {% if demo %}
+  <p class="demo-notice">A demonstration with invented records. Change anything
+    you like: everything is put back every night.</p>
+  {% endif %}
 
   <main>
     {% block content %}{% endblock %}

@@ -67,6 +67,16 @@ templates.env.filters["money"] = psells.format_cents
 templates.env.filters["percent"] = psells.format_ratio
 
 
+def is_demo():
+    """True on the AWS demonstration, whose compose.aws.yaml sets PSELLS_DEMO
+    to 1, and nowhere else."""
+    return os.environ.get("PSELLS_DEMO", "") == "1"
+
+
+# Read once, at start: every page of the demo carries a notice saying so.
+templates.env.globals["demo"] = is_demo()
+
+
 @router.get("/", response_class=HTMLResponse)
 def inventory_page(request: Request, connection: Connection, q: str = "",
                    added: str = "", edited: str = "", sold: str = "",
