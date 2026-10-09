@@ -113,7 +113,9 @@ flowchart LR
 - **The warehouse** (`compose.analytics.yaml`) is a second PostgreSQL of
   derived figures only; it is described below.
 - **The certificate** is signed by a certificate authority of PSells' own
-  (`make-certificate.sh`), limited to the one name, which the Mac trusts.
+  (`make-certificate.sh`), limited to the one name, which the Mac trusts;
+  the morning backup warns a month before it expires, and before the CA is
+  too near its own end to sign another (`check-certificates.sh`).
 
 Three launchd jobs (`launchd/`) keep it running with no step by hand, and
 each shows a macOS notification when it fails (`notify.sh`), since nothing

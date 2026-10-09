@@ -466,6 +466,12 @@ both files when it starts, so after renewing:
 The script refuses to sign a certificate that would outlive its CA, and
 replaces the old certificate only once the new one verifies.
 
+Nothing needs remembering: each morning's backup runs `check-certificates.sh`,
+which shows a notification when the certificate, the cluster's, or the CA is
+within 30 days of its end, naming the command that renews it. The CA is
+warned about 30 days before it has 397 days left, since from then on the
+script would refuse to renew the certificate. RUNBOOK.md has the steps.
+
 `.localhost` names always mean this machine, and Safari, Chrome and curl find
 `psells.localhost` without any change to `/etc/hosts`.
 

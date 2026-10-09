@@ -182,18 +182,42 @@ corrections log's trigger come back.
 
 ### The certificates
 
-- **The Mac's**, `data/tls/psells.localhost.crt`, lasts 397 days. Check it,
-  then renew it before it expires and restart nginx:
+Each morning's backup checks them (`check-certificates.sh`, also safe by
+hand) and logs one `certificate` line each. A certificate within 30 days of
+its end shows "PSells certificate expires soon", every morning until it is
+renewed, naming the command below.
+
+```
+./check-certificates.sh
+```
+
+- **The Mac's**, `data/tls/psells.localhost.crt`, lasts 397 days. Renew it and
+  restart nginx:
 
   ```
-  openssl x509 -in data/tls/psells.localhost.crt -noout -enddate -checkend 2592000
   ./make-certificate.sh && docker compose restart proxy
   ```
 
-  `-checkend 2592000` says whether it expires within 30 days. The Mac's CA, in
-  `~/PSells-CA`, lasts five years and needs nothing.
 - **The cluster's**, in `~/PSells-Kind/tls`, the same way with
   `PSELLS_TLS_DIR=~/PSells-Kind/tls ./make-certificate.sh`, then `k8s/up.sh`.
+- **The Mac's CA**, in `~/PSells-CA`, lasts five years. `make-certificate.sh`
+  refuses to sign a certificate that would outlive it, so it is warned about
+  30 days before it has 397 days left. Renew it in this order: put the old CA
+  aside, make a new one with a new certificate, trust it (macOS asks for your
+  password), and restart nginx.
+
+  ```
+  mv ~/PSells-CA ~/PSells-CA.old && ./make-certificate.sh && security add-trusted-cert -r trustRoot -k ~/Library/Keychains/login.keychain-db ~/PSells-CA/ca.crt && docker compose restart proxy
+  ```
+
+  Then renew the cluster's certificate as above, if the cluster is used. Once
+  `https://psells.localhost` opens without a warning, stop trusting the old
+  CA and delete it:
+
+  ```
+  security remove-trusted-cert ~/PSells-CA.old/ca.crt && rm -r ~/PSells-CA.old
+  ```
+
 - **The demonstration's** is Let's Encrypt's, renewed by a timer twice a day.
 
 ### Rotate a password
@@ -243,13 +267,17 @@ Each is what you see, what to check, and what to do.
 ### A PSells notification appears
 
 The Mac's three background jobs show a notification, with a sound, when they
-fail, saying why:
+fail, saying why, and the backup when a certificate nears its end:
 
 - **"PSells backup failed"**: the local backup or its off-Mac copy. The log
   is `~/PSells-Backups/backup.log`. Fix the reason, then `./backup.sh` by hand
   and check its last lines say ok and offsite ok.
 - **"PSells did not start"**: the login job. See "The site does not answer on
   the Mac" below.
+- **"PSells certificate expires soon"**, **"expired"** or **"unreadable"**:
+  from the morning backup's check, which the backup itself never fails on. The
+  notification names the certificate and its renewal; see "The certificates"
+  above.
 - **"PSells analytics refresh failed"**: shown once, on the first failure
   after a run that worked, not every hour. See "The analytics page says the
   warehouse is more than two hours old" below.

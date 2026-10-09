@@ -139,6 +139,12 @@ BYTES="$(wc -c < "$TARGET" | tr -d ' ')"
 
 log "ok  psells-$STAMP.dump  ${BYTES} bytes  ${RESTORED} products, restored and counted"
 
+# A certificate nobody renews ends one day with the browser refusing PSells.
+# check-certificates.sh notifies a month ahead; it never fails the backup.
+while IFS= read -r line; do
+    log "certificate  $line"
+done < <("$SCRIPT_DIR/check-certificates.sh")
+
 # Every copy above is on the Mac's own disk. offsite-backup.sh puts the dump
 # and the configuration, encrypted, into iCloud Drive, and proves the copy
 # decrypts; see it for how. A failure there is logged as one, after the line

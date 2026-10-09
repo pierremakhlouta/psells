@@ -492,3 +492,129 @@ def test_the_backup_notifies_every_failure():
     fail = text[text.index("fail() {"):text.index("}", text.index("fail() {"))]
     assert '"$SCRIPT_DIR/notify.sh" "PSells backup failed" "$1" || true' in fail
     assert os.access(NOTIFY_SCRIPT, os.X_OK)
+
+
+# The certificate warning -------------------------------------------------------
+
+CERT_SCRIPT = os.path.join(psells.PROJECT_DIR, "check-certificates.sh")
+
+
+def make_certificate(path, days):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        ["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt",
+         "ec_paramgen_curve:P-256", "-nodes", "-days", str(days),
+         "-subj", "/CN=psells.localhost", "-keyout", str(path) + ".key",
+         "-out", str(path)], capture_output=True, check=True)
+
+
+def run_certificates(tmp_path, mac=None, cluster=None, ca=None, openssl=None):
+    """check-certificates.sh in a copy of the project, with each certificate
+    lasting the given days (None: absent); returns (exit, lines, notices)."""
+    project = tmp_path / "psells"
+    project.mkdir()
+    for name in ("check-certificates.sh", "notify.sh"):
+        shutil.copy(os.path.join(psells.PROJECT_DIR, name), project / name)
+    if mac is not None:
+        make_certificate(project / "data" / "tls" / "psells.localhost.crt", mac)
+    if cluster is not None:
+        make_certificate(tmp_path / "kind" / "psells.localhost.crt", cluster)
+    if ca is not None:
+        make_certificate(tmp_path / "ca" / "ca.crt", ca)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    stand_in_osascript(bin_dir, tmp_path)
+    if openssl:
+        stand_in(bin_dir / "openssl", openssl)
+    result = subprocess.run(
+        ["bash", str(project / "check-certificates.sh")],
+        capture_output=True, text=True,
+        env=dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}",
+                 PSELLS_CA_DIR=str(tmp_path / "ca"),
+                 PSELLS_KIND_TLS_DIR=str(tmp_path / "kind")))
+    return result.returncode, result.stdout.splitlines(), notifications(tmp_path)
+
+
+def test_certificates_far_from_their_end_are_ok_and_quiet(tmp_path):
+    code, lines, notices = run_certificates(tmp_path, mac=397, cluster=397, ca=1825)
+
+    assert code == 0
+    assert [line.split(":")[0] for line in lines] == [
+        "The Mac's certificate", "The cluster's certificate",
+        "The certificate authority"]
+    assert all(": ok until " in line for line in lines)
+    assert notices == []
+
+
+def test_a_certificate_within_a_month_of_its_end_is_notified_with_its_renewal(tmp_path):
+    code, lines, notices = run_certificates(tmp_path, mac=10, ca=1825)
+
+    assert code == 0
+    assert lines[0].startswith("The Mac's certificate: expires within 30 days, ")
+    (notice,) = notices
+    assert notice.startswith("-|PSells certificate expires soon|The Mac's certificate expires ")
+    assert "Renew: ./make-certificate.sh, then docker compose restart proxy" in notice
+
+
+def test_an_expired_certificate_says_so(tmp_path):
+    stand_in_openssl = (
+        'case "$*" in version) echo "OpenSSL 3 stand-in" ;; '
+        '*-enddate*) echo "notAfter=Jan  1 00:00:00 2020 GMT" ;; '
+        '*-checkend*) echo "Certificate will expire"; exit 1 ;; esac\n')
+    code, lines, notices = run_certificates(tmp_path, mac=397, openssl=stand_in_openssl)
+
+    assert code == 0
+    assert lines == ["The Mac's certificate: EXPIRED Jan  1 00:00:00 2020 GMT"]
+    assert notices[0].startswith("-|PSells certificate expired|")
+
+
+def test_a_missing_certificate_is_skipped(tmp_path):
+    code, lines, notices = run_certificates(tmp_path, mac=397)
+
+    assert code == 0
+    assert len(lines) == 1 and notices == []
+
+
+def test_the_backup_runs_the_certificate_check_and_logs_it():
+    with open(BACKUP_SCRIPT) as file:
+        text = file.read()
+
+    assert 'done < <("$SCRIPT_DIR/check-certificates.sh")' in text
+    assert 'log "certificate  $line"' in text
+    # Before the off-Mac copy, whose failure would end the run.
+    assert text.index("check-certificates.sh") < text.index("offsite-backup.sh\" \"psells")
+
+
+def test_an_unreadable_certificate_is_notified(tmp_path):
+    (tmp_path / "ca").mkdir()
+    (tmp_path / "ca" / "ca.crt").write_text("not a certificate\n")
+
+    code, lines, notices = run_certificates(tmp_path)
+
+    assert code == 0
+    assert lines == ["The certificate authority: unreadable"]
+    assert notices[0].startswith("-|PSells certificate unreadable|The certificate authority: ")
+
+
+def test_the_ca_is_warned_about_before_renewals_would_be_refused(tmp_path):
+    # make-certificate.sh signs nothing that would outlive the CA, so with
+    # fewer than 397 days left neither certificate could be renewed.
+    code, lines, notices = run_certificates(tmp_path, ca=420)
+
+    assert code == 0
+    assert lines[0].startswith("The certificate authority: expires within 427 days, ")
+    (notice,) = notices
+    assert notice.startswith("-|PSells certificate expires soon|The certificate authority expires ")
+
+
+def test_the_check_reads_what_openssl_says_not_its_exit_status(tmp_path):
+    # OpenSSL 3.6.0 printed "Certificate will expire" and exited 0.
+    stand_in_openssl = (
+        'case "$*" in version) echo "OpenSSL 3.6.0 stand-in" ;; '
+        '*-enddate*) echo "notAfter=Nov  1 00:00:00 2026 GMT" ;; '
+        '*"-checkend 0"*) echo "Certificate will not expire" ;; '
+        '*-checkend*) echo "Certificate will expire" ;; esac\n')
+    code, lines, notices = run_certificates(tmp_path, mac=397, openssl=stand_in_openssl)
+
+    assert lines == ["The Mac's certificate: expires within 30 days, Nov  1 00:00:00 2026 GMT"]
+    assert notices[0].startswith("-|PSells certificate expires soon|")
