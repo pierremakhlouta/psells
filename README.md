@@ -180,8 +180,8 @@ behind it. One process serves the pages and the API.
 
 - **Inventory**, the home page: the nine dashboard figures, which cover every
   product, above a table of the products with at least one unit available, with
-  stock, listed price, partner cut and retail status, and a search box that
-  matches name or category among them.
+  stock, listed price, partner cut and retail price (or Discontinued), and a
+  search box that matches name or category among them.
 - **Out of stock**: the products with none available, each with the reason,
   "Sold out", "Returned" or a mix such as "2 sold, 1 returned of 3", and a
   search of their own. Every product is on exactly one of the two pages. After

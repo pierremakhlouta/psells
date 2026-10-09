@@ -53,7 +53,7 @@ def test_a_product_is_one_row_with_every_column(client, db):
 
     assert rows == [[
         "1", "Jordan 1 Chicago", "Shoes", "Brand New",
-        "10", "$90.00", "$40.00", "", "Sell Return Edit",
+        "10", "$90.00", "$40.00", "$100.00", "Sell Return Edit",
     ]]
 
 
@@ -87,6 +87,14 @@ def test_a_discontinued_product_says_so_and_shows_its_fixed_cut(client, db):
 
     assert row[RETAIL] == "Discontinued"
     assert row[PARTNER_CUT] == "$25.00"
+
+
+def test_a_product_still_sold_at_retail_shows_its_retail_price(client, db):
+    add_product(db, 1, quantity_received=1, retail_price_cents=12345)
+
+    row = table_rows(client.get("/").text)[0]
+
+    assert row[RETAIL] == "$123.45"
 
 
 def test_products_are_listed_in_id_order(client, db):
@@ -317,7 +325,8 @@ def test_the_out_of_stock_page_shows_what_the_api_serves(client, db):
          str(p["quantity_available"]), p["reason"],
          psells.format_cents(p["listed_price_cents"]),
          psells.format_cents(p["partner_share_cents"]),
-         "Discontinued" if p["retail_discontinued"] else "", "Edit"]
+         "Discontinued" if p["retail_discontinued"]
+         else psells.format_cents(p["retail_price_cents"]), "Edit"]
         for p in client.get("/products/out-of-stock").json()
     ]
 
@@ -1898,7 +1907,8 @@ def test_the_page_shows_the_figures_the_api_serves(client, db):
         assert row[PARTNER_CUT] == psells.format_cents(
             product["partner_share_cents"]
         )
-        assert (row[RETAIL] == "Discontinued") == product["retail_discontinued"]
+        assert row[RETAIL] == ("Discontinued" if product["retail_discontinued"]
+                               else psells.format_cents(product["retail_price_cents"]))
 
 
 # Text from the database stays text -------------------------------------------
