@@ -123,6 +123,9 @@ part, says so in its last line and points to what replaced it.
 - [An unfixable scan finding gets a dated exception, for the image it is in](#an-unfixable-scan-finding-gets-a-dated-exception-for)
 - [On the Mac, a login job starts the stack](#on-the-mac-a-login-job-starts-the-stack)
 - [PSells builds its own nginx image](#psells-builds-its-own-nginx-image)
+- [Each backup leaves the Mac, encrypted, and is proved](#each-backup-leaves-the-mac-encrypted-and-proved)
+- [The Mac says when a job fails](#the-mac-says-when-a-job-fails)
+- [A certificate is warned about while it can still be renewed](#a-certificate-is-warned-about-while-it-can-be-renewed)
 
 ### AWS and Terraform
 
@@ -642,6 +645,7 @@ part, says so in its last line and points to what replaced it.
   the same disk as the database, which is the largest risk left. The cloud
   phases did not solve it, because the real records do not go to the cloud;
   the copy off the machine needs a free home that outlasts them.
+  *Later replaced, in whole or in part: [Each backup leaves the Mac, encrypted, and is proved](#each-backup-leaves-the-mac-encrypted-and-proved).*
 
 - <a id="warnings-fail-the-tests"></a>**Warnings fail the tests.** A deprecation printed in a summary is read once
   and then ignored until the thing it warns about is removed. As an error it
@@ -1161,6 +1165,7 @@ part, says so in its last line and points to what replaced it.
 - <a id="only-the-demo-is-watched"></a>**Only the demo is watched.** The real business's records and activity never
   leave the Mac, and even a request log carries paths, record ids and timing
   about the business. The Mac keeps its backup check.
+  *Later replaced, in whole or in part: [The Mac says when a job fails](#the-mac-says-when-a-job-fails), [A certificate is warned about while it can still be renewed](#a-certificate-is-warned-about-while-it-can-be-renewed).*
 
 - <a id="two-slis-one-from-each-side"></a>**Two SLIs, one from each side.** Availability is measured from outside, as a
   visitor meets the site: 99.5% of checks of the login page pass over seven
@@ -1498,3 +1503,33 @@ part, says so in its last line and points to what replaced it.
   top links to each one. A decision later replaced is not rewritten but ends
   with a line linking to what replaced it. A test fails if a decision is
   missing from the index or a link lands nowhere.
+
+- <a id="each-backup-leaves-the-mac-encrypted-and-proved"></a>**Each backup leaves the Mac, encrypted, and is proved.** Every copy of the real records was on
+  the Mac's own disk, so one lost or broken Mac would have lost the
+  business. Each morning's proved dump and its configuration now go to iCloud
+  Drive as one archive encrypted with age, so iCloud only ever holds
+  ciphertext. The Mac keeps only the public key, which can lock and not
+  unlock. The private key is in the Keychain, so each copy is decrypted the
+  morning it is made and compared byte for byte with the original before it
+  takes its name, and in a password manager, so a lost Mac loses nothing.
+  A copy that fails the comparison is never kept, and the backup reports it.
+
+- <a id="the-mac-says-when-a-job-fails"></a>**The Mac says when a job fails.** Nothing watches the Mac, so a backup that stopped working
+  would be found only on the day it was needed. Each background job shows a
+  macOS notification, with a sound and its reason, when it fails; the hourly
+  refresh shows one only on its first failure after a run that worked, so a
+  night with Docker stopped is one notification. The message reaches
+  AppleScript as an argument, never as part of the script, and a notification
+  that cannot be shown never changes how the job fails. It carries a reason,
+  never a figure.
+
+- <a id="a-certificate-is-warned-about-while-it-can-be-renewed"></a>**A certificate is warned about while it can still be renewed.** Each morning's backup
+  checks the Mac's certificate, the cluster's and the CA, and notifies a month
+  before one ends, every morning until it is renewed, naming the command. The
+  CA is warned about earlier, 30 days before it has 397 days left, because
+  from then on make-certificate.sh refuses to sign a certificate that would
+  outlive it; a warning a month before the CA's own end would have come a year
+  after renewals began to fail. Like make-certificate.sh, the check reads what
+  OpenSSL prints rather than its exit status, and uses OpenSSL rather than the
+  LibreSSL macOS puts first on launchd's path. A warning never fails the
+  backup.
