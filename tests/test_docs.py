@@ -120,3 +120,46 @@ def test_readme_leads_to_the_runbook_and_no_longer_gives_the_old_restore():
 
     assert "[RUNBOOK.md](RUNBOOK.md)" in readme
     assert "--no-owner --exit-on-error' \\\n" not in readme
+
+
+# DECISIONS.md's index ----------------------------------------------------------
+
+DECISIONS = os.path.join(ROOT, "DECISIONS.md")
+
+
+def decisions():
+    text = read(DECISIONS)
+    head, entries = text.split("## The decisions, in the order they were made", 1)
+    return head, entries
+
+
+def test_every_decision_has_one_anchor_and_is_indexed_exactly_once():
+    head, entries = decisions()
+    bullets = [line for line in entries.splitlines() if line.startswith("- ")]
+    anchors = re.findall(r'^- <a id="([a-z0-9-]+)"></a>\*\*', entries, re.M)
+    indexed = re.findall(r"^- \[[^\]]+\]\(#([a-z0-9-]+)\)$", head, re.M)
+
+    # A new decision needs its anchor and its line in the index.
+    assert len(anchors) == len(bullets) >= 160
+    assert len(set(anchors)) == len(anchors)
+    assert sorted(indexed) == sorted(anchors)
+
+
+def test_every_link_to_a_decision_lands_on_one():
+    head, entries = decisions()
+    anchors = set(re.findall(r'<a id="([a-z0-9-]+)"></a>', entries))
+    links = re.findall(r"\]\(#([a-z0-9-]+)\)", head + entries)
+
+    assert links
+    assert sorted(set(links) - anchors) == []
+
+
+def test_a_replaced_decision_says_what_replaced_it():
+    _, entries = decisions()
+    pointers = re.findall(r"\*Later replaced, in whole or in part: (.+?)\.\*", entries)
+
+    link = r"\[[^\]]+\]\(#[a-z0-9-]+\)"
+    assert len(pointers) >= 9
+    for pointer in pointers:
+        # Nothing but links to the decisions that replaced it.
+        assert re.fullmatch(f"{link}(, {link})*", pointer), pointer
