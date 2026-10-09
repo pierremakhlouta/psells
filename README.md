@@ -12,6 +12,11 @@ PSells replaces the spreadsheet that used to run the business. It tracks the
 products held, the sales made, stock returned to the supplying partner, and the
 payouts made to that partner, and computes a live dashboard from all four.
 
+How the whole system fits together, with diagrams, is in
+[ARCHITECTURE.md](ARCHITECTURE.md); why each part is the way it is, in
+[DECISIONS.md](DECISIONS.md); what the data means, in
+[DATA_MODEL.md](DATA_MODEL.md).
+
 ## What it does
 
 - Full inventory management: view, browse by category, search, add, edit, delete
