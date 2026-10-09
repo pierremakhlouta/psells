@@ -74,9 +74,8 @@ services:
     depends_on:
       app:
         condition: service_healthy
-        # nginx looks up the app's address once, when it starts. Recreating
-        # the app, as "up --build" does after a code change, can give it a new
-        # one; this restarts nginx after it, so nginx never keeps the old.
+        # Restarts nginx after an "up" that recreates the app, which now
+        # keeps its fixed address, so nginx would find it either way.
         restart: true
     healthcheck:
       # nginx's own answer on its private health port, not the app's: see the
@@ -119,6 +118,13 @@ services:
       # cannot change it, and sees nothing else from the folder it lives in.
       # Required, never defaulted, so the file in use is always a choice.
       - "${PSELLS_CONFIG_FILE:?set PSELLS_CONFIG_FILE in .env}:/config/config.json:ro"
+    networks:
+      default:
+        # Fixed too, because nginx looks up "app" once, when it starts, and
+        # keeps that address. An app recreated alone, as "up --build app"
+        # does, could otherwise come back on a new one, and every page would
+        # be a 502 until nginx restarted. Outside ip_range, like nginx's.
+        ipv4_address: "${PSELLS_NETWORK:-10.213.47}.11"
     depends_on:
       db:
         condition: service_healthy

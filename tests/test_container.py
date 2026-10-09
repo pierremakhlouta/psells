@@ -533,6 +533,21 @@ def test_the_app_believes_forwarded_headers_from_nginx_alone():
     assert nginx not in ipaddress.ip_network(with_defaults(pool["ip_range"]))
 
 
+def test_the_app_keeps_one_address_nginx_can_rely_on():
+    # nginx resolves "app" once, at start; an app recreated on a new address
+    # would leave every page a 502 until nginx restarted.
+    document = compose()
+    app = document["services"]["app"]["networks"]["default"]["ipv4_address"]
+    nginx = document["services"]["proxy"]["networks"]["default"]["ipv4_address"]
+    pool = document["networks"]["default"]["ipam"]["config"][0]
+
+    address = ipaddress.ip_address(with_defaults(app))
+    assert app.startswith("${PSELLS_NETWORK:-10.213.47}.")
+    assert address != ipaddress.ip_address(with_defaults(nginx))
+    assert address in ipaddress.ip_network(with_defaults(pool["subnet"]))
+    assert address not in ipaddress.ip_network(with_defaults(pool["ip_range"]))
+
+
 def http_level():
     return [words for blocks, words in nginx_directives()
             if [name for _, name in blocks] == [("http",)]]

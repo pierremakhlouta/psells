@@ -126,6 +126,7 @@ part, says so in its last line and points to what replaced it.
 - [Each backup leaves the Mac, encrypted, and is proved](#each-backup-leaves-the-mac-encrypted-and-proved)
 - [The Mac says when a job fails](#the-mac-says-when-a-job-fails)
 - [A certificate is warned about while it can still be renewed](#a-certificate-is-warned-about-while-it-can-be-renewed)
+- [The app has a fixed address too](#the-app-has-a-fixed-address-too)
 
 ### AWS and Terraform
 
@@ -1533,3 +1534,14 @@ part, says so in its last line and points to what replaced it.
   OpenSSL prints rather than its exit status, and uses OpenSSL rather than the
   LibreSSL macOS puts first on launchd's path. A warning never fails the
   backup.
+
+- <a id="the-app-has-a-fixed-address-too"></a>**The app has a fixed address too.** nginx looks up the app's address once, when it
+  starts. The app's address was Docker's choice, so an app rebuilt on its
+  own could come back on another, and every page was a 502 until nginx
+  restarted. Compose restarts nginx after an "up" that names it, which the
+  runbook's rebuild of the app alone does not, and it had worked only
+  because Docker had handed back the same address. The app now has a fixed
+  address beside nginx's, outside the range Docker hands out, and a test
+  holds it there. Having nginx look the name up on every request was turned
+  down: it changes how each request is proxied, and the cluster would need a
+  different setting.
