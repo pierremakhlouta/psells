@@ -941,7 +941,7 @@ database it is pointed at, so it refuses any whose name does not end in
 Every warning is an error (`pytest.ini`), apart from one known deprecation in
 Starlette's test client on Python 3.14, matched on its exact message.
 
-Twenty-six files, and the split is deliberate, so a red run says what kind of
+Twenty-seven files, and the split is deliberate, so a red run says what kind of
 thing broke before you read a line of it.
 
 `test_domain.py` covers everything in `psells.py` that has no input or output:
@@ -1112,6 +1112,13 @@ line, the warehouse to the business database's image with no port,
 `compose.yaml` to no analytics variable, and the analytics image to the app's
 base, named files, its own user, and exact requirements that share the app's
 driver.
+
+`test_docs.py` holds the documents to the repository: every file
+ARCHITECTURE.md and RUNBOOK.md name must exist, every diagram must be one
+Mermaid draws, the runbook's restore must stay one chain that never empties
+the database without a dump to put in it, no runbook command may remove a
+volume but the sample stack's, and DECISIONS.md's index must list every
+decision once and link only to decisions that exist.
 
 `test_kubernetes.py` reads `k8s/` as kustomize renders it, and the Kubernetes
 workflow, and fails if the cluster could be reached beyond this machine or on
@@ -1310,6 +1317,7 @@ built from nothing and checked on every push. An ETL builds an analytics
 warehouse from the business records through psells' own functions, checked
 against the dashboard before it commits, and SQL views over it answer the
 business questions, shown on a page in PSells with charts drawn on the
-server and kept current by an hourly refresh. Planned next are architecture
-documents for the whole system, carrying the same data model and business
-rules through each step.
+server and kept current by an hourly refresh. The whole system is described,
+with diagrams, in ARCHITECTURE.md, and how to run and repair it in
+RUNBOOK.md, each procedure tried before it was written down. The same data
+model and business rules have been carried through every step.

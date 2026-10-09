@@ -206,6 +206,13 @@ part, says so in its last line and points to what replaced it.
 - [The demonstration got its warehouse inside its memory](#the-demonstration-got-its-warehouse-inside-its-memory)
 - [The server's analytics settings are a file of their own](#the-servers-analytics-settings-are-a-file-of-their)
 
+### Documents
+
+- [The architecture is drawn from text, and checked against the repository](#the-architecture-is-drawn-from-text-and-checked-against-the)
+- [A runbook procedure is tried before it is written down](#a-runbook-procedure-is-tried-before-it-is-written-down)
+- [A destructive command is one guarded chain](#a-destructive-command-is-one-guarded-chain)
+- [Decisions keep their order, with an index by area](#decisions-keep-their-order-with-an-index-by-area)
+
 ## The decisions, in the order they were made
 
 - <a id="json-then-sqlite"></a>**JSON, then SQLite.** Started with JSON storage because it maps directly onto
@@ -1461,3 +1468,33 @@ part, says so in its last line and points to what replaced it.
   so the invented records cannot break a rule the real ones must keep, and a
   test fails if the file is ever edited by hand. Its tests state what the
   seed must show as properties rather than naming its rows.
+
+- <a id="the-architecture-is-drawn-from-text-and-checked-against-the"></a>**The architecture is drawn from text, and checked against the repository.** ARCHITECTURE.md's diagrams are Mermaid, which GitHub draws from text in the
+  file, so they are reviewed and versioned like the code instead of being
+  pictures that drift. A test fails if the document names a file the
+  repository no longer holds, or holds a diagram Mermaid would not draw.
+
+- <a id="a-runbook-procedure-is-tried-before-it-is-written-down"></a>**A runbook procedure is tried before it is written down.** A procedure nobody has followed tends to be wrong in the step that matters.
+  Every one that can be tried safely was followed on the sample stack or a
+  throwaway project first, and each says whether and how. Following README's
+  restore that way found it broken on a new stack: the database was not
+  empty, since its first start builds the tables, and the dump carried grants
+  to a role a new server lacks. The restore now empties the database, goes in
+  without grants in one transaction, and makes the role again. Rotating a
+  read-only role's password, tried the same way, showed that the role's script
+  takes its grants away until the next build, so the procedure rebuilds at
+  once.
+
+- <a id="a-destructive-command-is-one-guarded-chain"></a>**A destructive command is one guarded chain.** The runbook's commands are copied and run as they stand. The restore, which
+  empties the database, is therefore one chain that starts by checking the
+  named dump exists and stops at the first step that fails, so a mistyped name
+  changes nothing; a placeholder is never inside a command that acts, but in
+  one of its own beside the command that lists its value. A test keeps the
+  restore one chain, and keeps every volume-removing command to the sample
+  stack.
+
+- <a id="decisions-keep-their-order-with-an-index-by-area"></a>**Decisions keep their order, with an index by area.** DECISIONS.md is kept in the order the decisions were made, because the
+  reasoning often depends on what came before, and an index by area at the
+  top links to each one. A decision later replaced is not rewritten but ends
+  with a line linking to what replaced it. A test fails if a decision is
+  missing from the index or a link lands nowhere.
