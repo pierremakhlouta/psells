@@ -46,6 +46,48 @@ AWS at `https://psells.lakeshorefreight.me`.
   against the dashboard before it commits; SQL views answer the business
   questions, on a page with charts drawn on the server, refreshed hourly.
 
+## How it fits together
+
+The real business on the Mac, the pipeline on GitHub, and the demonstration
+on AWS watched from Grafana Cloud. [ARCHITECTURE.md](ARCHITECTURE.md) has this
+and seven more diagrams, each part in detail.
+
+```mermaid
+flowchart LR
+    subgraph mac["The Mac (the real business)"]
+        browser["Browser"] -->|"HTTPS, psells.localhost"| stack["Compose stack:<br/>nginx, app, PostgreSQL"]
+        stack --- warehouse["Analytics warehouse<br/>rebuilt hourly"]
+        jobs["launchd jobs:<br/>login start, 09:00 backup,<br/>hourly analytics"] --> stack
+        jobs --> backups[("~/PSells-Backups")]
+        backups -->|"encrypted with age"| icloud[("iCloud Drive")]
+        kind["kind cluster<br/>(sample records)"]
+    end
+
+    subgraph github["GitHub"]
+        repo["Repository"] --> ci["Workflows: Tests, Lint,<br/>Security, Image, Kubernetes"]
+        ci -->|"scanned images"| ghcr[("Container registry")]
+        ci --> deploy["Deploy"]
+    end
+
+    subgraph aws["AWS (invented records)"]
+        server["EC2 server: nginx, app,<br/>PostgreSQL, warehouse, agent"]
+        params[("Parameter Store")]
+        s3[("S3 backups")]
+    end
+
+    subgraph grafana["Grafana Cloud"]
+        checks["Synthetic checks,<br/>SLOs, alert, dashboard"]
+    end
+
+    deploy -->|"OIDC role, SSM Run Command"| server
+    ghcr -->|"pulled by digest"| server
+    params --> server
+    server --> s3
+    server -->|"metrics and nginx lines"| checks
+    checks -->|"checks /login"| server
+    checks -->|"alert email"| owner(["Owner"])
+```
+
 ## Where to read next
 
 - [ARCHITECTURE.md](ARCHITECTURE.md): how the whole system fits together, with

@@ -79,6 +79,14 @@ def test_readme_leads_to_the_architecture():
     assert "[ARCHITECTURE.md](ARCHITECTURE.md)" in read(os.path.join(ROOT, "README.md"))
 
 
+def test_readmes_diagram_is_the_architectures_first():
+    # A copy on the front page, held to the one it was taken from.
+    first = re.findall(r"```mermaid\n.*?```", read(ARCHITECTURE), re.S)[0]
+    readme = re.findall(r"```mermaid\n.*?```", read(os.path.join(ROOT, "README.md")), re.S)
+
+    assert readme == [first]
+
+
 # The runbook -------------------------------------------------------------------
 
 RUNBOOK = os.path.join(ROOT, "RUNBOOK.md")

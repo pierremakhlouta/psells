@@ -20,6 +20,7 @@ flowchart LR
         stack --- warehouse["Analytics warehouse<br/>rebuilt hourly"]
         jobs["launchd jobs:<br/>login start, 09:00 backup,<br/>hourly analytics"] --> stack
         jobs --> backups[("~/PSells-Backups")]
+        backups -->|"encrypted with age"| icloud[("iCloud Drive")]
         kind["kind cluster<br/>(sample records)"]
     end
 
