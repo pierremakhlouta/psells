@@ -1224,9 +1224,10 @@ Worth stating plainly rather than leaving to be discovered.
   application's own error lines, the cause, are read on the server. Open from
   the postmortem.
 - **Monitoring covers the demo only.** The business on the Mac is watched by
-  its daily backup check and by whoever uses it.
+  its daily backup check, the notifications its jobs show when they fail or
+  a certificate nears its end, and whoever uses it.
 - **One scan exception is dated.** The agent's OpenSSL has a known flaw skipped
-  until 31 October 2026, with the reason; after that date the Image workflow
+  until 30 November 2026, with the reason; after that date the Image workflow
   fails until it is dealt with. nginx's image needs none, because PSells builds
   it with Alpine's fixes.
 - **The free Grafana instance sleeps when unused.** Its first page after a

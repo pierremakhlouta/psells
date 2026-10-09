@@ -1194,7 +1194,7 @@ part, says so in its last line and points to what replaced it.
 
 - <a id="the-agents-scan-has-a-dated-exception-as-nginxs"></a>**The agent's scan has a dated exception, as nginx's does.** Its newest image
   carries an OpenSSL with a high flaw that the agent, a Go program, never
-  loads; the scan skips that one flaw until 31 October, and CI fails if the
+  loads; the scan skips that one flaw until 30 November, and CI fails if the
   agent ever links OpenSSL. Building a patched image of our own would have
   meant a second image to publish and deploy; not scanning it would have let
   something ship that nothing checked.

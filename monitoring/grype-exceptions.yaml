@@ -4,7 +4,7 @@
 # one package, one version, so a newer vulnerable version or any other flaw
 # still fails the scan. The listing step before it still prints everything.
 #
-# expires: 2026-10-31
+# expires: 2026-11-30
 #
 # CVE-2026-84782, high, in OpenSSL 3.0.13-0ubuntu3.15 (the libssl3t64 and
 # openssl packages), fixed in 3.0.13-0ubuntu3.16. Found 4 October 2026 in
@@ -15,6 +15,10 @@
 # libssl. Remove these entries, and update the pin in compose.aws.yaml and in
 # image.yml, once Alloy publishes an image with the fixed OpenSSL. From the
 # date above the alloy job fails until this file is dealt with.
+#
+# Checked 8 October 2026: v1.20.1's digest unchanged, no newer release, its
+# OpenSSL still 3.0.13-0ubuntu3.15, and nothing about it in Alloy's issues.
+# Extended a month, to 30 November, rather than left to fail.
 
 ignore:
   - vulnerability: CVE-2026-84782
