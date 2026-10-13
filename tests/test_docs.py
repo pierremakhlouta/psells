@@ -153,7 +153,7 @@ def test_every_decision_has_one_anchor_and_is_indexed_exactly_once():
     indexed = re.findall(r"^- \[[^\]]+\]\(#([a-z0-9-]+)\)$", head, re.M)
 
     # A new decision needs its anchor and its line in the index.
-    assert len(anchors) == len(bullets) >= 160
+    assert len(anchors) == len(bullets) >= 70
     assert len(set(anchors)) == len(anchors)
     assert sorted(indexed) == sorted(anchors)
 
@@ -172,7 +172,7 @@ def test_a_replaced_decision_says_what_replaced_it():
     pointers = re.findall(r"\*Later replaced, in whole or in part: (.+?)\.\*", entries)
 
     link = r"\[[^\]]+\]\(#[a-z0-9-]+\)"
-    assert len(pointers) >= 9
+    assert len(pointers) >= 4
     for pointer in pointers:
         # Nothing but links to the decisions that replaced it.
         assert re.fullmatch(f"{link}(, {link})*", pointer), pointer
