@@ -62,7 +62,6 @@ part, says so in its last line and points to what replaced it.
 - [Warnings fail the tests](#warnings-fail-the-tests)
 - [The sample records are tested like code](#the-sample-records-are-tested-like-code)
 - [The sample data is generated, by the application's rules](#the-sample-data-is-generated-by-the-applications-rules)
-- [The worker is tested in real browsers, on the cluster](#the-worker-is-tested-in-real-browsers-on-the-cluster)
 
 ### The API and the web pages
 
@@ -86,6 +85,7 @@ part, says so in its last line and points to what replaced it.
 - [Every list is one function, served three ways](#every-list-is-one-function-served-three-ways)
 - [An empty list says so](#an-empty-list-says-so)
 - [Correcting is the same in all three ways in](#correcting-is-the-same-in-all-three-ways-in)
+- [PSells is not an installable app](#psells-is-not-an-installable-app)
 
 ### Security and the login
 
@@ -112,10 +112,6 @@ part, says so in its last line and points to what replaced it.
 - [Passwords are at least fifteen characters, since the login went public](#passwords-are-at-least-fifteen-characters-since-the-login)
 - [Every commit is scanned for secrets on every push](#every-commit-is-scanned-for-secrets-on-every-push)
 - [The demo's login is public, and its records are put back every night](#the-demos-login-is-public-and-its-records-reset-nightly)
-- [The home-screen files are served by nginx, before the login](#the-home-screen-files-are-served-by-nginx-before-the-login)
-- [The policy allows PSells' own manifest and images](#the-policy-allows-psells-own-manifest-and-images)
-- [Offline, PSells shows a page saying so, never old figures](#offline-psells-shows-a-page-saying-so-and-never-old-figures)
-- [No push notifications until a phone can reach the real PSells](#no-push-notifications-until-a-phone-can-reach-the-real-psells)
 
 ### Containers and the Mac
 
@@ -133,7 +129,6 @@ part, says so in its last line and points to what replaced it.
 - [The Mac says when a job fails](#the-mac-says-when-a-job-fails)
 - [A certificate is warned about while it can still be renewed](#a-certificate-is-warned-about-while-it-can-be-renewed)
 - [The app has a fixed address too](#the-app-has-a-fixed-address-too)
-- [The app icon is the logo's monogram, on white](#the-app-icon-is-the-logos-monogram-on-white)
 
 ### AWS and Terraform
 
@@ -1569,58 +1564,13 @@ part, says so in its last line and points to what replaced it.
   page of the demo says so, from a setting only the server's
   compose.aws.yaml makes.
 
-- <a id="the-app-icon-is-the-logos-monogram-on-white"></a>**The app icon is the logo's monogram, on white.** PSells
-  is to be added to a phone's home screen and a Mac's Dock, so it needs an
-  icon. It is Pierre's logo, without the word PSells under the monogram,
-  which at 180 pixels would be too small to read and is shown under the icon
-  anyway. White, the logo's own background, since its navy P would vanish on
-  a dark one. Two SVGs frame the monogram in the logo's PNG, one with room
-  for Android's maskable crop, and a script draws the four PNGs from them
-  with Chrome and sips, so a new logo is one file and one command. A drawn
-  white P on the menu bar's colour was turned down for the logo.
-
-- <a id="the-home-screen-files-are-served-by-nginx-before-the-login"></a>**The home-screen files are served by nginx, before the login.** A phone fetches
-  the manifest and the icons without a session, so they must be public, and
-  the app's rule is that every route but the login asks for one. nginx serves
-  them itself, five files by name from static/, mounted read-only wherever
-  nginx runs, as its configuration is; anything else under /static/, the
-  icons' sources included, goes to the app and its login. Turned down: public
-  routes in the app, which would add exceptions to its one check. They are
-  cached for a day with expires, never add_header, which would drop the
-  server's security headers from them.
-
-- <a id="the-policy-allows-psells-own-manifest-and-images"></a>**The policy allows PSells' own manifest and images.** A policy that names
-  nothing else refuses a manifest and images, so manifest-src and img-src now
-  allow 'self': PSells' own, from nowhere else. Scripts stay forbidden, which
-  a test still holds. Turned down: the manifest alone, which some browsers
-  follow by refusing the page's icon, leaving a blank one in a tab or the
-  Dock.
-
-- <a id="offline-psells-shows-a-page-saying-so-and-never-old-figures"></a>**Offline, PSells shows a page saying so, never old figures.** Every page of
-  PSells is live figures, so there is no shell to keep apart from the data.
-  A service worker keeps only an offline page, which holds no figure, and the
-  icons; every page comes from the network or, without one, the offline page
-  in its place. A page is never stored, so nothing shown offline is out of
-  date and the Mac's real figures are not left in a browser's cache after
-  logging out. The worker needs script files, so the policy now allows
-  PSells' own scripts, worker and requests ('self'), and still no inline
-  script. Turned down: caching pages with a stale fallback, and no worker at
-  all. The offline page carries base.html's style block exactly, so the one
-  hash covers it, and a test holds the two copies equal.
-
-- <a id="the-worker-is-tested-in-real-browsers-on-the-cluster"></a>**The worker is tested in real browsers, on the cluster.** browser_tests/ opens
-  PSells as an iPhone in WebKit and an Android phone in Chromium, with
-  Playwright: the manifest and icons, the site opening offline, the line that
-  says the connection went, and a cache holding PSells' own files and no
-  page. In CI they run in the Kubernetes check, against the whole site built
-  from the images; on the Mac, run-local.sh runs them against the working
-  tree before a commit. The connection is cut through a small relay rather
-  than Playwright's offline switch, with which WebKit fails a navigation
-  that a real iPhone's worker answers.
-
-- <a id="no-push-notifications-until-a-phone-can-reach-the-real-psells"></a>**No push notifications until a phone can reach the real PSells.** A phone
-  signs up for notifications from a page it can open, and a phone can open
-  only the demonstration, where notifications would go to strangers with
-  nothing to tell them. Web Push, with VAPID keys whose private half would
-  live only in the server's secrets, waits for private access from Pierre's
-  phone to the Mac's PSells, when which events notify whom is decided too.
+- <a id="psells-is-not-an-installable-app"></a>**PSells is not an installable app.** It was made one
+  on 13 October 2026, in five commits: an icon from the logo, a web app
+  manifest and iPhone tags served by nginx before the login, a service worker
+  that showed an offline page and never a stored one, and Playwright tests
+  on an emulated iPhone and Android phone in the Kubernetes check. Pierre
+  then had it taken out, the same day, before the demo ever served it: a
+  phone can reach only the demo, the Mac's Dock works from Safari without
+  any of it, and push notifications would wait for private access to the
+  Mac. Reverting it kept the security policy allowing no script at all. The
+  work is in git, from dab119f to 594e0aa, should it be wanted again.

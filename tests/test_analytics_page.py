@@ -6,7 +6,6 @@ warehouse there, inside the test's transaction. Every figure the page shows
 is then compared with the view it came from, formatted by the same filters.
 """
 
-import re
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -107,13 +106,11 @@ def test_the_product_tables_follow_the_views_order(client, built):
     assert [n for n in sorted(order, key=lowest.index)] == order
 
 
-def test_the_charts_need_no_script_and_no_style_attribute(client, built):
+def test_the_page_runs_no_script_and_needs_no_style_attribute(client, built):
     _, html = page(client)
 
     assert "<svg" in html
-    # The one script every page loads, as a file, and none of the page's own.
-    assert re.findall(r"<script[^>]*>", html) == [
-        '<script src="/static/register.js" defer>']
+    assert "<script" not in html
     assert " style=" not in html
 
 

@@ -2055,7 +2055,7 @@ def test_templates_use_only_the_allowed_filters():
 
 # The demonstration's notice ------------------------------------------------------
 
-NOTICE = "A demonstration with invented records."
+NOTICE = 'class="demo-notice"'
 
 
 def test_only_a_demo_setting_of_1_is_the_demo(monkeypatch):
@@ -2081,28 +2081,3 @@ def test_anywhere_else_no_page_says_it_is_a_demo(client, anonymous):
     assert web.templates.env.globals["demo"] is False
     assert NOTICE not in anonymous.get("/login").text
     assert NOTICE not in client.get("/").text
-
-
-# Adding PSells to a home screen --------------------------------------------------
-
-HOME_SCREEN_TAGS = [
-    '<link rel="manifest" href="/static/manifest.webmanifest">',
-    '<link rel="icon" type="image/png" href="/static/icon-192.png">',
-    '<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">',
-    '<meta name="mobile-web-app-capable" content="yes">',
-    '<meta name="apple-mobile-web-app-capable" content="yes">',
-    '<meta name="apple-mobile-web-app-title" content="PSells">',
-    '<meta name="theme-color" media="(prefers-color-scheme: light)" content="#24292f">',
-    '<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#24292f">',
-]
-
-
-def test_every_page_says_how_to_add_psells_to_a_home_screen(client, anonymous):
-    pages = {"/login": anonymous.get("/login").text}
-    for path in ["/", "/analytics", "/sales-history", "/products/new"]:
-        pages[path] = client.get(path).text
-
-    for path, page in pages.items():
-        head = page[:page.index("</head>")]
-        for tag in HOME_SCREEN_TAGS:
-            assert tag in head, (path, tag)

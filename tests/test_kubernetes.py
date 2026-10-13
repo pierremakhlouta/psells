@@ -5,7 +5,6 @@ cluster. CI also creates a real kind cluster from these files and requests the
 login page through it; these hold the files to the rules that made them.
 """
 
-import base64
 import os
 import re
 import subprocess
@@ -516,39 +515,3 @@ def test_ci_checks_the_served_style_block_hashes_to_what_the_policy_allows():
     assert 'block = re.search(r"<style>(.*?)</style>", sys.stdin.read(), re.S).group(1)' in ask
     assert "hashlib.sha256(block.encode())" in ask
     assert 'check "style hash" "$served" "$allowed"' in ask
-
-
-
-def test_the_cluster_serves_the_same_manifest_and_icons_as_compose():
-    # Every file nginx/snippets/static.conf serves, byte for byte: the PNGs
-    # as binaryData, the manifest as text.
-    static = configmap("nginx-static")
-    names = set(static.get("data", {})) | set(static.get("binaryData", {}))
-    assert names == {"apple-touch-icon.png", "icon-192.png", "icon-512.png",
-                     "icon-maskable-512.png", "manifest.webmanifest",
-                     "offline.html", "register.js", "sw.js"}
-    for name, value in static["binaryData"].items():
-        with open(os.path.join(psells.PROJECT_DIR, "static", name), "rb") as file:
-            assert base64.b64decode(value) == file.read(), name
-    for name in ("manifest.webmanifest", "offline.html", "register.js", "sw.js"):
-        assert static["data"][name] == read(
-            os.path.join(psells.PROJECT_DIR, "static", name)), name
-
-
-def test_ci_opens_psells_in_a_phones_browser_at_the_pinned_versions():
-    with open(os.path.join(psells.PROJECT_DIR, ".github", "workflows", "kubernetes.yml")) as file:
-        steps = {step["name"]: step for step in yaml.safe_load(file)["jobs"]["cluster"]["steps"]}
-    run = steps["Open PSells in a phone's browser"]["run"]
-
-    # The versions requirements-dev.txt pins, read from it, not written twice.
-    assert "\"$(grep '^playwright==' requirements-dev.txt)\"" in run
-    assert "\"$(grep '^pytest==' requirements-dev.txt)\"" in run
-    assert "playwright\" install --with-deps chromium webkit" in run
-    # This run's CA, trusted by both browsers.
-    assert '-i "$RUNNER_TEMP/ca/ca.crt"' in run and "update-ca-certificates" in run
-    assert "PSELLS_BROWSER_URL=https://psells.localhost:9443" in run
-    assert run.rstrip().endswith("browser_tests")
-    # Before the cluster is changed by the steps after it.
-    names = list(steps)
-    assert names.index("Open PSells in a phone's browser") < names.index(
-        "Run up.sh again and change nothing")
