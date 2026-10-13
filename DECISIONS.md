@@ -62,6 +62,7 @@ part, says so in its last line and points to what replaced it.
 - [Warnings fail the tests](#warnings-fail-the-tests)
 - [The sample records are tested like code](#the-sample-records-are-tested-like-code)
 - [The sample data is generated, by the application's rules](#the-sample-data-is-generated-by-the-applications-rules)
+- [The worker is tested in real browsers, on the cluster](#the-worker-is-tested-in-real-browsers-on-the-cluster)
 
 ### The API and the web pages
 
@@ -113,6 +114,7 @@ part, says so in its last line and points to what replaced it.
 - [The demo's login is public, and its records are put back every night](#the-demos-login-is-public-and-its-records-reset-nightly)
 - [The home-screen files are served by nginx, before the login](#the-home-screen-files-are-served-by-nginx-before-the-login)
 - [The policy allows PSells' own manifest and images](#the-policy-allows-psells-own-manifest-and-images)
+- [Offline, PSells shows a page saying so, never old figures](#offline-psells-shows-a-page-saying-so-and-never-old-figures)
 
 ### Containers and the Mac
 
@@ -1592,3 +1594,25 @@ part, says so in its last line and points to what replaced it.
   a test still holds. Turned down: the manifest alone, which some browsers
   follow by refusing the page's icon, leaving a blank one in a tab or the
   Dock.
+
+- <a id="offline-psells-shows-a-page-saying-so-and-never-old-figures"></a>**Offline, PSells shows a page saying so, never old figures.** Every page of
+  PSells is live figures, so there is no shell to keep apart from the data.
+  A service worker keeps only an offline page, which holds no figure, and the
+  icons; every page comes from the network or, without one, the offline page
+  in its place. A page is never stored, so nothing shown offline is out of
+  date and the Mac's real figures are not left in a browser's cache after
+  logging out. The worker needs script files, so the policy now allows
+  PSells' own scripts, worker and requests ('self'), and still no inline
+  script. Turned down: caching pages with a stale fallback, and no worker at
+  all. The offline page carries base.html's style block exactly, so the one
+  hash covers it, and a test holds the two copies equal.
+
+- <a id="the-worker-is-tested-in-real-browsers-on-the-cluster"></a>**The worker is tested in real browsers, on the cluster.** browser_tests/ opens
+  PSells as an iPhone in WebKit and an Android phone in Chromium, with
+  Playwright: the manifest and icons, the site opening offline, the line that
+  says the connection went, and a cache holding PSells' own files and no
+  page. In CI they run in the Kubernetes check, against the whole site built
+  from the images; on the Mac, run-local.sh runs them against the working
+  tree before a commit. The connection is cut through a small relay rather
+  than Playwright's offline switch, with which WebKit fails a navigation
+  that a real iPhone's worker answers.

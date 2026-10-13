@@ -107,6 +107,30 @@ jobs:
 
       # Run again, up.sh changes nothing: the same objects at the same
       # generation, the same pods.
+      # browser_tests/ on an emulated iPhone (WebKit) and Android phone
+      # (Chromium): the manifest and icons, the service worker opening the
+      # site offline, the "You're offline" line, and a cache holding only
+      # PSells' own files. Playwright and pytest at the versions
+      # requirements-dev.txt pins. Each browser is told to trust this run's
+      # throwaway CA its own way: Chromium from its NSS database, WebKit
+      # from the system's. psells.localhost is written into /etc/hosts for
+      # the tests' relay, as curl's --resolve does above.
+      - name: Open PSells in a phone's browser
+        run: |
+          echo "127.0.0.1 psells.localhost" | sudo tee -a /etc/hosts > /dev/null
+          python3 -m venv "$RUNNER_TEMP/browser"
+          "$RUNNER_TEMP/browser/bin/pip" install --quiet \
+            "$(grep '^playwright==' requirements-dev.txt)" "$(grep '^pytest==' requirements-dev.txt)"
+          "$RUNNER_TEMP/browser/bin/playwright" install --with-deps chromium webkit
+          sudo apt-get install --yes --quiet libnss3-tools > /dev/null
+          mkdir -p "$HOME/.pki/nssdb"
+          certutil -d "sql:$HOME/.pki/nssdb" -N --empty-password
+          certutil -d "sql:$HOME/.pki/nssdb" -A -t "C,," -n psells-ci -i "$RUNNER_TEMP/ca/ca.crt"
+          sudo cp "$RUNNER_TEMP/ca/ca.crt" /usr/local/share/ca-certificates/psells-ci.crt
+          sudo update-ca-certificates > /dev/null
+          PSELLS_BROWSER_URL=https://psells.localhost:9443 \
+            "$RUNNER_TEMP/browser/bin/pytest" -q -p no:cacheprovider browser_tests
+
       - name: Run up.sh again and change nothing
         run: |
           set -euo pipefail

@@ -47,6 +47,9 @@ configMapGenerator:
       - icon-512.png=../static/icon-512.png
       - icon-maskable-512.png=../static/icon-maskable-512.png
       - manifest.webmanifest=../static/manifest.webmanifest
+      - offline.html=../static/offline.html
+      - register.js=../static/register.js
+      - sw.js=../static/sw.js
   - name: nginx-site
     files:
       - http.conf=../nginx/sites/localhost/http.conf

@@ -27,6 +27,10 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <meta name="theme-color" media="(prefers-color-scheme: light)" content="#24292f">
   <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#24292f">
+  {#- Registers the service worker, which shows a page when PSells is
+      offline, and shows the line below while it is. A file, never inline:
+      the security policy allows no inline script. -#}
+  <script src="/static/register.js" defer></script>
   <style>
     body {
       margin: 0;
@@ -323,6 +327,11 @@
       {% endblock %}
     </nav>
   </header>
+
+  {#- Shown by /static/register.js while the connection is gone, in the
+      demo notice's style. -#}
+  <p class="demo-notice" id="offline-notice" hidden>You're offline. PSells
+    shows only live figures, so this page may be out of date.</p>
 
   {% if demo %}
   <p class="demo-notice">A demonstration with invented records. Change anything

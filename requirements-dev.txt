@@ -22,3 +22,9 @@ openpyxl==3.1.5
 # remembered.
 pyyaml==6.0.3
 
+
+# Drives real browsers for browser_tests/: the service worker and the
+# home-screen files on an emulated iPhone (WebKit) and Android phone
+# (Chromium). Its browsers are downloaded separately, with
+# "playwright install chromium webkit", into Playwright's own cache.
+playwright==1.63.0

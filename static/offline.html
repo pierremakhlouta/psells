@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en">
+<!-- What PSells' service worker, /sw.js, shows in place of a page when there
+     is no connection. It holds no record and no figure: every page of PSells
+     comes from the network or not at all. The style block is base.html's,
+     exactly, so the hash the security policy allows covers it too;
+     tests/test_offline.py fails if the two ever differ. -->
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Offline · PSells</title>
+  <link rel="icon" type="image/png" href="/static/icon-192.png">
+  <style>
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: #1f2328;
+      background: #f6f8fa;
+    }
+
+    header { background: #24292f; }
+
+    nav, main {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 1rem;
+    }
+
+    /* Wraps onto a second line on a narrow screen rather than running off it. */
+    nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem 1.5rem;
+      align-items: baseline;
+      padding-top: 0.75rem;
+      padding-bottom: 0.75rem;
+    }
+
+    nav a { color: #f6f8fa; text-decoration: none; }
+    nav a:hover { text-decoration: underline; }
+
+    /* Shown on the AWS demonstration only. */
+    .demo-notice {
+      margin: 0;
+      padding: 0.5rem 1rem;
+      text-align: center;
+      background: #fff8c5;
+      border-bottom: 1px solid #d4a72c;
+      color: #3b2300;
+    }
+    /* The page being shown, marked in the markup with aria-current. */
+    nav a[aria-current="page"] {
+      font-weight: 600;
+      text-decoration: underline;
+      text-decoration-thickness: 2px;
+      text-underline-offset: 0.4em;
+    }
+    nav .brand { font-weight: 600; margin-right: 1rem; }
+
+    nav .logout { margin: 0 0 0 auto; }
+
+    nav .logout button {
+      padding: 0;
+      font: inherit;
+      color: #f6f8fa;
+      background: none;
+      border: none;
+      cursor: pointer;
+    }
+
+    nav .logout button:hover { text-decoration: underline; }
+
+    .login { max-width: 22rem; }
+
+    main { padding-top: 1.5rem; padding-bottom: 3rem; }
+
+    h1 { font-size: 1.4rem; margin: 0 0 1rem; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #ffffff;
+      font-size: 0.9rem;
+    }
+
+    th, td {
+      padding: 0.45rem 0.75rem;
+      border-bottom: 1px solid #d0d7de;
+      text-align: left;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      background: #eaeef2;
+      font-weight: 600;
+    }
+
+    tbody tr:nth-child(even) { background: #f6f8fa; }
+    tbody tr:hover { background: #fff8c5; }
+
+    /* Figures line up on the decimal point when every digit is the same width. */
+    .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+    /* On a phone a table wider than the screen scrolls inside itself, so the
+       page stays the screen's width. */
+    @media (max-width: 760px) {
+      table { display: block; overflow-x: auto; }
+    }
+
+    .empty { padding: 2rem; text-align: center; color: #656d76; }
+
+    .dashboard {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .dashboard dl {
+      margin: 0;
+      padding: 0.25rem 1rem;
+      background: #ffffff;
+      border: 1px solid #d0d7de;
+      border-radius: 6px;
+    }
+
+    .dashboard dl div {
+      display: flex;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 0.45rem 0;
+      border-bottom: 1px solid #eaeef2;
+    }
+
+    .dashboard dl div:last-child { border-bottom: none; }
+    .dashboard dt { color: #656d76; }
+    .dashboard dd { margin: 0; font-weight: 600; }
+
+    .search {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+      margin-bottom: 1rem;
+    }
+
+    .search input {
+      flex: 0 1 24rem;
+      padding: 0.4rem 0.6rem;
+      font: inherit;
+      border: 1px solid #d0d7de;
+      border-radius: 6px;
+    }
+
+    .notice {
+      margin: 0 0 1rem;
+      padding: 0.6rem 1rem;
+      background: #dafbe1;
+      border: 1px solid #aceebb;
+      border-radius: 6px;
+    }
+
+    .form-error {
+      margin: 0 0 1rem;
+      padding: 0.6rem 1rem;
+      background: #ffebe9;
+      border: 1px solid #ffcecb;
+      border-radius: 6px;
+    }
+
+    .product-form {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 1rem 1.5rem;
+      max-width: 900px;
+      padding: 1.25rem;
+      background: #ffffff;
+      border: 1px solid #d0d7de;
+      border-radius: 6px;
+    }
+
+    .panel-link { margin: -0.75rem 0 1.5rem; }
+    .row-actions { white-space: nowrap; }
+    .row-actions a + a { margin-left: 0.75rem; }
+
+    .lead { color: #656d76; margin: 0 0 1rem; max-width: 70ch; }
+
+    .visually-hidden {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      white-space: nowrap;
+    }
+
+    .field { display: flex; flex-direction: column; gap: 0.3rem; }
+    .field.wide { grid-column: 1 / -1; }
+    .field label { font-weight: 600; }
+    .field small { color: #656d76; }
+    .field .error { margin: 0; color: #cf222e; }
+
+    .field input[type="text"], .field input[type="password"],
+    .field select, .field textarea {
+      padding: 0.4rem 0.6rem;
+      font: inherit;
+      border: 1px solid #d0d7de;
+      border-radius: 6px;
+    }
+
+    .field.has-error input, .field.has-error select { border-color: #cf222e; }
+    .field.check { flex-direction: row; align-items: center; }
+
+    .actions { grid-column: 1 / -1; display: flex; gap: 1rem; align-items: center; }
+
+    .actions .danger { background: #cf222e; border-color: #a40e26; }
+
+    .actions button {
+      padding: 0.5rem 1.2rem;
+      font: inherit;
+      color: #ffffff;
+      background: #1f883d;
+      border: 1px solid #1a7f37;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+
+    .search button {
+      padding: 0.4rem 0.9rem;
+      font: inherit;
+      border: 1px solid #d0d7de;
+      border-radius: 6px;
+      background: #ffffff;
+      cursor: pointer;
+    }
+
+    /* The analytics page: headline figures as tiles, and its SVG charts,
+       coloured here by class because no style attribute is allowed. */
+    .kpis {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 0.75rem;
+      margin: 0 0 1.5rem;
+    }
+    .kpis div {
+      padding: 0.6rem 0.9rem;
+      background: #ffffff;
+      border: 1px solid #d0d7de;
+      border-radius: 6px;
+    }
+    .kpis dt { color: #656d76; font-size: 0.85rem; }
+    .kpis dd { margin: 0.2rem 0 0; font-size: 1.25rem; font-weight: 600; text-align: left; }
+    .chart { margin: 0 0 2rem; }
+    .chart h2 { font-size: 1.1rem; margin: 0 0 0.5rem; }
+    .chart svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      margin-bottom: 0.75rem;
+      background: #ffffff;
+      border: 1px solid #d0d7de;
+      border-radius: 6px;
+    }
+    .chart text { font-size: 11px; fill: #1f2328; }
+    .chart text.tick { fill: #656d76; }
+    .chart .grid { stroke: #eaeef2; }
+    .chart .zero { stroke: #8c959f; }
+    .chart .revenue { fill: #0969da; }
+    .chart .profit { fill: #1a7f37; }
+    .chart .line { fill: none; stroke: #8250df; stroke-width: 2; }
+    .chart .dot { fill: #8250df; }
+    .legend { margin: 0 0 0.5rem; color: #656d76; font-size: 0.85rem; }
+    .legend .key {
+      display: inline-block;
+      width: 0.8rem;
+      height: 0.8rem;
+      margin: 0 0.25rem 0 0.75rem;
+      vertical-align: -0.1rem;
+      border-radius: 2px;
+    }
+    .legend .key:first-child { margin-left: 0; }
+    .legend .key.revenue { background: #0969da; }
+    .legend .key.profit { background: #1a7f37; }
+  </style>
+</head>
+<body>
+  <header>
+    <nav>
+      <a class="brand" href="/">PSells</a>
+    </nav>
+  </header>
+  <main>
+    <h1>You're offline</h1>
+    <p class="lead">PSells shows only live figures, so nothing is kept to show without a
+      connection. Once you're back online, <a href="/">open PSells again</a>.</p>
+  </main>
+</body>
+</html>

@@ -2055,7 +2055,7 @@ def test_templates_use_only_the_allowed_filters():
 
 # The demonstration's notice ------------------------------------------------------
 
-NOTICE = 'class="demo-notice"'
+NOTICE = "A demonstration with invented records."
 
 
 def test_only_a_demo_setting_of_1_is_the_demo(monkeypatch):

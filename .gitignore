@@ -40,3 +40,6 @@ crash.log
 # Values that are personal, such as the address the budget's alerts go to.
 
 *.tfvars
+
+# Screenshots browser_tests/ takes, for a person to look at.
+browser_tests/screenshots/

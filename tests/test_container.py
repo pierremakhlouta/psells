@@ -635,13 +635,19 @@ def test_the_content_security_policy_allows_nothing_it_does_not_name():
     assert policy["form-action"] == "'self'"
     assert policy["frame-ancestors"] == "'none'"
     assert policy["base-uri"] == "'none'"
-    # PSells' own manifest and images, for adding it to a home screen.
-    assert policy["img-src"] == "'self'"
-    assert policy["manifest-src"] == "'self'"
+    # PSells' own manifest and images, for adding it to a home screen, and
+    # its own script files for the service worker: 'self' and nothing more.
+    for name in ("img-src", "manifest-src", "script-src", "worker-src", "connect-src"):
+        assert policy[name] == "'self'", name
     assert set(policy) == {"default-src", "style-src", "img-src", "manifest-src",
+                           "script-src", "worker-src", "connect-src",
                            "form-action", "frame-ancestors", "base-uri"}
-    # No script source of any kind, and no way to allow inline code wholesale.
-    assert "unsafe" not in response_headers()["Content-Security-Policy"]
+    # No inline script, no eval, no other site, and no way to allow inline
+    # code wholesale.
+    header = response_headers()["Content-Security-Policy"]
+    assert "unsafe" not in header
+    assert "'sha256-" not in policy["script-src"] and "nonce" not in header
+    assert "*" not in header and "http" not in header
 
 
 def test_the_style_hash_matches_the_style_block_pages_are_served_with(client):
@@ -655,8 +661,10 @@ def test_the_style_hash_matches_the_style_block_pages_are_served_with(client):
     assert csp()["style-src"] == f"'sha256-{digest}'", (
         "templates/base.html changed its <style> block: put this hash in "
         f"nginx.conf: sha256-{digest}")
-    # And nothing on any page that the policy would refuse.
-    assert "<script" not in page
+    # And nothing on any page that the policy would refuse: one script, a
+    # file of PSells' own, and no inline code or style attribute.
+    assert re.findall(r"<script[^>]*>(.*?)</script>", page, re.S) == [""]
+    assert re.findall(r"<script[^>]*>", page) == ['<script src="/static/register.js" defer>']
     assert " style=" not in page
 
 
@@ -755,7 +763,7 @@ def test_the_nginx_config_is_mounted_read_only_and_readable_by_nginx():
     site_files = (glob.glob(os.path.join(NGINX_SITES, "**", "*.conf"), recursive=True)
                   + glob.glob(os.path.join(NGINX_SNIPPETS, "*.conf")))
     assert site_files
-    served = [os.path.join(PROJECT_DIR, "static", name) for name in STATIC_FILES]
+    served = [os.path.join(PROJECT_DIR, "static", name) for name in STATIC_FILES + ["sw.js"]]
     for path in [NGINX_CONF, *site_files, *served]:
         assert os.stat(path).st_mode & stat.S_IROTH, path
 
@@ -1485,7 +1493,8 @@ def test_only_the_aws_server_is_the_demo():
 
 # What nginx serves from static/, before the login, and nothing else there.
 STATIC_FILES = ["apple-touch-icon.png", "icon-192.png", "icon-512.png",
-                "icon-maskable-512.png", "manifest.webmanifest"]
+                "icon-maskable-512.png", "manifest.webmanifest", "offline.html",
+                "register.js"]
 
 
 def static_location():
@@ -1495,7 +1504,18 @@ def static_location():
     return pattern, text
 
 
-def test_nginx_serves_the_five_files_by_name_and_nothing_else_in_static():
+def test_the_service_worker_is_served_at_the_root_and_never_cached():
+    _, text = static_location()
+    block = text[text.index("location = /sw.js {"):]
+
+    # At the root, so its scope is the whole site; the file is static/sw.js.
+    assert "root /srv/psells/static;" in block
+    assert "text/javascript js;" in block
+    assert "expires epoch;" in block
+    assert os.path.exists(os.path.join(PROJECT_DIR, "static", "sw.js"))
+
+
+def test_nginx_serves_the_files_by_name_and_nothing_else_in_static():
     pattern, text = static_location()
     names = re.fullmatch(r"\^/static/\((.+)\)\$", pattern).group(1)
 
