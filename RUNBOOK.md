@@ -1,8 +1,8 @@
 # PSells runbook
 
-What to do, step by step: everyday tasks, routine care, incidents, and
-rebuilding from nothing. ARCHITECTURE.md shows how the parts fit together;
-README.md explains each part at length.
+What to do, step by step: everyday tasks, routine care, setting things up,
+incidents, and rebuilding from nothing. ARCHITECTURE.md shows how the parts
+fit together, README.md what each part is, and DECISIONS.md why.
 
 Every command runs from the project folder on the Mac unless it says
 otherwise. Each procedure says whether it has been tried and how: "tried on
@@ -289,6 +289,122 @@ needs sudo: without it, it says "No entries".
   Sign in first with `aws login --profile psells --remote` as the IAM user,
   never root.
 
+## Setting things up
+
+### Try something on the sample stack
+
+A second copy of the stack, `psells-sample`, with its own volume, its own
+address range and the invented records, never the real ones. Only one stack
+can hold ports 443 and 80, so stop the real proxy first
+(`docker compose stop proxy`), and start it again after.
+
+```
+PSELLS_NETWORK=10.213.48 PSELLS_CONFIG_FILE=./sample_data/config.json docker compose -p psells-sample up --build -d --wait
+```
+
+```
+docker compose -p psells-sample exec -T db sh -c 'psql -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" "$POSTGRES_DB"' < sample_data/seed.sql
+```
+
+```
+docker compose -p psells-sample exec app python set_password.py
+```
+
+Then `https://psells.localhost`. Removed, with its volume and only its own:
+
+```
+docker compose -p psells-sample down -v
+```
+
+Tried: on the sample stack throughout, last on 9 October 2026 for the
+screenshots.
+
+### Install the background jobs
+
+The three launchd jobs: the stack at login, the backup at 09:00, and the
+analytics every hour. Each file in `launchd/` is a template whose paths are
+filled in here; each runs once on installing, which on a running stack
+changes nothing.
+
+```
+for job in start backup analytics; do sed -e "s|__PROJECT_DIR__|$PWD|" -e "s|__HOME__|$HOME|" launchd/local.psells.$job.plist > ~/Library/LaunchAgents/local.psells.$job.plist && launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.psells.$job.plist; done
+```
+
+Tried: each job when it was built (Phases 04 and 11, A5).
+
+### Set up the analytics
+
+Once, on a Mac with the stack running: put `PSELLS_WAREHOUSE_PASSWORD`,
+`PSELLS_ETL_PASSWORD` and `PSELLS_READER_PASSWORD` in `.env`, each from
+`openssl rand -hex 24`, and `PSELLS_WAREHOUSE_URL` with the reader's
+(`.env.example` shows the forms). Then the ETL's read-only role, the
+warehouse and its first build, the reader's role, a build that grants it the
+views, and the app with the address:
+
+```
+analytics/create-etl-role.sh && docker compose -f compose.yaml -f compose.analytics.yaml up -d --wait warehouse && docker compose -f compose.yaml -f compose.analytics.yaml run --rm --build etl && analytics/create-reader-role.sh && docker compose -f compose.yaml -f compose.analytics.yaml run --rm etl && docker compose up -d --build --wait --no-deps app
+```
+
+Tried: on the real stack when it was built (A1, A3).
+
+### Apply a migration
+
+`schema.sql` builds the tables only when a database is first made, so a
+change to an existing one is a file in `migrations/`, applied once, in
+order, after a backup. One transaction, stopped at the first error, so a
+second run stops at "already exists" and changes nothing. Name the file,
+then apply it:
+
+```
+ls migrations/
+```
+
+```
+./backup.sh && docker compose exec -T db sh -c 'psql -v ON_ERROR_STOP=1 --single-transaction -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < migrations/0002_corrections.sql
+```
+
+A deploy applies none: the demo's too is applied by hand, through Session
+Manager. Tried: 0001 in Phase 05b and 0002 after Phase 09, on the real
+stack.
+
+### Check the Terraform matches what runs
+
+A plan that reports no changes is the proof. The AWS side, from
+`infra/aws/`, signed in with `aws login`:
+
+```
+cd infra/aws && AWS_PROFILE=psells terraform plan
+```
+
+The Grafana side, from `infra/grafana/`, its two tokens read from the
+Keychain for the command alone:
+
+```
+cd infra/grafana && AWS_PROFILE=psells GRAFANA_AUTH=$(security find-generic-password -s psells-grafana-terraform -w) GRAFANA_SM_ACCESS_TOKEN=$(security find-generic-password -s psells-grafana-sm -w) terraform plan
+```
+
+Tried: at the end of Phases 07 to 10.
+
+### Switch the managed database and load balancer on or off
+
+RDS and the load balancer cost about USD 50 a month, so they exist only while
+`managed_services` is on; it is off. On, then the deploy that points the app
+at RDS, then a CNAME at the registrar from `lb.psells` to the `lb_address`
+output, and the demo's password set again, since RDS starts empty:
+
+```
+cd infra/aws && AWS_PROFILE=psells terraform apply -var managed_services=true && gh workflow run deploy.yml -f commit=$(git rev-parse origin/main)
+```
+
+Off, in this order, so the app leaves RDS before RDS goes; then remove the
+CNAME:
+
+```
+cd infra/aws && AWS_PROFILE=psells terraform destroy -var managed_services=true -target='aws_ssm_parameter.postgres_host[0]' && gh workflow run deploy.yml -f commit=$(git rev-parse origin/main) && AWS_PROFILE=psells terraform apply
+```
+
+Tried: on and off in Phase 09.
+
 ## Incidents
 
 Each is what you see, what to check, and what to do.
@@ -406,13 +522,13 @@ Tried: many times, 7 to 9 October 2026.
    new passwords, and `data/config.json`, the real partner percentage, whose
    copy every backup carries beside its dump (`config-STAMP.json`; from the
    off-Mac copy, see "Restore from the off-Mac copy").
-3. Make the CA and the certificate and trust the CA, as README's "The
-   certificate" says: `./make-certificate.sh`.
+3. Make the CA and the certificate, `./make-certificate.sh`, and run the
+   `security add-trusted-cert` command it prints, once, so macOS trusts the
+   CA.
 4. Start the database alone, restore the latest dump as in "Restore a
    backup", then start the rest: `docker compose up -d --wait`.
-5. Install the three launchd jobs (README: backups, "Starting the stack at
-   login", Analytics), set up the warehouse and its roles (README:
-   "Analytics"), and log in.
+5. "Install the background jobs" and "Set up the analytics", above, and
+   log in.
 
 ### The demonstration server
 
