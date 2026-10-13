@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="216.5 105.5 644 644">
+  <!-- PSells' app icon: the monogram from logo.png, Pierre's logo, without
+       the word under it, which would be too small to read as an icon. The
+       view frames the monogram (x 281 to 796, y 297 to 558 in the logo's
+       1024 pixels) with a tenth of the width spare on each side, and the
+       rectangle covers the word, which starts at y 602. #fefefe is the
+       logo's own background. static/render-icons.sh draws the PNGs. -->
+  <rect x="0" y="0" width="1024" height="1024" fill="#fefefe"/>
+  <image href="logo.png" x="0" y="0" width="1024" height="1024"/>
+  <rect x="0" y="580" width="1024" height="444" fill="#fefefe"/>
+</svg>

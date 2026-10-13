@@ -128,6 +128,7 @@ part, says so in its last line and points to what replaced it.
 - [The Mac says when a job fails](#the-mac-says-when-a-job-fails)
 - [A certificate is warned about while it can still be renewed](#a-certificate-is-warned-about-while-it-can-be-renewed)
 - [The app has a fixed address too](#the-app-has-a-fixed-address-too)
+- [The app icon is the logo's monogram, on white](#the-app-icon-is-the-logos-monogram-on-white)
 
 ### AWS and Terraform
 
@@ -1562,3 +1563,13 @@ part, says so in its last line and points to what replaced it.
   that, until the night, what one visitor writes is seen by the next. Every
   page of the demo says so, from a setting only the server's
   compose.aws.yaml makes.
+
+- <a id="the-app-icon-is-the-logos-monogram-on-white"></a>**The app icon is the logo's monogram, on white.** PSells
+  is to be added to a phone's home screen and a Mac's Dock, so it needs an
+  icon. It is Pierre's logo, without the word PSells under the monogram,
+  which at 180 pixels would be too small to read and is shown under the icon
+  anyway. White, the logo's own background, since its navy P would vanish on
+  a dark one. Two SVGs frame the monogram in the logo's PNG, one with room
+  for Android's maskable crop, and a script draws the four PNGs from them
+  with Chrome and sips, so a new logo is one file and one command. A drawn
+  white P on the menu bar's colour was turned down for the logo.
