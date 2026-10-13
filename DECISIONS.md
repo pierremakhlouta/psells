@@ -115,6 +115,7 @@ part, says so in its last line and points to what replaced it.
 - [The home-screen files are served by nginx, before the login](#the-home-screen-files-are-served-by-nginx-before-the-login)
 - [The policy allows PSells' own manifest and images](#the-policy-allows-psells-own-manifest-and-images)
 - [Offline, PSells shows a page saying so, never old figures](#offline-psells-shows-a-page-saying-so-and-never-old-figures)
+- [No push notifications until a phone can reach the real PSells](#no-push-notifications-until-a-phone-can-reach-the-real-psells)
 
 ### Containers and the Mac
 
@@ -1616,3 +1617,10 @@ part, says so in its last line and points to what replaced it.
   tree before a commit. The connection is cut through a small relay rather
   than Playwright's offline switch, with which WebKit fails a navigation
   that a real iPhone's worker answers.
+
+- <a id="no-push-notifications-until-a-phone-can-reach-the-real-psells"></a>**No push notifications until a phone can reach the real PSells.** A phone
+  signs up for notifications from a page it can open, and a phone can open
+  only the demonstration, where notifications would go to strangers with
+  nothing to tell them. Web Push, with VAPID keys whose private half would
+  live only in the server's secrets, waits for private access from Pierre's
+  phone to the Mac's PSells, when which events notify whom is decided too.

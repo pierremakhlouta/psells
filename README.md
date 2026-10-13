@@ -27,7 +27,8 @@ AWS at `https://psells.lakeshorefreight.me`.
   containers under Compose, served over HTTPS from a certificate authority of
   its own, behind a login. It starts at login, backs itself up every morning
   and proves each backup restores, keeps an encrypted copy off the Mac, and
-  shows a notification when a job fails or a certificate nears its end.
+  shows a notification when a job fails or a certificate nears its end. It
+  installs as an app in the Dock, and the demo on a phone's home screen.
 - **CI and delivery.** Five workflows on every push: the tests against a real
   PostgreSQL, lint for the shell scripts, nginx and Terraform, a dependency
   audit and a secret scan of the whole history, the images built for two
@@ -311,6 +312,42 @@ And any write that a browser labels as coming from another site is refused with
 a 403 before any route runs, including one sent from another server on the same
 machine; that check is what covers the login form, which has no session yet.
 See [DECISIONS.md](DECISIONS.md) for the reasoning behind each.
+
+## Adding PSells to a home screen or the Dock
+
+PSells installs as an app: its own icon, its own window, no browser bars.
+
+- **On the Mac (your real PSells).** In Safari, open
+  `https://psells.localhost`, then File > Add to Dock.
+- **On an iPhone (Safari).** Open the site, tap the Share button, then Add to
+  Home Screen, and Add.
+- **On Android (Chrome).** Open the site, tap the three-dot menu, then Add to
+  Home screen (or Install app), and Install.
+
+A phone can reach only the demonstration, `https://psells.lakeshorefreight.me`,
+since the Mac's PSells answers on the Mac alone; on a phone the app is the
+demo, with its invented records.
+
+What makes it installable, all served by nginx before the login, since a
+phone fetches them with no session (`nginx/snippets/static.conf`, five files
+and two scripts by name, and nothing else under `/static/`):
+
+- `static/manifest.webmanifest`, the name PSells, opening standalone at `/`
+  in the menu bar's colour, and the icons; every page links it, with the
+  iPhone's apple-touch-icon and apple-mobile-web-app tags.
+- The icons: the PSells logo's monogram, without the word, on white.
+  `static/icon.svg` and `icon-maskable.svg` frame it in `static/logo.png`, the
+  maskable one with room for Android's crop, and `static/render-icons.sh`
+  draws the four PNGs from them (on the Mac, with Chrome and sips). A new
+  logo is one file and that one command.
+- A service worker, `/sw.js`, which keeps only a page saying PSells is
+  offline, and the icons. Every page of PSells is live figures, so a page is
+  never stored: it comes from the network, or without one the offline page
+  takes its place. A line at the top of a page says when the connection has
+  gone.
+
+The security policy allows PSells' own manifest, images and script files
+for this, and still no inline script.
 
 ## The HTTP API
 
@@ -1032,7 +1069,7 @@ database it is pointed at, so it refuses any whose name does not end in
 Every warning is an error (`pytest.ini`), apart from one known deprecation in
 Starlette's test client on Python 3.14, matched on its exact message.
 
-Twenty-seven files, and the split is deliberate, so a red run says what kind of
+Twenty-nine files, and the split is deliberate, so a red run says what kind of
 thing broke before you read a line of it.
 
 `test_domain.py` covers everything in `psells.py` that has no input or output:
@@ -1214,6 +1251,27 @@ the database without a dump to put in it, no runbook command may remove a
 volume but the sample stack's, and DECISIONS.md's index must list every
 decision once and link only to decisions that exist.
 
+`test_icons.py` reads each app icon's size from its PNG header, and holds
+the maskable one to its own, wider frame. `test_offline.py` reads the service
+worker as text: it keeps only files nginx serves and never a page, a new
+version deletes the old cache, it is registered for the whole site, and the
+offline page carries `base.html`'s style block exactly.
+
+`browser_tests/` drives real browsers with Playwright, an iPhone in WebKit
+and an Android phone in Chromium, against a running site: the manifest and
+every icon load, the site opens offline after the first visit, a page says
+when the connection goes, and the cache holds only PSells' own files. The
+connection is cut through a small relay (`browser_tests/relay.py`), because
+Playwright's own offline switch makes WebKit fail a navigation that a real
+iPhone's worker answers. It is run by name, never by a plain `pytest`. On the
+Mac, against the working tree (the app on the test database, a throwaway
+nginx with the Mac's certificate):
+
+    browser_tests/run-local.sh
+
+In CI, the Kubernetes check runs it against the whole site, on the
+throwaway cluster, with Playwright's browsers trusting that run's CA.
+
 `test_kubernetes.py` reads `k8s/` as kustomize renders it, and the Kubernetes
 workflow, and fails if the cluster could be reached beyond this machine or on
 443 or 80, if the database stops being built from `schema.sql` and the seed as
@@ -1296,6 +1354,10 @@ Worth stating plainly rather than leaving to be discovered.
   health and nginx's access lines, so an alert shows the symptom; the
   application's own error lines, the cause, are read on the server. Open from
   the postmortem.
+- **A phone installs the demo, not the business.** The Mac's PSells answers
+  on the Mac alone, so a phone's home-screen app opens the demonstration;
+  reaching the real records from a phone would need private access to the
+  Mac, and push notifications wait for it.
 - **Monitoring covers the demo only.** The business on the Mac is watched by
   its daily backup check, the notifications its jobs show when they fail or
   a certificate nears its end, and whoever uses it.
