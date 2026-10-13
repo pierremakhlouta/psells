@@ -27,7 +27,9 @@ IMAGE=$(grep -o 'nginx:[^ ]*@sha256:[0-9a-f]*' nginx/Dockerfile)
 
 cleanup() {
     docker rm -f "$NAME" > /dev/null 2>&1 || true
-    [ -n "${APP_PID:-}" ] && kill "$APP_PID" 2> /dev/null || true
+    if [ -n "${APP_PID:-}" ]; then
+        kill "$APP_PID" 2> /dev/null || true
+    fi
 }
 trap cleanup EXIT
 
