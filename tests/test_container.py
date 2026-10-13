@@ -635,8 +635,11 @@ def test_the_content_security_policy_allows_nothing_it_does_not_name():
     assert policy["form-action"] == "'self'"
     assert policy["frame-ancestors"] == "'none'"
     assert policy["base-uri"] == "'none'"
-    assert set(policy) == {"default-src", "style-src", "form-action",
-                           "frame-ancestors", "base-uri"}
+    # PSells' own manifest and images, for adding it to a home screen.
+    assert policy["img-src"] == "'self'"
+    assert policy["manifest-src"] == "'self'"
+    assert set(policy) == {"default-src", "style-src", "img-src", "manifest-src",
+                           "form-action", "frame-ancestors", "base-uri"}
     # No script source of any kind, and no way to allow inline code wholesale.
     assert "unsafe" not in response_headers()["Content-Security-Policy"]
 
@@ -743,6 +746,7 @@ def test_the_nginx_config_is_mounted_read_only_and_readable_by_nginx():
 
     assert mounts == ["./nginx/nginx.conf:/etc/nginx/nginx.conf:ro",
                       "./nginx/snippets:/etc/nginx/snippets:ro",
+                      "./static:/srv/psells/static:ro",
                       "./nginx/sites/localhost:/etc/nginx/site:ro",
                       "./data/tls:/etc/nginx/tls:ro"]
     # nginx reads them as user 101, not as the files' owner. A file readable
@@ -751,7 +755,8 @@ def test_the_nginx_config_is_mounted_read_only_and_readable_by_nginx():
     site_files = (glob.glob(os.path.join(NGINX_SITES, "**", "*.conf"), recursive=True)
                   + glob.glob(os.path.join(NGINX_SNIPPETS, "*.conf")))
     assert site_files
-    for path in [NGINX_CONF, *site_files]:
+    served = [os.path.join(PROJECT_DIR, "static", name) for name in STATIC_FILES]
+    for path in [NGINX_CONF, *site_files, *served]:
         assert os.stat(path).st_mode & stat.S_IROTH, path
 
 
@@ -789,6 +794,7 @@ def test_nginx_conf_itself_names_no_place():
         ["include", SITE_MOUNT + "http.conf"],
         ["include", SITE_MOUNT + "https.conf"],
         ["include", SNIPPET_MOUNT + "headers.conf"],
+        ["include", SNIPPET_MOUNT + "static.conf"],
         ["include", SNIPPET_MOUNT + "app.conf"],
         ["include", SITE_MOUNT + "servers/*.conf"],
     ]
@@ -1472,3 +1478,60 @@ def test_only_the_aws_server_is_the_demo():
     for name in os.listdir(os.path.join(PROJECT_DIR, "k8s")):
         with open(os.path.join(PROJECT_DIR, "k8s", name), errors="ignore") as file:
             assert "PSELLS_DEMO" not in file.read(), name
+
+
+
+# Adding PSells to a home screen ---------------------------------------------------
+
+# What nginx serves from static/, before the login, and nothing else there.
+STATIC_FILES = ["apple-touch-icon.png", "icon-192.png", "icon-512.png",
+                "icon-maskable-512.png", "manifest.webmanifest"]
+
+
+def static_location():
+    with open(os.path.join(NGINX_SNIPPETS, "static.conf")) as file:
+        text = file.read()
+    (pattern,) = re.findall(r"^location ~ (\S+) \{", text, re.M)
+    return pattern, text
+
+
+def test_nginx_serves_the_five_files_by_name_and_nothing_else_in_static():
+    pattern, text = static_location()
+    names = re.fullmatch(r"\^/static/\((.+)\)\$", pattern).group(1)
+
+    assert sorted(name.replace("\\.", ".") for name in names.split("|")) == STATIC_FILES
+    for name in STATIC_FILES:
+        assert re.match(pattern, "/static/" + name), name
+    # The icons' sources, and anything else, go to the app and its login.
+    for other in ["/static/logo.png", "/static/icon.svg", "/static/render-icons.sh",
+                  "/static/", "/static/icon-192.png.bak", "/static/../compose.yaml"]:
+        assert not re.match(pattern, other), other
+    assert "root /srv/psells;" in text
+    # Its own expires, never an add_header, which would drop the server's
+    # security headers from these files.
+    assert "add_header" not in re.sub(r"#.*", "", text)
+
+
+def test_every_server_that_serves_psells_serves_the_files():
+    for path in [NGINX_CONF, os.path.join(NGINX_SITES, "aws", "servers", "lb.conf")]:
+        with open(path) as file:
+            text = file.read()
+        assert text.count("include /etc/nginx/snippets/headers.conf;") == text.count(
+            "include /etc/nginx/snippets/static.conf;") == 1, path
+
+
+def test_the_manifest_names_the_installed_app_and_its_icons():
+    with open(os.path.join(PROJECT_DIR, "static", "manifest.webmanifest")) as file:
+        manifest = json.load(file)
+
+    assert manifest["name"] == manifest["short_name"] == "PSells"
+    assert manifest["start_url"] == manifest["scope"] == manifest["id"] == "/"
+    assert manifest["display"] == "standalone"
+    assert manifest["theme_color"] == "#24292f"
+    assert manifest["background_color"] == "#f6f8fa"
+    icons = {(icon["src"], icon["sizes"], icon["purpose"]) for icon in manifest["icons"]}
+    assert icons == {("/static/icon-192.png", "192x192", "any"),
+                     ("/static/icon-512.png", "512x512", "any"),
+                     ("/static/icon-maskable-512.png", "512x512", "maskable")}
+    for src, _, _ in icons:
+        assert src.removeprefix("/static/") in STATIC_FILES, src

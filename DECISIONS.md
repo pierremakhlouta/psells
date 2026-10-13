@@ -111,6 +111,8 @@ part, says so in its last line and points to what replaced it.
 - [Passwords are at least fifteen characters, since the login went public](#passwords-are-at-least-fifteen-characters-since-the-login)
 - [Every commit is scanned for secrets on every push](#every-commit-is-scanned-for-secrets-on-every-push)
 - [The demo's login is public, and its records are put back every night](#the-demos-login-is-public-and-its-records-reset-nightly)
+- [The home-screen files are served by nginx, before the login](#the-home-screen-files-are-served-by-nginx-before-the-login)
+- [The policy allows PSells' own manifest and images](#the-policy-allows-psells-own-manifest-and-images)
 
 ### Containers and the Mac
 
@@ -1573,3 +1575,20 @@ part, says so in its last line and points to what replaced it.
   for Android's maskable crop, and a script draws the four PNGs from them
   with Chrome and sips, so a new logo is one file and one command. A drawn
   white P on the menu bar's colour was turned down for the logo.
+
+- <a id="the-home-screen-files-are-served-by-nginx-before-the-login"></a>**The home-screen files are served by nginx, before the login.** A phone fetches
+  the manifest and the icons without a session, so they must be public, and
+  the app's rule is that every route but the login asks for one. nginx serves
+  them itself, five files by name from static/, mounted read-only wherever
+  nginx runs, as its configuration is; anything else under /static/, the
+  icons' sources included, goes to the app and its login. Turned down: public
+  routes in the app, which would add exceptions to its one check. They are
+  cached for a day with expires, never add_header, which would drop the
+  server's security headers from them.
+
+- <a id="the-policy-allows-psells-own-manifest-and-images"></a>**The policy allows PSells' own manifest and images.** A policy that names
+  nothing else refuses a manifest and images, so manifest-src and img-src now
+  allow 'self': PSells' own, from nowhere else. Scripts stay forbidden, which
+  a test still holds. Turned down: the manifest alone, which some browsers
+  follow by refusing the page's icon, leaving a blank one in a tab or the
+  Dock.

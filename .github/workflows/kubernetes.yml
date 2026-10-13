@@ -92,6 +92,10 @@ jobs:
           print("sha256-" + base64.b64encode(hashlib.sha256(block.encode()).digest()).decode())')
           allowed=$(grep -i '^content-security-policy:' <<< "$headers" | grep -o "sha256-[A-Za-z0-9+/=]*")
           check "style hash" "$served" "$allowed"
+          # The manifest and an icon, which a phone fetches with no session,
+          # from nginx itself, with their own types.
+          check "manifest" "$(ask -o /dev/null -w '%{http_code} %{content_type}' "$site/static/manifest.webmanifest")" "200 application/manifest+json"
+          check "icon" "$(ask -o /dev/null -w '%{http_code} %{content_type}' "$site/static/icon-192.png")" "200 image/png"
           # The Host reaches the app with its port, so redirects stay on 9443.
           check "redirect" "$(ask -o /dev/null -w '%{redirect_url}' "$site/")" "$site/login"
           # No other name is answered.

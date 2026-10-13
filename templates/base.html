@@ -16,6 +16,17 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}PSells{% endblock %}</title>
+  {#- For adding PSells to a home screen or a Dock. nginx serves these
+      files itself, before the login; see nginx/snippets/static.conf. -#}
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <link rel="icon" type="image/png" href="/static/icon-192.png">
+  <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="PSells">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#24292f">
+  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#24292f">
   <style>
     body {
       margin: 0;
