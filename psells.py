@@ -1,6 +1,7 @@
 import os
 import json
 import math
+import re
 import sys
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -1100,6 +1101,151 @@ def _listed_problems(connection, category, condition, current=None):
         if row is None or (row["hidden"] and not unchanged):
             problems[field] = f"Choose a {label} from the list."
     return problems
+
+
+# The settings page: the two lists and the two templates -----------------------
+
+# Each list's table, the products column that names a value on it, and the
+# order it is offered in. Fixed text, chosen by kind, never built from input.
+LISTS = {
+    "category": ("categories", "category", 'l.name COLLATE "C"'),
+    "condition": ("conditions", "condition", "l.position, l.name"),
+}
+
+
+class ListError(ValueError):
+    """A change to the category or condition list that cannot be made, with
+    the sentence saying why."""
+
+
+def list_entries(connection, kind):
+    """Every value on one list, hidden ones included, in the order it is
+    offered, each with how many products have it."""
+    table, column, order = LISTS[kind]
+    return connection.execute(
+        f"SELECT l.name, l.hidden, COUNT(p.id) AS products FROM {table} l "
+        f"LEFT JOIN products p ON p.{column} = l.name "
+        f"GROUP BY l.name ORDER BY {order}"
+    ).fetchall()
+
+
+def _list_name(connection, kind, text, keep=None):
+    """text as a name for the list, trimmed, or ListError.
+
+    A name differing from one already there only in capitals is refused, as
+    the misspelling the lists exist to stop; keep is the value being renamed,
+    which may change its own capitals.
+    """
+    table, _, _ = LISTS[kind]
+    label = kind.capitalize()
+    name = (text or "").strip()
+    if not name:
+        raise ListError(f"{label} cannot be blank.")
+    clash = connection.execute(
+        f"SELECT name FROM {table} WHERE lower(name) = lower(%s) "
+        "AND name IS DISTINCT FROM %s",
+        (name, keep),
+    ).fetchone()
+    if clash is not None:
+        raise ListError(f"There is already a {kind} named {clash['name']}.")
+    return name
+
+
+def _require_entry(connection, kind, name):
+    table, _, _ = LISTS[kind]
+    if connection.execute(f"SELECT 1 FROM {table} WHERE name = %s",
+                          (name,)).fetchone() is None:
+        raise ListError(f"There is no {kind} named {name}.")
+
+
+def add_list_entry(connection, kind, text):
+    """Add a value to the list, offered from now on; a new condition goes
+    last. Returns the name as stored."""
+    table, _, _ = LISTS[kind]
+    name = _list_name(connection, kind, text)
+    with connection.transaction():
+        if kind == "condition":
+            connection.execute(
+                "INSERT INTO conditions (name, position) "
+                "SELECT %s, COALESCE(MAX(position), 0) + 1 FROM conditions",
+                (name,))
+        else:
+            connection.execute(f"INSERT INTO {table} (name) VALUES (%s)",
+                               (name,))
+    return name
+
+
+def rename_list_entry(connection, kind, name, text):
+    """Rename a value; the database carries the new name to every product
+    that has it. Returns the new name."""
+    table, _, _ = LISTS[kind]
+    _require_entry(connection, kind, name)
+    new_name = _list_name(connection, kind, text, keep=name)
+    if new_name != name:
+        with connection.transaction():
+            connection.execute(f"UPDATE {table} SET name = %s WHERE name = %s",
+                               (new_name, name))
+    return new_name
+
+
+def set_list_entry_hidden(connection, kind, name, hidden):
+    """Hide a value, so it is not offered for a new item, or show it again.
+    Products that have it keep it."""
+    table, _, _ = LISTS[kind]
+    _require_entry(connection, kind, name)
+    with connection.transaction():
+        connection.execute(f"UPDATE {table} SET hidden = %s WHERE name = %s",
+                           (bool(hidden), name))
+
+
+def delete_list_entry(connection, kind, name):
+    """Remove a value no product has; one in use is hidden instead."""
+    table, column, _ = LISTS[kind]
+    _require_entry(connection, kind, name)
+    used = connection.execute(
+        f"SELECT COUNT(*) AS n FROM products WHERE {column} = %s", (name,)
+    ).fetchone()["n"]
+    if used:
+        raise ListError(
+            f"{used} product{'' if used == 1 else 's'} "
+            f"{'has' if used == 1 else 'have'} {name}, so it cannot be "
+            "deleted. Hide it instead.")
+    with connection.transaction():
+        connection.execute(f"DELETE FROM {table} WHERE name = %s", (name,))
+
+
+TEMPLATE_PLATFORMS = ("facebook", "instagram")
+TEMPLATE_PLACEHOLDERS = ("name", "price", "retail", "condition", "details")
+
+
+def listing_templates(connection):
+    """The listing templates, {platform: body}, Facebook first."""
+    bodies = {row["platform"]: row["body"] for row in connection.execute(
+        "SELECT platform, body FROM listing_templates").fetchall()}
+    return {platform: bodies.get(platform, "")
+            for platform in TEMPLATE_PLATFORMS}
+
+
+def save_listing_template(connection, platform, body):
+    """Store one platform's template, or ListError naming a placeholder
+    PSells cannot fill.
+
+    A browser sends a text box's line breaks as CRLF; they are kept as plain
+    line breaks, the way a listing is pasted.
+    """
+    if platform not in TEMPLATE_PLATFORMS:
+        raise ListError(f"There is no {platform} template.")
+    body = (body or "").replace("\r\n", "\n")
+    unknown = [found for found in re.findall(r"\{([^{}]*)\}", body)
+               if found not in TEMPLATE_PLACEHOLDERS]
+    if unknown:
+        known = ", ".join("{" + name + "}" for name in TEMPLATE_PLACEHOLDERS)
+        raise ListError(f"PSells cannot fill {{{unknown[0]}}}. "
+                        f"The placeholders are {known}.")
+    with connection.transaction():
+        connection.execute(
+            "UPDATE listing_templates SET body = %s WHERE platform = %s",
+            (body, platform))
 
 
 def _every_product_problem(category, name, quantity_received,

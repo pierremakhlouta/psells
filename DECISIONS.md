@@ -818,13 +818,16 @@ readable; they are in its history in git, up to commit 7ecee20.
   carries a rename to every product. A name keeps a product's rows readable
   without a join, as before. A value in use cannot be deleted; it is hidden
   instead, kept for its products and their history and not offered for a
-  new item. Conditions became Brand new, Open box, Like new, Used and
+  new item. A new name differing from one already there only in capitals is
+  refused as the misspelling it most likely is. Conditions became Brand new, Open box, Like new, Used and
   Damaged, the free-typed ones mapped onto them by migration 0003, which
   also hid every category with nothing in stock, chosen by query so no real
   category is named in the repository. After that, hiding is by hand: a
   category never hides itself on running out. The two listing templates,
   Facebook and Instagram, are kept in the database too and are empty in the
-  repository, so their pickup areas and hashtags stay out of it.
+  repository, so their pickup areas and hashtags stay out of it. A template
+  using a placeholder PSells cannot fill is refused when saved, not found
+  later in a listing.
 
 - <a id="an-item-arrives-before-it-is-researched-and-its-stage-is-worked-out"></a>**An item arrives before it is researched, and its stage is worked out.**
   Pierre's brother takes items in and researches them; Pierre photographs

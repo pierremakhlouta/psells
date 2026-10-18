@@ -1587,3 +1587,116 @@ def test_research_needs_a_payout_that_can_be_worked_out(db, partner_rate):
 
     assert psells.research_complete(view_row(db))
     assert psells.product_stage(view_row(db), False) == "Researched"
+
+
+# Settings: the lists and the templates ----------------------------------------------
+
+def entries(db, kind):
+    return [(row["name"], row["hidden"], row["products"])
+            for row in psells.list_entries(db, kind)]
+
+
+def test_a_list_shows_every_value_with_how_many_products_have_it(db):
+    add_product(db, 1, quantity_received=2, category="Hats")
+    add_product(db, 2, quantity_received=2, category="Hats", condition="Used")
+    db.execute("UPDATE categories SET hidden = true WHERE name = 'Bags'")
+
+    categories = entries(db, "category")
+    assert ("Hats", False, 2) in categories
+    assert ("Bags", True, 0) in categories
+    assert [name for name, _, _ in categories] == psells.categories(
+        db, include_hidden=True)
+    assert entries(db, "condition") == [
+        ("Brand new", False, 1), ("Open box", False, 0), ("Like new", False, 0),
+        ("Used", False, 1), ("Damaged", False, 0)]
+
+
+def test_an_added_value_is_offered_and_a_new_condition_goes_last(db):
+    assert psells.add_list_entry(db, "category", "  Scarves ") == "Scarves"
+    assert psells.add_list_entry(db, "condition", "For parts") == "For parts"
+
+    assert "Scarves" in psells.categories(db)
+    assert psells.conditions(db)[-1] == "For parts"
+
+
+@pytest.mark.parametrize("text, sentence", [
+    ("", "Category cannot be blank."),
+    ("   ", "Category cannot be blank."),
+    ("Hats", "There is already a category named Hats."),
+    ("hats", "There is already a category named Hats."),
+    (" HATS ", "There is already a category named Hats."),
+])
+def test_a_blank_or_existing_value_is_refused(db, text, sentence):
+    with pytest.raises(psells.ListError) as error:
+        psells.add_list_entry(db, "category", text)
+
+    assert str(error.value) == sentence
+
+
+def test_a_rename_reaches_every_product_and_its_sales_stay(db):
+    add_product(db, 1, quantity_received=3, category="Hats")
+    add_sale(db, 1, item_id=1, quantity=1)
+    sale_before = db.execute("SELECT * FROM sales WHERE id = 1").fetchone()
+
+    assert psells.rename_list_entry(db, "category", "Hats", " Caps ") == "Caps"
+
+    assert view_row(db)["category"] == "Caps"
+    assert "Hats" not in psells.categories(db, include_hidden=True)
+    assert db.execute("SELECT * FROM sales WHERE id = 1").fetchone() == sale_before
+
+
+def test_a_rename_may_change_its_own_capitals_but_not_take_another_name(db):
+    assert psells.rename_list_entry(db, "category", "apples", "Apples") == "Apples"
+
+    with pytest.raises(psells.ListError) as error:
+        psells.rename_list_entry(db, "category", "Apples", "hats")
+    assert str(error.value) == "There is already a category named Hats."
+
+    with pytest.raises(psells.ListError) as error:
+        psells.rename_list_entry(db, "category", "Mittens", "Gloves")
+    assert str(error.value) == "There is no category named Mittens."
+
+
+def test_hiding_and_showing_a_value(db):
+    psells.set_list_entry_hidden(db, "condition", "Damaged", True)
+    assert "Damaged" not in psells.conditions(db)
+
+    psells.set_list_entry_hidden(db, "condition", "Damaged", False)
+    assert psells.conditions(db)[-1] == "Damaged"
+
+
+def test_only_a_value_no_product_has_can_be_deleted(db):
+    add_product(db, 1, quantity_received=1, category="Hats")
+    add_product(db, 2, quantity_received=1, category="Hats")
+
+    with pytest.raises(psells.ListError) as error:
+        psells.delete_list_entry(db, "category", "Hats")
+    assert str(error.value) == (
+        "2 products have Hats, so it cannot be deleted. Hide it instead.")
+
+    psells.delete_list_entry(db, "category", "Bags")
+    assert "Bags" not in psells.categories(db, include_hidden=True)
+
+
+def test_a_template_is_saved_with_plain_line_breaks(db):
+    psells.save_listing_template(db, "facebook",
+                                 "{name}\r\nPrice: {price}\r\n{details}")
+
+    assert psells.listing_templates(db) == {
+        "facebook": "{name}\nPrice: {price}\n{details}", "instagram": ""}
+
+
+@pytest.mark.parametrize("body, unknown", [
+    ("{name} for {cost}", "{cost}"),
+    ("{Name}", "{Name}"),
+    ("{ name }", "{ name }"),
+])
+def test_a_template_with_a_placeholder_psells_cannot_fill_is_refused(
+        db, body, unknown):
+    with pytest.raises(psells.ListError) as error:
+        psells.save_listing_template(db, "instagram", body)
+
+    assert str(error.value) == (
+        f"PSells cannot fill {unknown}. The placeholders are {{name}}, "
+        "{price}, {retail}, {condition}, {details}.")
+    assert psells.listing_templates(db)["instagram"] == ""

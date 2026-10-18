@@ -304,6 +304,7 @@
       {{ nav_link('analytics_page', 'Analytics') }}
       {{ nav_link('add_product_page', 'Add product') }}
       {{ nav_link('add_payment_page', 'Record payment') }}
+      {{ nav_link('settings_page', 'Settings') }}
       {#- A form, not a link: logging out is a POST. -#}
       <form class="logout" action="{{ url_for('logout') }}" method="post">
         {{ form_token() }}

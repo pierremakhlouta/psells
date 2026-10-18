@@ -25,7 +25,7 @@ passwords and sessions are in auth.py; this file only carries the cookie.
 
 import datetime
 import os
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -920,6 +920,131 @@ def delete_payment_page(request: Request, connection: Connection,
 def delete_payment_submit(request: Request, connection: Connection,
                           record_id: int):
     return delete_record_submit(request, connection, "payment", record_id)
+
+
+# Settings: the category and condition lists, and the listing templates -------
+
+# A list's place in an address, and the kind psells calls it by.
+LIST_KINDS = {"categories": "category", "conditions": "condition"}
+ListPath = Literal["categories", "conditions"]
+
+# What a change reports, by a fixed word in the address, so the sentence shown
+# is never text from the address itself.
+SETTINGS_NOTICES = {
+    "added": "Added.",
+    "renamed": "Renamed, on every product that had it.",
+    "hidden": "Hidden: no longer offered for a new item.",
+    "shown": "Shown: offered for a new item again.",
+    "deleted": "Deleted.",
+    "template": "Template saved.",
+}
+
+
+def settings_page_for(request, connection, problem=None, status_code=200):
+    """The settings page. problem, for a change refused, is (section,
+    sentence, what was typed), the section being categories, conditions or
+    a platform, so the sentence and the typed text go back where they came
+    from."""
+    templates_now = psells.listing_templates(connection)
+    if problem is not None and problem[0] in templates_now:
+        templates_now[problem[0]] = problem[2]
+
+    return templates.TemplateResponse(
+        request,
+        "settings.html",
+        {"lists": {path: psells.list_entries(connection, kind)
+                   for path, kind in LIST_KINDS.items()},
+         "listing_templates": templates_now,
+         "placeholders": psells.TEMPLATE_PLACEHOLDERS,
+         "notice": SETTINGS_NOTICES.get(request.query_params.get("done", "")),
+         "problem": problem},
+        status_code=status_code,
+    )
+
+
+def settings_change(request, connection, section, typed, change, done):
+    """Make one change and go back to the page, or show the page again with
+    a 422 and why not."""
+    try:
+        change()
+    except psells.ListError as refused:
+        return settings_page_for(request, connection,
+                                 (section, str(refused), typed),
+                                 status_code=422)
+
+    return RedirectResponse(
+        request.url_for("settings_page").include_query_params(done=done),
+        status_code=303,
+    )
+
+
+@router.get("/settings", response_class=HTMLResponse)
+def settings_page(request: Request, connection: Connection):
+    return settings_page_for(request, connection)
+
+
+@router.post("/settings/{path}/add", response_class=HTMLResponse)
+def add_list_entry_submit(request: Request, connection: Connection,
+                          path: ListPath,
+                          name: Annotated[str, Form()] = ""):
+    return settings_change(
+        request, connection, path, name,
+        lambda: psells.add_list_entry(connection, LIST_KINDS[path], name),
+        "added")
+
+
+@router.post("/settings/{path}/rename", response_class=HTMLResponse)
+def rename_list_entry_submit(request: Request, connection: Connection,
+                             path: ListPath,
+                             name: Annotated[str, Form()] = "",
+                             new_name: Annotated[str, Form()] = ""):
+    return settings_change(
+        request, connection, path, new_name,
+        lambda: psells.rename_list_entry(connection, LIST_KINDS[path], name,
+                                         new_name),
+        "renamed")
+
+
+@router.post("/settings/{path}/hide", response_class=HTMLResponse)
+def hide_list_entry_submit(request: Request, connection: Connection,
+                           path: ListPath,
+                           name: Annotated[str, Form()] = ""):
+    return settings_change(
+        request, connection, path, "",
+        lambda: psells.set_list_entry_hidden(connection, LIST_KINDS[path],
+                                             name, True),
+        "hidden")
+
+
+@router.post("/settings/{path}/show", response_class=HTMLResponse)
+def show_list_entry_submit(request: Request, connection: Connection,
+                           path: ListPath,
+                           name: Annotated[str, Form()] = ""):
+    return settings_change(
+        request, connection, path, "",
+        lambda: psells.set_list_entry_hidden(connection, LIST_KINDS[path],
+                                             name, False),
+        "shown")
+
+
+@router.post("/settings/{path}/delete", response_class=HTMLResponse)
+def delete_list_entry_submit(request: Request, connection: Connection,
+                             path: ListPath,
+                             name: Annotated[str, Form()] = ""):
+    return settings_change(
+        request, connection, path, "",
+        lambda: psells.delete_list_entry(connection, LIST_KINDS[path], name),
+        "deleted")
+
+
+@router.post("/settings/templates/{platform}", response_class=HTMLResponse)
+def save_template_submit(request: Request, connection: Connection,
+                         platform: Literal["facebook", "instagram"],
+                         body: Annotated[str, Form()] = ""):
+    return settings_change(
+        request, connection, platform, body,
+        lambda: psells.save_listing_template(connection, platform, body),
+        "template")
 
 
 # Logging in and out ------------------------------------------------------------

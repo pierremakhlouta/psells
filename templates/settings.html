@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+
+{% block title %}Settings · PSells{% endblock %}
+
+{% from "macros.html" import form_token with context %}
+
+{#- One list: each value with its products, a box to rename it, and Hide or
+    Show; Delete only for a value no product has. path is the list's place in
+    the address, label its heading, one what a value is called. -#}
+{% macro list_section(path, label, one, entries) %}
+<section aria-labelledby="{{ path }}-heading">
+  <h2 id="{{ path }}-heading">{{ label }}</h2>
+  {% if problem and problem[0] == path %}
+  <p class="form-error" role="alert">{{ problem[1] }}</p>
+  {% endif %}
+  <table>
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th class="num">Products</th>
+        <th>Offered</th>
+        <th><span class="visually-hidden">Actions</span></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for entry in entries %}
+      <tr>
+        <td>
+          <form class="search" action="{{ url_for('rename_list_entry_submit', path=path) }}" method="post">
+            {{ form_token() }}
+            <input type="hidden" name="name" value="{{ entry.name }}">
+            <input type="text" name="new_name" value="{{ entry.name }}" aria-label="New name for {{ entry.name }}">
+            <button type="submit">Rename</button>
+          </form>
+        </td>
+        <td class="num">{{ entry.products }}</td>
+        <td>{% if entry.hidden %}Hidden{% else %}Yes{% endif %}</td>
+        <td class="row-actions">
+          <form class="search" action="{{ url_for('show_list_entry_submit' if entry.hidden else 'hide_list_entry_submit', path=path) }}" method="post">
+            {{ form_token() }}
+            <input type="hidden" name="name" value="{{ entry.name }}">
+            <button type="submit">{% if entry.hidden %}Show{% else %}Hide{% endif %}</button>
+          </form>
+          {% if not entry.products %}
+          <form class="search" action="{{ url_for('delete_list_entry_submit', path=path) }}" method="post">
+            {{ form_token() }}
+            <input type="hidden" name="name" value="{{ entry.name }}">
+            <button type="submit">Delete</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <form class="search" action="{{ url_for('add_list_entry_submit', path=path) }}" method="post">
+    {{ form_token() }}
+    <input type="text" name="name" value="{{ problem[2] if problem and problem[0] == path else '' }}" aria-label="New {{ one }}">
+    <button type="submit">Add</button>
+  </form>
+</section>
+{% endmacro %}
+
+{% block content %}
+<h1>Settings</h1>
+<p class="lead">The lists a new item chooses from, and the text each listing
+  starts from. A hidden value is not offered for a new item; the products that
+  have it keep it. A value no product has can be deleted.</p>
+
+{% if notice %}
+<p class="notice" role="status">{{ notice }}</p>
+{% endif %}
+
+{{ list_section("categories", "Categories", "category", lists.categories) }}
+{{ list_section("conditions", "Conditions", "condition", lists.conditions) }}
+
+<section aria-labelledby="templates-heading">
+  <h2 id="templates-heading">Listing templates</h2>
+  <p class="lead">PSells fills in {name}, {price} (the listed price),
+    {retail}, {condition} and {details} for each item. A line with {retail}
+    is left out when the retail price is unknown, and a line with {details}
+    when there are none.</p>
+  {% for platform, body in listing_templates.items() %}
+  {% if problem and problem[0] == platform %}
+  <p class="form-error" role="alert">{{ problem[1] }}</p>
+  {% endif %}
+  <form class="product-form" action="{{ url_for('save_template_submit', platform=platform) }}" method="post">
+    {{ form_token() }}
+    <div class="field wide">
+      <label for="template-{{ platform }}">{% if platform == "facebook" %}Facebook{% else %}Instagram{% endif %}</label>
+      <textarea id="template-{{ platform }}" name="body" rows="12">{{ body }}</textarea>
+    </div>
+    <div class="actions">
+      <button type="submit">Save {% if platform == "facebook" %}Facebook{% else %}Instagram{% endif %} template</button>
+    </div>
+  </form>
+  {% endfor %}
+</section>
+{% endblock %}

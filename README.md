@@ -153,6 +153,9 @@ and a test fails if `seed.sql` is edited by hand.
   from each product's row.
 - **Analytics**: headline figures, revenue and profit by month, categories
   and products, as charts drawn on the server, since no page runs a script.
+- **Settings**: the category and condition lists (add, rename, hide, or
+  delete one no product has) and the Facebook and Instagram listing
+  templates.
 
 The pages call the same functions as the terminal application and the API
 and do no arithmetic of their own; tests compare all three, and a test parses

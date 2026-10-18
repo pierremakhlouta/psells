@@ -519,6 +519,7 @@ def current_links(html):
     ("/sales-history", "Sales"), ("/returns-history", "Returns"),
     ("/payments-history", "Payments"), ("/analytics", "Analytics"),
     ("/products/new", "Add product"), ("/payments/new", "Record payment"),
+    ("/settings", "Settings"),
 ])
 def test_the_menu_marks_the_page_being_shown(client, db, path, label):
     assert current_links(client.get(path).text) == [label]
@@ -2039,6 +2040,7 @@ def test_there_are_templates_to_check():
     assert "record_not_found.html" in names
     assert "macros.html" in names
     assert "analytics.html" in names
+    assert "settings.html" in names
 
 
 def test_no_template_does_arithmetic():
@@ -2085,3 +2087,115 @@ def test_anywhere_else_no_page_says_it_is_a_demo(client, anonymous):
     assert web.templates.env.globals["demo"] is False
     assert NOTICE not in anonymous.get("/login").text
     assert NOTICE not in client.get("/").text
+
+
+# Settings ------------------------------------------------------------------------
+
+def settings_form(client, action_end, name=None):
+    """The settings page's form posting to an address ending action_end, for
+    the value name when there is one per row."""
+    found = [form for form in forms(client.get("/settings").text)
+             if form["action"].endswith(action_end)
+             and (name is None or form_data(form).get("name") == name)]
+    assert len(found) == 1, (action_end, name)
+    return found[0]
+
+
+def submit(client, form, **changes):
+    return client.post(form["action"], data=form_data(form) | changes)
+
+
+def test_the_settings_page_lists_both_lists_with_their_products(client, db):
+    add_product(db, 1, quantity_received=1, category="Hats")
+    db.execute("UPDATE categories SET hidden = true WHERE name = 'Bags'")
+
+    page = client.get("/settings")
+    rows = table_rows(page.text)
+
+    assert page.status_code == 200
+    # The name is in a rename box, so the cells read its buttons.
+    assert ["Rename", "1", "Yes", "Hide"] in rows
+    assert ["Rename", "0", "Hidden", "Show Delete"] in rows
+    assert len(rows) == len(psells.categories(db, include_hidden=True)) + 5
+
+
+def test_a_value_is_added_renamed_hidden_shown_and_deleted_through_the_page(
+        client, db):
+    response = submit(client, settings_form(client, "/categories/add"),
+                      name="Scarves")
+    assert response.status_code == 200
+    assert "<p class=\"notice\" role=\"status\">Added.</p>" in response.text
+    assert "Scarves" in psells.categories(db)
+
+    submit(client, settings_form(client, "/categories/rename", "Scarves"),
+           new_name="Wraps")
+    assert "Wraps" in psells.categories(db)
+
+    submit(client, settings_form(client, "/categories/hide", "Wraps"))
+    assert "Wraps" not in psells.categories(db)
+
+    submit(client, settings_form(client, "/categories/show", "Wraps"))
+    assert "Wraps" in psells.categories(db)
+
+    response = submit(client, settings_form(client, "/categories/delete", "Wraps"))
+    assert "Deleted." in response.text
+    assert "Wraps" not in psells.categories(db, include_hidden=True)
+
+
+def test_a_value_in_use_has_no_delete_button(client, db):
+    add_product(db, 1, quantity_received=1, condition="Used")
+    deletes = [form_data(form)["name"] for form in forms(client.get("/settings").text)
+               if form["action"].endswith("/conditions/delete")]
+
+    assert deletes == ["Brand new", "Open box", "Like new", "Damaged"]
+
+
+def test_a_refused_value_comes_back_with_why_in_its_own_section(client, db):
+    response = submit(client, settings_form(client, "/conditions/add"),
+                      name="used")
+
+    assert response.status_code == 422
+    assert paragraphs(response.text, "form-error") == [
+        ("There is already a condition named Used.", [])]
+    (form,) = [form for form in forms(response.text)
+               if form["action"].endswith("/conditions/add")]
+    assert form_data(form)["name"] == "used"
+    assert psells.conditions(db) == [
+        "Brand new", "Open box", "Like new", "Used", "Damaged"]
+
+
+def test_a_template_is_saved_and_shown_in_its_box(client, db):
+    form = settings_form(client, "/templates/facebook")
+    response = submit(client, form, body="{name}\r\nPrice: {price}")
+
+    assert "Template saved." in response.text
+    assert psells.listing_templates(db)["facebook"] == "{name}\nPrice: {price}"
+    assert ">{name}\nPrice: {price}</textarea>" in response.text
+
+
+def test_a_refused_template_keeps_what_was_typed(client, db):
+    form = settings_form(client, "/templates/instagram")
+    response = submit(client, form, body="{name} <b>{cost}</b>")
+
+    assert response.status_code == 422
+    assert paragraphs(response.text, "form-error") == [
+        ("PSells cannot fill {cost}. The placeholders are {name}, {price}, "
+         "{retail}, {condition}, {details}.", [])]
+    # Escaped, and kept, so nothing typed is lost.
+    assert ">{name} &lt;b&gt;{cost}&lt;/b&gt;</textarea>" in response.text
+    assert psells.listing_templates(db)["instagram"] == ""
+
+
+def test_the_notice_is_only_one_of_the_pages_own_sentences(client):
+    for done in ["<script>", "Your account is locked", ""]:
+        assert paragraphs(client.get("/settings", params={"done": done}).text,
+                          "notice") == []
+
+
+def test_a_list_or_platform_not_in_settings_is_not_found(client, db):
+    before = psells.categories(db, include_hidden=True)
+
+    assert client.post("/settings/products/add", data={"name": "x"}).status_code == 422
+    assert client.post("/settings/templates/tiktok", data={"body": "x"}).status_code == 422
+    assert psells.categories(db, include_hidden=True) == before
+
