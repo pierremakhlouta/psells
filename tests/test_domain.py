@@ -1900,3 +1900,52 @@ def test_a_fixed_payout_counts_without_a_retail_price(partner_rate,
     assert worth(2000, partner_share_mode="custom_amount",
                  partner_share_amount_cents=700, retail_price_cents=None) == {
         "payout": 700, "profit": 1300, "not_worth_listing": True}
+
+
+# The pipeline: every item under its stage ------------------------------------------
+
+def a_shop_at_every_stage(db):
+    """One product per stage, plus a second Received one, added newest
+    first so id order is not insertion order."""
+    unresearched = {"listed_price_cents": None, "retail_price_cents": None,
+                    "condition": None}
+    add_product(db, 7, quantity_received=1, **unresearched)
+    add_product(db, 6, quantity_received=1)
+    add_return(db, 1, 6, 1)
+    add_product(db, 5, quantity_received=1)
+    add_sale(db, 1, 5, 1)
+    add_product(db, 4, quantity_received=2)
+    add_product(db, 3, quantity_received=1, listed_price_cents=None)
+    db.execute("INSERT INTO photos (product_id, file_name) VALUES "
+               "(3, 'a.jpg'), (3, 'b.jpg')")
+    add_product(db, 2, quantity_received=1, listed_price_cents=None,
+                marketplace_price_cents=6000)
+    add_product(db, 1, quantity_received=1, **unresearched)
+
+
+def test_the_pipeline_puts_every_item_under_its_stage(db, partner_rate):
+    a_shop_at_every_stage(db)
+
+    groups = psells.pipeline(db)
+
+    assert {stage: [product["id"] for product in products]
+            for stage, products in groups.items()} == {
+        "Received": [1, 7], "Researched": [2], "Photographed": [3],
+        "Listed": [4], "Sold": [5], "Returned": [6]}
+    assert list(groups) == list(psells.STAGES)
+    assert psells.stage_counts(groups) == {
+        "Received": 2, "Researched": 1, "Photographed": 1, "Listed": 1,
+        "Sold": 1, "Returned": 1}
+
+
+def test_each_item_is_at_the_stage_product_stage_gives(db, partner_rate):
+    a_shop_at_every_stage(db)
+
+    for stage, products in psells.pipeline(db).items():
+        for product in products:
+            assert psells.product_stage(product, product["id"] == 3) == stage
+
+
+def test_an_empty_shop_has_every_stage_at_zero(db):
+    assert psells.stage_counts(psells.pipeline(db)) == dict.fromkeys(
+        psells.STAGES, 0)

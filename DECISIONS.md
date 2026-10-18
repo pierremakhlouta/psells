@@ -853,4 +853,8 @@ readable; they are in its history in git, up to commit 7ecee20.
   flagged "Not worth listing", never hidden or refused, since it may be
   listed anyway. The minimum is a business figure, so it sits in the
   ignored configuration file beside the partner rate; with none set nothing
-  is flagged, and an item whose profit is not known yet is never flagged.
+  is flagged, and an item whose profit is not known yet is never flagged. The
+  pipeline page counts products, not units, at each stage, and lists only
+  the four stages still being worked on; sold and returned items are
+  counted there and listed on the out-of-stock page, which already shows
+  them.

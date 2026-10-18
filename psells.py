@@ -753,6 +753,30 @@ def product_stage(product, has_photo):
     return "Received"
 
 
+def pipeline(connection):
+    """Every product under the stage product_stage gives it, as
+    {stage: [product, ...]} with every stage in STAGES order, empty or not.
+
+    Products keep id order within a stage, so the oldest comes first. Which
+    products have a photo is asked once, not once per product.
+    """
+    photographed = {row["product_id"] for row in connection.execute(
+        "SELECT DISTINCT product_id FROM photos").fetchall()}
+
+    groups = {stage: [] for stage in STAGES}
+
+    for product in all_products(connection):
+        groups[product_stage(product, product["id"] in photographed)].append(
+            product)
+
+    return groups
+
+
+def stage_counts(groups):
+    """How many products are at each stage, from pipeline's groups."""
+    return {stage: len(products) for stage, products in groups.items()}
+
+
 def unknown_payout_problem(product):
     """Why a product whose partner payout is unknown cannot be sold."""
     return (f"{product['name']} has no retail price yet, so its partner "

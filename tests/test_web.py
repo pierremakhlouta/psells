@@ -515,7 +515,8 @@ def current_links(html):
 
 
 @pytest.mark.parametrize("path, label", [
-    ("/", "Inventory"), ("/out-of-stock", "Out of stock"),
+    ("/", "Inventory"), ("/pipeline", "Pipeline"),
+    ("/out-of-stock", "Out of stock"),
     ("/sales-history", "Sales"), ("/returns-history", "Returns"),
     ("/payments-history", "Payments"), ("/analytics", "Analytics"),
     ("/products/new", "Add product"), ("/payments/new", "Record payment"),
@@ -2051,6 +2052,7 @@ def test_there_are_templates_to_check():
     assert "macros.html" in names
     assert "analytics.html" in names
     assert "settings.html" in names
+    assert "pipeline.html" in names
 
 
 def test_no_template_does_arithmetic():
@@ -2308,3 +2310,58 @@ def test_an_unresearched_item_shows_unknown_figures_and_no_flag(client, db):
 
 def test_the_add_form_shows_no_figures(client):
     assert figures(client.get("/products/new").text) == {}
+
+
+# The pipeline page ------------------------------------------------------------
+
+def test_the_pipeline_page_counts_every_stage_as_pipeline_does(client, db):
+    add_product(db, 1, quantity_received=1, **LIGHT)
+    add_product(db, 2, quantity_received=1, **LIGHT)
+    add_product(db, 3, quantity_received=2)
+    add_product(db, 4, quantity_received=1)
+    add_sale(db, 1, 4, 1)
+
+    page = client.get("/pipeline")
+
+    assert page.status_code == 200
+    assert figures(page.text) == {
+        stage: str(count) for stage, count
+        in psells.stage_counts(psells.pipeline(db)).items()}
+    assert figures(page.text) == {"Received": "2", "Researched": "0",
+                                  "Photographed": "0", "Listed": "1",
+                                  "Sold": "1", "Returned": "0"}
+
+
+def test_the_pipeline_page_lists_the_working_stages_item_by_item(client, db):
+    add_product(db, 2, quantity_received=1, **LIGHT)
+    add_product(db, 1, quantity_received=1, **LIGHT)
+    add_product(db, 3, quantity_received=2)
+    add_product(db, 4, quantity_received=1)
+    add_sale(db, 1, 4, 1)
+
+    page = client.get("/pipeline").text
+
+    assert re.findall(r'<h2 id="[^"]*">([^<]*)</h2>', page) == [
+        "Received", "Researched", "Photographed", "Listed"]
+    assert [row[:4] for row in table_rows(page)] == [
+        ["1", "Product 1", "Shoes", "1"],
+        ["2", "Product 2", "Shoes", "1"],
+        ["No items at this stage."],
+        ["No items at this stage."],
+        ["3", "Product 3", "Shoes", "2"],
+    ]
+    assert "Product 4" not in page
+    assert 'href="http://testserver/products/1/edit"' in page
+
+
+def test_the_pipeline_page_flags_an_item_not_worth_listing(client, db,
+                                                           listing_minimum):
+    add_product(db, 1, quantity_received=1, listed_price_cents=None,
+                marketplace_price_cents=5499)
+    add_product(db, 2, quantity_received=1, listed_price_cents=None,
+                marketplace_price_cents=5500)
+
+    rows = table_rows(client.get("/pipeline").text)
+
+    assert ["1", "Product 1 Not worth listing", "Shoes", "1", "Edit"] in rows
+    assert ["2", "Product 2", "Shoes", "1", "Edit"] in rows

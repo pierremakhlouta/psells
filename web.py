@@ -220,6 +220,30 @@ def analytics_page(request: Request):
     })
 
 
+# The stages whose items are still being worked on, listed item by item on the
+# pipeline page. Sold and Returned are only counted there: their items are on
+# the out-of-stock page already.
+WORKING_STAGES = ("Received", "Researched", "Photographed", "Listed")
+
+
+@router.get("/pipeline", response_class=HTMLResponse)
+def pipeline_page(request: Request, connection: Connection):
+    """How many items are at each stage, and the items still being worked on.
+
+    The stages and counts are pipeline and stage_counts; each working item
+    comes with listing_figures, for its "Not worth listing" flag. Nothing is
+    worked out here.
+    """
+    groups = psells.pipeline(connection)
+
+    return templates.TemplateResponse(request, "pipeline.html", {
+        "counts": psells.stage_counts(groups),
+        "stages": [(stage, [(product, psells.listing_figures(product))
+                            for product in groups[stage]])
+                   for stage in WORKING_STAGES],
+    })
+
+
 @router.get("/out-of-stock", response_class=HTMLResponse)
 def out_of_stock_page(request: Request, connection: Connection, q: str = ""):
     """Every product with no unit available, and why.
