@@ -53,6 +53,7 @@ readable; they are in its history in git, up to commit 7ecee20.
 - [A save redirects; a refusal shows the form again](#a-save-redirects-a-refusal-shows-the-form-again)
 - [Every list is one function, served three ways](#every-list-is-one-function-served-three-ways)
 - [PSells is not an installable app](#psells-is-not-an-installable-app)
+- [The home-screen icon is served; the app is not](#the-home-screen-icon-is-served-the-app-is-not)
 
 ### Security and the login
 
@@ -798,3 +799,11 @@ readable; they are in its history in git, up to commit 7ecee20.
   try first for psells.localhost. Each person signs in with their own
   Tailscale account; PSells keeps one shared login. Everyone depends on the
   Mac being on.
+
+- <a id="the-home-screen-icon-is-served-the-app-is-not"></a>**The home-screen icon is served; the app is not.** With the
+  Mac's other devices reaching PSells through Tailscale, its address is
+  saved to iPhones' home screens, and Safari asks for /apple-touch-icon.png
+  at the site's root, without a session. nginx serves that one file, the
+  logo's monogram from the reverted app work, under its two names, before
+  the login, on every server that serves PSells. No manifest and no service
+  worker: the security policy still allows no script at all.

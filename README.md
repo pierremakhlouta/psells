@@ -188,7 +188,8 @@ headers from nginx's fixed address alone. Every image and action is pinned
 to its digest or commit, and Dependabot proposes each update. Other devices
 (phones, a second laptop) reach it through [Tailscale](https://tailscale.com):
 only the tailnet's members, with Tailscale's own certificate, while the Mac
-is on, and nothing answers on any Wi-Fi. Details:
+is on, and nothing answers on any Wi-Fi; saved to a home screen, it shows
+the PSells logo. Details:
 [ARCHITECTURE.md](ARCHITECTURE.md), "The Mac's stack".
 
 **Three background jobs** (launchd): the stack started at login; a backup at

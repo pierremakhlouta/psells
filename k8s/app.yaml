@@ -166,6 +166,10 @@ spec:
             - name: nginx-site
               mountPath: /etc/nginx/site
               readOnly: true
+            # The home-screen icon, as compose.yaml mounts static/.
+            - name: nginx-static
+              mountPath: /srv/psells/static
+              readOnly: true
             - name: tls
               mountPath: /etc/nginx/tls
               readOnly: true
@@ -186,6 +190,9 @@ spec:
         - name: nginx-site
           configMap:
             name: nginx-site
+        - name: nginx-static
+          configMap:
+            name: nginx-static
         # Under the names the site's https.conf reads. The key is readable by
         # nginx's group only, and mounted in the nginx container only.
         - name: tls

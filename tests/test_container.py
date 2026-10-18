@@ -26,6 +26,7 @@ import json
 import os
 import re
 import stat
+import struct
 import subprocess
 import sys
 
@@ -755,6 +756,7 @@ def test_the_nginx_config_is_mounted_read_only_and_readable_by_nginx():
 
     assert mounts == ["./nginx/nginx.conf:/etc/nginx/nginx.conf:ro",
                       "./nginx/snippets:/etc/nginx/snippets:ro",
+                      "./static:/srv/psells/static:ro",
                       "./nginx/sites/localhost:/etc/nginx/site:ro",
                       "./data/tls:/etc/nginx/tls:ro"]
     # nginx reads them as user 101, not as the files' owner. A file readable
@@ -763,7 +765,8 @@ def test_the_nginx_config_is_mounted_read_only_and_readable_by_nginx():
     site_files = (glob.glob(os.path.join(NGINX_SITES, "**", "*.conf"), recursive=True)
                   + glob.glob(os.path.join(NGINX_SNIPPETS, "*.conf")))
     assert site_files
-    for path in [NGINX_CONF, *site_files]:
+    icon = os.path.join(PROJECT_DIR, "static", "apple-touch-icon.png")
+    for path in [NGINX_CONF, *site_files, icon]:
         assert os.stat(path).st_mode & stat.S_IROTH, path
 
 
@@ -801,6 +804,7 @@ def test_nginx_conf_itself_names_no_place():
         ["include", SITE_MOUNT + "http.conf"],
         ["include", SITE_MOUNT + "https.conf"],
         ["include", SNIPPET_MOUNT + "headers.conf"],
+        ["include", SNIPPET_MOUNT + "icon.conf"],
         ["include", SNIPPET_MOUNT + "app.conf"],
         ["include", SITE_MOUNT + "servers/*.conf"],
     ]
@@ -1521,3 +1525,42 @@ def test_only_the_aws_server_is_the_demo():
     for name in os.listdir(os.path.join(PROJECT_DIR, "k8s")):
         with open(os.path.join(PROJECT_DIR, "k8s", name), errors="ignore") as file:
             assert "PSELLS_DEMO" not in file.read(), name
+
+
+
+# The home-screen icon ---------------------------------------------------------------
+
+ICON = os.path.join(PROJECT_DIR, "static", "apple-touch-icon.png")
+
+
+def test_the_icon_is_the_logo_at_the_size_an_iphone_asks_for():
+    with open(ICON, "rb") as file:
+        header = file.read(24)
+    assert header[:8] == b"\x89PNG\r\n\x1a\n"
+    assert struct.unpack(">II", header[16:24]) == (180, 180)
+    # static/ holds the icon and nothing else nginx could serve.
+    assert os.listdir(os.path.join(PROJECT_DIR, "static")) == ["apple-touch-icon.png"]
+
+
+def test_nginx_serves_the_icon_by_its_two_names_and_nothing_else():
+    with open(os.path.join(NGINX_SNIPPETS, "icon.conf")) as file:
+        text = file.read()
+    (pattern,) = re.findall(r"^location ~ (\S+) \{", text, re.M)
+
+    for name in ["/apple-touch-icon.png", "/apple-touch-icon-precomposed.png"]:
+        assert re.match(pattern, name), name
+    for other in ["/apple-touch-icon.png.bak", "/static/apple-touch-icon.png",
+                  "/apple-touch-icon", "/favicon.ico", "/login"]:
+        assert not re.match(pattern, other), other
+    assert "try_files /apple-touch-icon.png =404;" in text
+    assert "add_header" not in re.sub(r"#.*", "", text)
+
+
+def test_every_server_that_serves_psells_serves_the_icon():
+    for path in [NGINX_CONF,
+                 os.path.join(NGINX_SITES, "localhost", "servers", "tailnet.conf"),
+                 os.path.join(NGINX_SITES, "aws", "servers", "lb.conf")]:
+        with open(path) as file:
+            text = file.read()
+        assert text.count("include /etc/nginx/snippets/headers.conf;") == text.count(
+            "include /etc/nginx/snippets/icon.conf;") == 1, path

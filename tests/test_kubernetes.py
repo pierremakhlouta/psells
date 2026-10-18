@@ -5,6 +5,7 @@ cluster. CI also creates a real kind cluster from these files and requests the
 login page through it; these hold the files to the rules that made them.
 """
 
+import base64
 import os
 import re
 import subprocess
@@ -517,3 +518,10 @@ def test_ci_checks_the_served_style_block_hashes_to_what_the_policy_allows():
     assert 'block = re.search(r"<style>(.*?)</style>", sys.stdin.read(), re.S).group(1)' in ask
     assert "hashlib.sha256(block.encode())" in ask
     assert 'check "style hash" "$served" "$allowed"' in ask
+
+
+
+def test_the_cluster_serves_the_same_icon_as_compose():
+    icon = configmap("nginx-static")
+    with open(os.path.join(psells.PROJECT_DIR, "static", "apple-touch-icon.png"), "rb") as file:
+        assert base64.b64decode(icon["binaryData"]["apple-touch-icon.png"]) == file.read()
