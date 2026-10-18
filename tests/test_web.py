@@ -2264,3 +2264,47 @@ def test_an_item_with_an_unknown_payout_offers_no_sale_form(client, db):
             in " ".join(page.text.split()))
     assert [form for form in forms(page.text) if form["method"] == "post"] == []
 
+
+
+# Whether an item is worth listing ---------------------------------------------
+
+def test_the_edit_page_shows_the_payout_and_the_profit(client, db,
+                                                       listing_minimum):
+    add_product(db, 1, quantity_received=2, marketplace_price_cents=6000)
+
+    page = client.get("/products/1/edit").text
+
+    shown = figures(page)
+    assert shown["Partner payout per unit"] == "$40.00"
+    assert shown["Profit at the Marketplace price"] == "$20.00"
+    assert shown["Partner payout per unit"] == psells.format_cents(
+        psells.listing_figures(psells.all_products(db)[0])["payout"])
+    assert "Not worth listing" not in page
+    (row,) = table_rows(client.get("/").text)
+    assert row[NAME] == "Product 1"
+
+
+def test_an_item_under_the_minimum_is_flagged_on_both_pages(client, db,
+                                                            listing_minimum):
+    add_product(db, 1, quantity_received=2, marketplace_price_cents=5499)
+
+    page = client.get("/products/1/edit").text
+
+    assert figures(page)["Profit at the Marketplace price"] == "$14.99"
+    assert "Not worth listing." in page
+    (row,) = table_rows(client.get("/").text)
+    assert row[NAME] == "Product 1 Not worth listing"
+
+
+def test_an_unresearched_item_shows_unknown_figures_and_no_flag(client, db):
+    add_product(db, 1, quantity_received=2, **LIGHT)
+
+    page = client.get("/products/1/edit").text
+
+    assert figures(page) == {"Partner payout per unit": "Unknown",
+                             "Profit at the Marketplace price": "Unknown"}
+    assert "Not worth listing" not in page
+
+
+def test_the_add_form_shows_no_figures(client):
+    assert figures(client.get("/products/new").text) == {}

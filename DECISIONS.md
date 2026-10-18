@@ -847,4 +847,10 @@ readable; they are in its history in git, up to commit 7ecee20.
   yet" on the pages and in the terminal, and null in the API, never 0. The
   terminal application does not ask for the Marketplace price or the
   listing details yet, so an edit made there keeps them as stored rather
-  than emptying research done on the pages.
+  than emptying research done on the pages. Whether an item is worth listing is
+  worked out too: the profit is the Marketplace price less the partner
+  payout, and under the minimum set in the configuration file the item is
+  flagged "Not worth listing", never hidden or refused, since it may be
+  listed anyway. The minimum is a business figure, so it sits in the
+  ignored configuration file beside the partner rate; with none set nothing
+  is flagged, and an item whose profit is not known yet is never flagged.

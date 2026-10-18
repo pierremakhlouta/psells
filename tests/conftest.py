@@ -136,6 +136,18 @@ def partner_rate(monkeypatch):
 
 
 @pytest.fixture
+def listing_minimum(monkeypatch):
+    """Pin the minimum listing profit at an invented $15.00 for one test.
+
+    For partner_rate's reasons: the real minimum is a business figure kept in
+    the ignored config file, which CI does not have.
+    """
+    monkeypatch.setattr(psells, "minimum_listing_profit_cents", lambda: 1500)
+
+    return 1500
+
+
+@pytest.fixture
 def answers(monkeypatch):
     """Queue the replies a feature function will read from input().
 
@@ -156,7 +168,7 @@ def answers(monkeypatch):
 
 
 @pytest.fixture
-def client(db, partner_rate):
+def client(db, partner_rate, listing_minimum):
     """A logged-in test client whose requests run against the test database.
 
     It calls the application directly rather than opening a socket, and swaps

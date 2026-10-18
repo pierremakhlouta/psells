@@ -152,7 +152,10 @@ and a test fails if `seed.sql` is edited by hand.
 - **Add product** (only the category, name and quantity at first; the
   research and the listed price can follow with **Edit**), **Record
   payment**, and **Sell**, **Return** and **Edit**
-  from each product's row.
+  from each product's row. **Edit** shows the partner payout and the profit
+  at the Marketplace price, and an item whose profit is under the minimum in
+  `data/config.json` (`minimum_listing_profit_cents`) reads **Not worth
+  listing** there and beside its name in the inventory.
 - **Analytics**: headline figures, revenue and profit by month, categories
   and products, as charts drawn on the server, since no page runs a script.
 - **Settings**: the category and condition lists (add, rename, hide, or

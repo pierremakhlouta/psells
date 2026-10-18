@@ -1822,3 +1822,81 @@ def test_the_terminal_edits_an_unresearched_item_keeping_its_blanks(db, capsys,
     after = view_row(db)
     assert after.pop("version") == before.pop("version") + 1
     assert after == before
+
+
+# Whether an item is worth listing ---------------------------------------------------
+
+@pytest.mark.parametrize("content, expected", [
+    ("{}", None),
+    ('{"minimum_listing_profit_cents": 0}', 0),
+    ('{"minimum_listing_profit_cents": 2500}', 2500),
+])
+def test_the_minimum_listing_profit_is_read_from_the_config_file(
+        monkeypatch, tmp_path, content, expected):
+    config = tmp_path / "config.json"
+    config.write_text(content)
+    monkeypatch.setattr(psells, "CONFIG_FILE", str(config))
+
+    assert psells.minimum_listing_profit_cents() == expected
+
+
+@pytest.mark.parametrize("value", ['"1500"', "15.5", "-1", "true"])
+def test_a_minimum_that_is_not_whole_cents_is_refused(monkeypatch, tmp_path,
+                                                      value):
+    config = tmp_path / "config.json"
+    config.write_text(f'{{"minimum_listing_profit_cents": {value}}}')
+    monkeypatch.setattr(psells, "CONFIG_FILE", str(config))
+
+    with pytest.raises(ValueError, match="minimum_listing_profit_cents"):
+        psells.minimum_listing_profit_cents()
+
+
+def worth(marketplace_price_cents, **overrides):
+    """A default-mode item with a $100.00 retail price, so a 40 percent
+    payout of $40.00."""
+    item = {"partner_share_mode": "default", "partner_share_percent": None,
+            "partner_share_amount_cents": None, "retail_price_cents": 10000,
+            "marketplace_price_cents": marketplace_price_cents}
+    item.update(overrides)
+    return psells.listing_figures(item)
+
+
+@pytest.mark.parametrize("marketplace, profit, flagged", [
+    (6000, 2000, False),
+    (5500, 1500, False),   # exactly the minimum is worth listing
+    (5499, 1499, True),
+    (3000, -1000, True),
+])
+def test_an_item_under_the_minimum_profit_is_not_worth_listing(
+        partner_rate, listing_minimum, marketplace, profit, flagged):
+    assert worth(marketplace) == {"payout": 4000, "profit": profit,
+                                  "not_worth_listing": flagged}
+
+
+def test_no_minimum_flags_nothing(monkeypatch, partner_rate):
+    monkeypatch.setattr(psells, "minimum_listing_profit_cents", lambda: None)
+
+    assert worth(100)["not_worth_listing"] is False
+
+
+@pytest.mark.parametrize("marketplace, overrides", [
+    (None, {}),                             # no Marketplace price yet
+    (5000, {"retail_price_cents": None}),   # no payout yet
+])
+def test_an_unknown_profit_is_never_flagged_and_reads_no_minimum(
+        monkeypatch, partner_rate, marketplace, overrides):
+    def unread():
+        raise AssertionError("the minimum was read without a profit")
+    monkeypatch.setattr(psells, "minimum_listing_profit_cents", unread)
+
+    figures = worth(marketplace, **overrides)
+
+    assert figures["profit"] is None
+    assert figures["not_worth_listing"] is False
+
+
+def test_a_fixed_payout_counts_without_a_retail_price(partner_rate,
+                                                      listing_minimum):
+    assert worth(2000, partner_share_mode="custom_amount",
+                 partner_share_amount_cents=700, retail_price_cents=None) == {
+        "payout": 700, "profit": 1300, "not_worth_listing": True}

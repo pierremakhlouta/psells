@@ -2,7 +2,7 @@
 
 {% block title %}{% if product %}Edit {{ product.name }}{% else %}Add a product{% endif %} · PSells{% endblock %}
 
-{% from "macros.html" import choice, field, form_token with context %}
+{% from "macros.html" import choice, field, form_token, maybe_money with context %}
 
 {% block content %}
 {% if product %}
@@ -10,6 +10,18 @@
 <p class="lead">Sold {{ product.quantity_sold }}, returned {{ product.quantity_returned }}.
   Quantity received cannot go below the units that have left.
   Changing the partner share affects later sales only.</p>
+
+{#- figures is listing_figures for the product as saved: this file shows it
+    and computes nothing. -#}
+<section class="dashboard" aria-label="Listing figures">
+  <dl>
+    <div><dt>Partner payout per unit</dt><dd class="num">{{ maybe_money(figures.payout, "Unknown") }}</dd></div>
+    <div><dt>Profit at the Marketplace price</dt><dd class="num">{{ maybe_money(figures.profit, "Unknown") }}</dd></div>
+  </dl>
+</section>
+{% if figures.not_worth_listing %}
+<p class="notice" role="status"><strong>Not worth listing.</strong> The profit at the Marketplace price is under your minimum.</p>
+{% endif %}
 {% else %}
 <h1>Add a product</h1>
 <p class="lead">Only the category, name and quantity are needed when an item

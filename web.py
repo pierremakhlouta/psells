@@ -111,9 +111,10 @@ def inventory_page(request: Request, connection: Connection, q: str = "",
     up here, outside psells.
 
     The partner cut is not a column of products_view, so it is worked out here
-    for each product by partner_share_for, the same function the API's
-    to_product and the command line's print_product call. The template is
-    handed the figure and never works it out.
+    for each product by listing_figures, whose payout is partner_share_for,
+    the same function the API's to_product and the command line's
+    print_product call. Its not_worth_listing flag is shown beside the name.
+    The template is handed the figures and never works them out.
     """
     term = q.strip()
     everything = psells.all_products(connection)
@@ -142,7 +143,7 @@ def inventory_page(request: Request, connection: Connection, q: str = "",
     ) if paid else None
 
     inventory = [
-        (product, psells.partner_share_for(product))
+        (product, psells.listing_figures(product))
         for product in products
     ]
 
@@ -337,6 +338,9 @@ def product_form(request, connection, values, problems, status_code=200,
     Empty, filled from the stored product, or as it was typed, with a sentence
     per problem. One template for adding and editing and for both the first
     showing and a refusal, so there is one copy of the form.
+
+    When editing, figures is listing_figures for the product as stored, not as
+    typed: the payout and profit shown are the ones saved.
     """
     if product is None:
         action = request.url_for("add_product_submit")
@@ -349,7 +353,9 @@ def product_form(request, connection, values, problems, status_code=200,
         "product_form.html",
         {"values": values, "errors": problems, "product": product,
          "action": action,
-         "choices": psells.form_choices(connection, product)},
+         "choices": psells.form_choices(connection, product),
+         "figures": None if product is None
+         else psells.listing_figures(product)},
         status_code=status_code,
     )
 

@@ -608,6 +608,51 @@ def partner_share_for(item):
     return int(exact.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
 
+def minimum_listing_profit_cents():
+    """The least profit per unit, in cents, that makes an item worth listing,
+    or None when the config file sets none, so nothing is flagged.
+
+    A business figure, so it lives in data/config.json beside the partner
+    rate, never in source.
+    """
+    minimum = load_config().get("minimum_listing_profit_cents")
+
+    if minimum is None:
+        return None
+
+    if not isinstance(minimum, int) or isinstance(minimum, bool) or minimum < 0:
+        raise ValueError(
+            f"minimum_listing_profit_cents in {CONFIG_FILE} "
+            f"must be a whole number of cents, 0 or more, found {minimum!r}"
+        )
+
+    return minimum
+
+
+def listing_figures(product):
+    """What listing one unit of this item would leave, in cents.
+
+    payout is partner_share_for's cut. profit is the average Marketplace price
+    less that payout, None until both are known. not_worth_listing is true
+    when the profit is under minimum_listing_profit_cents, and never while the
+    profit is unknown or no minimum is set. The config file is read for the
+    minimum only once there is a profit to compare.
+    """
+    payout = partner_share_for(product)
+    marketplace = product["marketplace_price_cents"]
+
+    profit = (None if payout is None or marketplace is None
+              else marketplace - payout)
+
+    minimum = None if profit is None else minimum_listing_profit_cents()
+
+    return {
+        "payout": payout,
+        "profit": profit,
+        "not_worth_listing": minimum is not None and profit < minimum,
+    }
+
+
 def dashboard_totals(connection):
     """The nine dashboard figures, computed by the database.
 

@@ -61,7 +61,7 @@
 </form>
 
 {#- Every figure arrives worked out. This file formats and never computes: the
-    partner cut comes from partner_share_for in web.py, and the money filter is
+    partner cut and the flag come from listing_figures in web.py, and the money filter is
     psells.format_cents. A price not entered yet, and a cut that cannot be
     worked out without it, are None, which the filter would fail on, so they
     go through maybe_money. -#}
@@ -80,15 +80,15 @@
     </tr>
   </thead>
   <tbody>
-    {% for product, partner_cut in inventory %}
+    {% for product, figures in inventory %}
     <tr>
       <td class="num">{{ product.id }}</td>
-      <td>{{ product.name }}</td>
+      <td>{{ product.name }}{% if figures.not_worth_listing %} <strong>Not worth listing</strong>{% endif %}</td>
       <td>{{ product.category }}</td>
       <td>{{ product.condition or "Not yet" }}</td>
       <td class="num">{{ product.quantity_available }}</td>
       <td class="num">{{ maybe_money(product.listed_price_cents) }}</td>
-      <td class="num">{{ maybe_money(partner_cut, "Unknown") }}</td>
+      <td class="num">{{ maybe_money(figures.payout, "Unknown") }}</td>
       <td class="num">{% if product.retail_discontinued %}Discontinued{% else %}{{ maybe_money(product.retail_price_cents) }}{% endif %}</td>
       <td class="row-actions">
         {%- if product.quantity_available > 0 %}<a href="{{ url_for('sell_product_page', product_id=product.id) }}">Sell</a>
