@@ -264,9 +264,11 @@ def test_nginx_and_the_app_are_configured_from_the_repository_files_and_sample_c
     assert configmap("nginx-snippets")["data"] == {
         name: read(os.path.join(nginx_dir, "snippets", name))
         for name in os.listdir(os.path.join(nginx_dir, "snippets"))}
+    # The site's own two files; the cluster has no Tailscale server.
+    site = os.path.join(nginx_dir, "sites", "localhost")
     assert configmap("nginx-site")["data"] == {
-        name: read(os.path.join(nginx_dir, "sites", "localhost", name))
-        for name in os.listdir(os.path.join(nginx_dir, "sites", "localhost"))}
+        name: read(os.path.join(site, name))
+        for name in os.listdir(site) if os.path.isfile(os.path.join(site, name))}
     # The invented partner share, never data/config.json.
     assert configmap("app-config")["data"] == {
         "config.json": read(os.path.join(psells.PROJECT_DIR, "sample_data",

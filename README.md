@@ -179,13 +179,16 @@ A write sends the token in an `X-Form-Token` header.
 ## How it runs
 
 **On the Mac.** Three containers under Compose: nginx, the only one that
-publishes ports, on `127.0.0.1` only; the application, FastAPI under uvicorn,
+publishes ports, on the loopback only; the application, FastAPI under uvicorn,
 which publishes none; and PostgreSQL 18, which publishes none either. nginx
 answers for `psells.localhost` alone, TLS 1.3 only, and sets the security
 headers on every response: a content security policy allowing no script and
 only the one style block, by its hash. The application believes forwarded
 headers from nginx's fixed address alone. Every image and action is pinned
-to its digest or commit, and Dependabot proposes each update. Details:
+to its digest or commit, and Dependabot proposes each update. Other devices
+(phones, a second laptop) reach it through [Tailscale](https://tailscale.com):
+only the tailnet's members, with Tailscale's own certificate, while the Mac
+is on, and nothing answers on any Wi-Fi. Details:
 [ARCHITECTURE.md](ARCHITECTURE.md), "The Mac's stack".
 
 **Three background jobs** (launchd): the stack started at login; a backup at
@@ -277,8 +280,8 @@ image, and the Kubernetes cluster.
 
 ## Known limitations
 
-- **The real records are reachable from the Mac only**; a phone can open only
-  the demo.
+- **The real records are reachable only while the Mac is on**: from the Mac,
+  and from the tailnet's devices through Tailscale.
 - **One account, a password and nothing else**, at least fifteen characters,
   with nginx limiting guesses. The demo's is public, and a visitor's change is
   seen by the next until the nightly reset.

@@ -199,7 +199,9 @@ def test_every_published_port_is_bound_to_this_machine_only():
 
     assert ports, "the web server publishes no port at all"
     for port in ports:
-        assert port.startswith("127.0.0.1:"), port
+        # A loopback, IPv4's or IPv6's, never an address another machine
+        # can reach and never every address.
+        assert port.startswith(("127.0.0.1:", "[::1]:")), port
 
 
 def test_only_nginx_publishes_the_web_port():
@@ -208,8 +210,13 @@ def test_only_nginx_publishes_the_web_port():
     # The app is reached through nginx or not at all; a port of its own would
     # be a way round every rule in nginx.conf.
     assert "ports" not in services["app"]
+    # 8444 is the way in for the Mac's other devices, through Tailscale,
+    # which reaches it on the loopback like everything else here.
+    # psells.localhost on both loopbacks, since browsers try ::1 first and
+    # Tailscale listens on 443 everywhere it is not claimed.
     assert published_ports(services["proxy"]) == [
-        "127.0.0.1:443:8443", "127.0.0.1:80:8080"]
+        "127.0.0.1:443:8443", "127.0.0.1:80:8080",
+        "[::1]:443:8443", "[::1]:80:8080", "127.0.0.1:8444:8444"]
 
 
 def test_the_database_publishes_no_port():
@@ -593,13 +600,18 @@ def test_login_attempts_are_limited_to_five_a_minute_with_a_burst_of_five():
 
 
 def test_the_limit_sits_where_every_request_to_the_app_passes():
-    # In the one location that proxies, so no path to the app avoids it, and
-    # nowhere else, where a second limit_req would count some posts twice.
-    everywhere = [(blocks, words) for blocks, words in nginx_directives()
-                  if words[0] == "limit_req"]
+    # Once in each location that proxies, so no path to the app avoids it,
+    # and nowhere else, where a second limit_req would count some posts
+    # twice. On the Mac there are two such locations: the main server's and
+    # the one Tailscale reaches.
+    directives = nginx_directives()
+    limits = [blocks for blocks, words in directives if words[0] == "limit_req"]
+    proxies = [blocks for blocks, words in directives if words[0] == "proxy_pass"]
 
-    assert len(everywhere) == 1
-    assert [name for _, name in everywhere[0][0]][-1] == ("location", "/")
+    assert len(limits) == len(proxies) == 2
+    assert sorted(map(str, limits)) == sorted(map(str, proxies))
+    for blocks in limits:
+        assert [name for _, name in blocks][-1] == ("location", "/")
 
 
 def test_every_psells_response_carries_the_security_headers():
@@ -927,8 +939,9 @@ def test_every_site_gives_nginx_the_same_servers(site):
 
     listening = sorted(listen[0] for listen, _, _ in servers(site))
     common = ["127.0.0.1:8081", "8080", "8443", "8443"]
-    assert listening == sorted(common + (["8090"] if own == ["lb.conf"] else []))
-    assert own in ([], ["lb.conf"]), own
+    extra = {"lb.conf": ["8090"], "tailnet.conf": ["8444", "8444"]}
+    assert listening == sorted(common + [port for name in own for port in extra[name]])
+    assert own in ([], ["lb.conf"], ["tailnet.conf"]), own
     served = top_level(server("8443", name, site))
     assert ["listen", "8443", "ssl"] in served
     assert sum(1 for w in served if w[0] == "add_header") == 4
@@ -970,7 +983,43 @@ def test_the_load_balancer_listener_believes_only_the_vpc_and_the_last_hop():
 
 def test_the_mac_has_no_load_balancer_listener():
     assert "8090" not in {listen[0] for listen, _, _ in servers("localhost")}
-    assert not glob.glob(os.path.join(NGINX_SITES, "localhost", "servers", "*"))
+    # Its one server of its own is Tailscale's way in.
+    assert [os.path.basename(path) for path in glob.glob(
+        os.path.join(NGINX_SITES, "localhost", "servers", "*"))] == ["tailnet.conf"]
+
+
+# Tailscale, for the Mac's other devices --------------------------------------------
+
+TAILNET_NAME = r"~^[a-z0-9-]+\.[a-z0-9-]+\.ts\.net$"
+
+
+def test_tailscale_reaches_psells_exactly_as_the_main_server_does():
+    main = server("8443", "psells.localhost")
+    tailnet = server("8444", TAILNET_NAME)
+
+    # The same four headers and the same way to the app, from the same files.
+    assert headers_of(tailnet) == headers_of(main)
+    assert proxy_of(tailnet) == proxy_of(main)
+    assert ["listen", "8444"] in top_level(tailnet)
+
+
+def test_tailscale_answers_only_a_ts_net_name_and_refuses_every_other():
+    # A pattern, so the Mac's private name stays out of the repository, and
+    # only ts.net, which no hostile page can point at this port.
+    pattern = TAILNET_NAME.lstrip("~")
+    assert re.fullmatch(pattern, "pierres-mac.tail0000.ts.net")
+    for other in ["psells.localhost", "evil.example", "ts.net",
+                  "a.b.ts.net.evil.example", "a.ts.net"]:
+        assert not re.fullmatch(pattern, other), other
+    refusal = top_level(server("8444"))
+    assert ["listen", "8444", "default_server"] in refusal
+    assert ["return", "421"] in refusal
+
+
+def test_no_private_tailnet_name_is_in_the_repository():
+    for path in glob.glob(os.path.join(NGINX_SITES, "**", "*.conf"), recursive=True):
+        with open(path) as file:
+            assert not re.search(r"[a-z0-9-]+\.tail[0-9a-f]+\.ts\.net", file.read()), path
 
 
 def test_the_stack_comes_back_whenever_docker_starts():

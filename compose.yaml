@@ -49,6 +49,16 @@ services:
       # 8080, because it does not run as root.
       - "127.0.0.1:443:8443"
       - "127.0.0.1:80:8080"
+      # The same two on the IPv6 loopback, which browsers try first for
+      # psells.localhost. Claimed here because Tailscale's serve listens on
+      # 443 on every address, ::1 included, and would otherwise answer
+      # psells.localhost there with a refusal; the more specific address wins.
+      - "[::1]:443:8443"
+      - "[::1]:80:8080"
+      # For the Mac's other devices through Tailscale, which passes them here
+      # from its own HTTPS; see nginx/sites/localhost/servers/tailnet.conf.
+      # Loopback only, like the others: nothing new answers on any network.
+      - "127.0.0.1:8444:8444"
     volumes:
       - "./nginx/nginx.conf:/etc/nginx/nginx.conf:ro"
       # The security headers and the way to the app, which every server that

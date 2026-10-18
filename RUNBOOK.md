@@ -319,6 +319,30 @@ docker compose -p psells-sample down -v
 Tried: on the sample stack throughout, last on 9 October 2026 for the
 screenshots.
 
+### Let another device in (Tailscale)
+
+The Mac's other devices reach PSells at its private Tailscale name,
+`https://<this Mac>.<tailnet>.ts.net`, only while the Mac is on and awake.
+Once, on the Mac, with Tailscale installed and signed in, and MagicDNS and
+HTTPS Certificates on in the admin console's DNS page: share nginx's
+Tailscale port, in the background, kept across restarts.
+
+```
+/Applications/Tailscale.app/Contents/MacOS/Tailscale serve --bg --https=443 http://127.0.0.1:8444
+```
+
+A new person: invite them from the admin console's Users page; they install
+Tailscale on each device, sign in with their own account, open the Mac's
+`ts.net` address, and log in to PSells. Removing them there removes their
+access. To stop sharing altogether:
+
+```
+/Applications/Tailscale.app/Contents/MacOS/Tailscale serve reset
+```
+
+Tried: 17 October 2026, from the Mac and an iPhone, the forms posting to the
+`ts.net` name.
+
 ### Install the background jobs
 
 The three launchd jobs: the stack at login, the backup at 09:00, and the
@@ -444,6 +468,20 @@ A notification never carries a figure, only the job's reason.
 - **Check**: `docker compose ps db`; `docker compose logs --tail 50 db`.
 - **Do**: `docker compose up -d --wait db`. The app reconnects by itself; it
   needs no restart.
+
+### Another device cannot reach PSells
+
+The Mac must be on and awake, and Tailscale connected on both devices. On
+the Mac, the share and nginx's port:
+
+```
+/Applications/Tailscale.app/Contents/MacOS/Tailscale serve status && docker compose ps proxy
+```
+
+The share should name `http://127.0.0.1:8444`, and the proxy publish it. If
+`psells.localhost` itself stops answering in a browser while curl's IPv4
+works, check that the proxy still publishes `[::1]:443`: Tailscale listens
+on 443 everywhere else.
 
 ### The analytics page says the warehouse is more than two hours old
 

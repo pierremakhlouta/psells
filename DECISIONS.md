@@ -67,6 +67,7 @@ readable; they are in its history in git, up to commit 7ecee20.
 - [Every route needs a session, and one check says so](#every-route-needs-a-session-and-one-check-says)
 - [A form token alongside the browser-label check, not instead of it](#a-form-token-alongside-the-browser-label-check-not)
 - [The demo's login is public, and its records are put back every night](#the-demos-login-is-public-and-its-records-reset-nightly)
+- [Other devices reach the Mac through Tailscale, not the Wi-Fi](#other-devices-reach-the-mac-through-tailscale-not-the-wi-fi)
 
 ### Containers and the Mac
 
@@ -330,6 +331,7 @@ readable; they are in its history in git, up to commit 7ecee20.
   file kept out of the repository and out of every image, and every setting is
   required, so a missing one stops the stack with a sentence instead of starting
   a database with no password.
+  *Later replaced, in whole or in part: [Other devices reach the Mac through Tailscale, not the Wi-Fi](#other-devices-reach-the-mac-through-tailscale-not-the-wi-fi).*
 
 - <a id="a-backup-is-a-dump-that-has-been-restored"></a>**A backup is a dump that has been restored.** Each daily dump is restored
   into a throwaway database and its products counted against the live database
@@ -776,3 +778,23 @@ readable; they are in its history in git, up to commit 7ecee20.
   any of it, and push notifications would wait for private access to the
   Mac. Reverting it kept the security policy allowing no script at all. The
   work is in git, from dab119f to 594e0aa, should it be wanted again.
+  *Later replaced, in whole or in part: [Other devices reach the Mac through Tailscale, not the Wi-Fi](#other-devices-reach-the-mac-through-tailscale-not-the-wi-fi).*
+
+- <a id="other-devices-reach-the-mac-through-tailscale-not-the-wi-fi"></a>**Other devices reach the Mac through Tailscale, not the Wi-Fi.** Pierre's
+  brother joined the business, working from his own MacBook and iPhone, and
+  Pierre wanted to upload photos from his phone. Answering on the home Wi-Fi
+  for those devices alone was the first plan, and could not work: behind
+  Docker Desktop nginx sees every connection as coming from Docker's own
+  address, so it cannot tell one device from another, and on any other
+  network the laptop joined, a café's included, the login page would answer
+  everyone there. Tailscale lets in only the tailnet's members, at home or
+  away, with a Let's Encrypt certificate for the Mac's private ts.net name,
+  so no new certificate authority is installed anywhere. `tailscale serve`
+  ends HTTPS and passes each request to nginx on 127.0.0.1:8444, which
+  answers only a ts.net name, by pattern so the private name stays out of the
+  repository, and refuses any other with 421, keeping DNS rebinding closed.
+  The same headers, login limit and login apply. Tailscale listens on 443 on
+  every address, so PSells now also claims ::1:443 and ::1:80, which browsers
+  try first for psells.localhost. Each person signs in with their own
+  Tailscale account; PSells keeps one shared login. Everyone depends on the
+  Mac being on.

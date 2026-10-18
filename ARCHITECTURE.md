@@ -90,6 +90,8 @@ that fail silently if broken, are in DECISIONS.md and enforced by the tests:
 ```mermaid
 flowchart LR
     browser["Browser"] -->|"127.0.0.1:443"| nginx
+    devices["Other devices<br/>(Tailscale)"] -->|"HTTPS, *.ts.net"| serve["tailscale serve"]
+    serve -->|"127.0.0.1:8444"| nginx
     subgraph compose["Compose project psells, network 10.213.47.0/24"]
         nginx["proxy: nginx<br/>10.213.47.10<br/>PSells' own image"] -->|"http://app:8000<br/>X-Forwarded-*"| app["app: uvicorn<br/>FastAPI, believes<br/>10.213.47.10 only"]
         app --> db[("db: PostgreSQL 18<br/>volume pgdata<br/>no port")]
@@ -102,10 +104,16 @@ flowchart LR
 ```
 
 - **nginx** (`nginx/nginx.conf`, `nginx/snippets/`, `nginx/sites/localhost/`) is
-  the only container that publishes a port, on `127.0.0.1` only. It ends
+  the only container that publishes a port, on the loopback only. It ends
   HTTPS (TLS 1.3), answers for `psells.localhost` alone (421 for any other
   name), adds the security headers and a policy that allows no scripts,
   limits login attempts, and passes everything else to the app.
+- **Other devices** (the owner's and his brother's phones and laptops) come
+  through Tailscale: `tailscale serve` answers the Mac's private
+  `*.ts.net` name with its own certificate, to the members of the tailnet
+  alone, and passes each request to nginx on `127.0.0.1:8444`
+  (`nginx/sites/localhost/servers/tailnet.conf`), which answers only a
+  `ts.net` name and applies the same headers, limit and login.
 - **The app** (`Dockerfile`, `api.py`, `web.py`, `auth.py`) believes forwarded
   headers from nginx's one fixed address, asks for a login before every page
   (`auth.py`, Argon2id, sessions as rows), and answers a page without its
