@@ -46,7 +46,7 @@ FIRST_DAY = date(2025, 10, 1)
 LAST_DAY = date(2026, 9, 30)
 PRODUCTS = 80
 
-CONDITIONS = ["Brand New", "Brand New", "Brand New", "Used (Like New)", "Used (Good)"]
+CONDITIONS = ["Brand new", "Brand new", "Brand new", "Like new", "Used"]
 
 # category: (retail price range in dollars, adjectives, things)
 CATEGORIES = {
@@ -76,6 +76,21 @@ RETURN_NOTES = ["unsold, sent back to the partner", "small scuff on the side",
                 "box crushed in storage", "colour not selling"]
 PAYMENT_NOTES = ["e-transfer", "e-transfer", "Cash"]
 
+# The conditions every database starts with (schema.sql inserts the same),
+# listed again so a reset that emptied them puts them back.
+CONDITION_LIST = ["Brand new", "Open box", "Like new", "Used", "Damaged"]
+
+# An invented pair of listing templates, in the shape of the real ones, which
+# live only in the business's own database.
+TEMPLATES = {
+    "facebook": ("{name}.\n\nRetail price: {retail}\nMy price: {price}\n\n"
+                 "Condition: {condition}.\n\n{details}\n\n"
+                 "Pickup at the invented station."),
+    "instagram": ("Sample deal: {name}\n\nPrice: {price}\nRetail: {retail}\n\n"
+                  "Condition: {condition}\n\n{details}\n\n"
+                  "Pickup at the invented station.\n\n#SampleDeals"),
+}
+
 
 def dollars(rng, low, high, step=5):
     """A price in cents, a whole number of `step` dollars from low to high."""
@@ -96,7 +111,7 @@ def checked(product):
 
 
 def product(category, name, received, retail_cents, listed_cents, mode="default",
-            percent=None, amount=None, discontinued=0, condition="Brand New", notes=""):
+            percent=None, amount=None, discontinued=0, condition="Brand new", notes=""):
     return checked({
         "category": category, "name": name, "quantity_received": received,
         "retail_price_cents": retail_cents, "listed_price_cents": listed_cents,
@@ -114,10 +129,10 @@ def hand_written():
                 mode="custom_percent", percent=25.0),
         product("Glasses", "Blue Light Glasses Round Frame", 5, 3000, 2200),
         product("Watches", "Legacy Dive Watch", 2, 0, 18000, mode="custom_amount",
-                amount=9000, discontinued=1, condition="Used (Good)",
+                amount=9000, discontinued=1, condition="Used",
                 notes="no box, some scratches on the bezel"),
         product("Watches", "Trailrunner GPS Watch", 2, 30000, 22000,
-                mode="custom_percent", percent=40.0, condition="Used (Like New)",
+                mode="custom_percent", percent=40.0, condition="Like new",
                 notes="no box"),
         product("Bags", "Canvas Tote Bag Natural", 2, 4000, 2500),
         product("Hats", "Wool Beanie Charcoal", 3, 3500, 2500, mode="custom_amount",
@@ -265,6 +280,10 @@ HEADER = """\
 -- INSERT unless it says OVERRIDING SYSTEM VALUE. The setval lines at the end
 -- then move each sequence past the highest id.
 --
+-- The category and condition lists and the two listing templates come first.
+-- Each is written to change nothing if it is already there, so the demo's
+-- nightly reset can load this file again after emptying the records.
+--
 -- None of this is real. The partner percentage in sample_data/config.json
 -- is a placeholder too, and each sale's frozen cut is what that percentage,
 -- or the product's own share, gives.
@@ -273,6 +292,17 @@ HEADER = """\
 
 def render(products, sales, returns, payments):
     lines = [HEADER, "BEGIN;", ""]
+    for name in sorted({p["category"] for p in products}):
+        lines.append(f"INSERT INTO categories (name) VALUES ({sql(name)}) "
+                     "ON CONFLICT DO NOTHING;")
+    for position, name in enumerate(CONDITION_LIST, start=1):
+        lines.append(f"INSERT INTO conditions (name, position) VALUES ({sql(name)}, "
+                     f"{position}) ON CONFLICT DO NOTHING;")
+    for platform, body in TEMPLATES.items():
+        lines.append(f"INSERT INTO listing_templates (platform, body) VALUES "
+                     f"({sql(platform)}, {sql(body)}) "
+                     "ON CONFLICT (platform) DO UPDATE SET body = EXCLUDED.body;")
+    lines.append("")
     for number, p in enumerate(products, start=1):
         values = [number, p["category"], p["name"], p["quantity_received"],
                   p["retail_price_cents"], p["listed_price_cents"],

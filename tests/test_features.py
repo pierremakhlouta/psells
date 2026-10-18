@@ -135,7 +135,7 @@ def test_inventory_prints_every_field_of_a_product(db, capsys, partner_rate):
     assert "Listed Price: $90.00" in printed
     assert "Partner Cut: $40.00" in printed
     assert "Discontinued: No" in printed
-    assert "Condition: Brand New" in printed
+    assert "Condition: Brand new" in printed
 
 
 def test_inventory_lists_every_product_in_id_order(db, capsys, partner_rate):
@@ -719,7 +719,7 @@ def only_product(connection):
 
 def test_a_product_is_added_on_the_default_share(db, capsys, answers):
     answers("Shoes", "Jordan 1 Chicago", "10", "no",
-            "100.00", "90.00", "Brand New", "boxed", "default")
+            "100.00", "90.00", "Brand new", "boxed", "default")
     psells.add(db)
 
     product = only_product(db)
@@ -730,7 +730,7 @@ def test_a_product_is_added_on_the_default_share(db, capsys, answers):
     assert product["retail_discontinued"] == 0
     assert product["retail_price_cents"] == 10000
     assert product["listed_price_cents"] == 9000
-    assert product["condition"] == "Brand New"
+    assert product["condition"] == "Brand new"
     assert product["notes"] == "boxed"
     assert product["partner_share_mode"] == "default"
     assert product["partner_share_percent"] is None
@@ -740,7 +740,7 @@ def test_a_product_is_added_on_the_default_share(db, capsys, answers):
 
 def test_a_product_is_added_on_a_custom_percentage(db, answers):
     answers("Shoes", "Jordan 1 Chicago", "10", "no",
-            "100.00", "90.00", "Brand New", "", "custom_percent", "35.5")
+            "100.00", "90.00", "Brand new", "", "custom_percent", "35.5")
     psells.add(db)
 
     product = only_product(db)
@@ -752,7 +752,7 @@ def test_a_product_is_added_on_a_custom_percentage(db, answers):
 
 def test_a_product_is_added_on_a_fixed_amount(db, answers):
     answers("Shoes", "Jordan 1 Chicago", "10", "no",
-            "100.00", "90.00", "Brand New", "", "custom_amount", "25.00")
+            "100.00", "90.00", "Brand new", "", "custom_amount", "25.00")
     psells.add(db)
 
     product = only_product(db)
@@ -792,7 +792,7 @@ def test_a_retail_price_of_zero_is_refused(db, capsys, answers):
     first. Otherwise a fully typed product ends in a constraint error.
     """
     answers("Shoes", "Jordan 1 Chicago", "10", "no",
-            "0", "100.00", "90.00", "Brand New", "", "default")
+            "0", "100.00", "90.00", "Brand new", "", "default")
     psells.add(db)
 
     assert only_product(db)["retail_price_cents"] == 10000
@@ -801,7 +801,7 @@ def test_a_retail_price_of_zero_is_refused(db, capsys, answers):
 
 def test_a_blank_category_is_refused(db, capsys, answers):
     answers("", "Shoes", "Jordan 1 Chicago", "10", "no",
-            "100.00", "90.00", "Brand New", "", "default")
+            "100.00", "90.00", "Brand new", "", "default")
     psells.add(db)
 
     assert only_product(db)["category"] == "Shoes"
@@ -810,7 +810,7 @@ def test_a_blank_category_is_refused(db, capsys, answers):
 
 def test_a_quantity_of_zero_is_refused(db, capsys, answers):
     answers("Shoes", "Jordan 1 Chicago", "0", "10", "no",
-            "100.00", "90.00", "Brand New", "", "default")
+            "100.00", "90.00", "Brand new", "", "default")
     psells.add(db)
 
     assert only_product(db)["quantity_received"] == 10
@@ -819,7 +819,7 @@ def test_a_quantity_of_zero_is_refused(db, capsys, answers):
 
 def test_an_unrecognised_discontinued_answer_is_refused(db, capsys, answers):
     answers("Shoes", "Jordan 1 Chicago", "10", "maybe", "no",
-            "100.00", "90.00", "Brand New", "", "default")
+            "100.00", "90.00", "Brand new", "", "default")
     psells.add(db)
 
     assert only_product(db)["retail_discontinued"] == 0
@@ -828,7 +828,7 @@ def test_an_unrecognised_discontinued_answer_is_refused(db, capsys, answers):
 
 def test_a_partner_percentage_above_one_hundred_is_refused(db, capsys, answers):
     answers("Shoes", "Jordan 1 Chicago", "10", "no",
-            "100.00", "90.00", "Brand New", "", "custom_percent", "150", "35")
+            "100.00", "90.00", "Brand new", "", "custom_percent", "150", "35")
     psells.add(db)
 
     assert only_product(db)["partner_share_percent"] == 35
@@ -840,7 +840,7 @@ def test_a_partner_percentage_of_nan_is_refused(db, capsys, answers):
     because it compares false with everything. Stored, it became NULL and add
     died on the schema's matrix constraint."""
     answers("Shoes", "Jordan 1 Chicago", "10", "no",
-            "100.00", "90.00", "Brand New", "", "custom_percent", "nan", "35")
+            "100.00", "90.00", "Brand new", "", "custom_percent", "nan", "35")
     psells.add(db)
 
     assert only_product(db)["partner_share_percent"] == 35
@@ -885,7 +885,11 @@ def test_pressing_enter_through_every_field_changes_nothing(db, answers,
     answers("jordan", "", "", "", "", "", "", "", "", "no")
     psells.edit(db)
 
-    assert product_row(db) == before
+    after = product_row(db)
+    # Every save counts, for the check that refuses a stale one; nothing
+    # else may change.
+    assert after.pop("version") == before.pop("version") + 1
+    assert after == before
 
 
 def test_the_partner_share_question_will_not_take_a_blank_answer(db, capsys,

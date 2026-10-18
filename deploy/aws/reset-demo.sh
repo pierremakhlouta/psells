@@ -30,7 +30,10 @@ fail() {
 # emptied, then the seed without its own BEGIN and COMMIT.
 reset_sql() {
     echo "BEGIN;"
-    echo "TRUNCATE corrections, sales, returns, payments, products RESTART IDENTITY;"
+    # With the photos' rows and the category and condition lists, which the
+    # seed puts back too, so a visitor's new category does not outlive the
+    # night.
+    echo "TRUNCATE corrections, photos, sales, returns, payments, products, categories, conditions RESTART IDENTITY;"
     grep -v -x -e 'BEGIN;' -e 'COMMIT;' "$PROJECT_DIR/sample_data/seed.sql"
     echo "COMMIT;"
 }

@@ -132,7 +132,7 @@ def test_editing_a_product_never_changes_a_past_sale(db, partner_rate):
     psells.update_product(
         db, 1, category="Shoes", name="Trail runner II", quantity_received=5,
         retail_discontinued=False, retail_price_cents=20000,
-        listed_price_cents=18000, condition="Brand New", notes="",
+        listed_price_cents=18000, condition="Brand new", notes="",
         partner_share_mode="custom_amount", partner_share_percent=None,
         partner_share_amount_cents=7777)
     after = dict(psells.sales_history(db)[0])

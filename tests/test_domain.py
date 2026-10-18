@@ -539,7 +539,7 @@ def new_product(**overrides):
         "retail_discontinued": False,
         "retail_price_cents": 10000,
         "listed_price_cents": 9000,
-        "condition": "Brand New",
+        "condition": "Brand new",
         "notes": "boxed",
         "partner_share_mode": "default",
         "partner_share_percent": None,
@@ -567,6 +567,7 @@ def test_create_product_stores_every_field_and_returns_the_id(db):
         "SELECT * FROM products WHERE id = %s", (product_id,)
     ).fetchone())
 
+    today = db.execute("SELECT CURRENT_DATE AS d").fetchone()["d"]
     assert stored == {
         "id": product_id,
         "category": "Shoes",
@@ -578,8 +579,15 @@ def test_create_product_stores_every_field_and_returns_the_id(db):
         "partner_share_mode": "default",
         "partner_share_percent": None,
         "partner_share_amount_cents": None,
-        "condition": "Brand New",
+        "condition": "Brand new",
         "notes": "boxed",
+        # Arrived today, and listed today since it came with a listed price.
+        "marketplace_price_cents": None,
+        "details": "",
+        "on_instagram": False,
+        "arrived_on": today,
+        "listed_on": today,
+        "version": 1,
     }
 
 
@@ -770,6 +778,7 @@ def edit_refusal(db, product_id=1, **overrides):
 def test_update_product_replaces_every_field(db):
     add_product(db, 1, quantity_received=5, name="Old name", notes="old")
 
+    today = db.execute("SELECT CURRENT_DATE AS d").fetchone()["d"]
     psells.update_product(db, 1, **new_product(
         category="Hats", name="New name", quantity_received=8,
         retail_price_cents=5000, listed_price_cents=4500, condition="Used",
@@ -784,6 +793,10 @@ def test_update_product_replaces_every_field(db):
         "partner_share_mode": "custom_percent", "partner_share_percent": 30.0,
         "partner_share_amount_cents": None, "condition": "Used",
         "notes": "new",
+        # Its listed price came with it, undated, as before the workflow,
+        # and an edit does not date it; the save counts.
+        "marketplace_price_cents": None, "details": "", "on_instagram": False,
+        "arrived_on": today, "listed_on": None, "version": 2,
     }
 
 
@@ -906,7 +919,7 @@ def form_text(**overrides):
         "retail_discontinued": "",
         "retail_price": "100.00",
         "listed_price": "90.00",
-        "condition": "Brand New",
+        "condition": "Brand new",
         "notes": "",
         "partner_share_mode": "default",
         "partner_share_percent": "",
@@ -1448,3 +1461,129 @@ def test_an_empty_variable_counts_as_unset(monkeypatch):
     assert psells.path_from_environment(
         "PSELLS_CONFIG", "data", "config.json"
     ) == os.path.join(psells.PROJECT_DIR, "data", "config.json")
+
+
+# The workflow: lists, stages, an unknown payout -------------------------------------
+
+def view_row(db, product_id=1):
+    return db.execute("SELECT * FROM products_view WHERE id = %s",
+                      (product_id,)).fetchone()
+
+
+def test_a_new_product_must_choose_its_category_and_condition_from_the_lists(db):
+    with pytest.raises(psells.ProductError) as error:
+        psells.create_product(db, **new_product(category="Shose", condition="Mint"))
+
+    assert error.value.problems == {
+        "category": "Choose a category from the list.",
+        "condition": "Choose a condition from the list.",
+    }
+
+
+def test_a_hidden_category_is_not_offered_but_a_product_keeps_it(db):
+    add_product(db, 1, quantity_received=2, category="Hats")
+    db.execute("UPDATE categories SET hidden = true WHERE name = 'Hats'")
+
+    with pytest.raises(psells.ProductError) as error:
+        psells.create_product(db, **new_product(category="Hats"))
+    assert error.value.problems == {"category": "Choose a category from the list."}
+
+    # The product already under it may be saved with it unchanged.
+    psells.update_product(db, 1, **new_product(category="Hats", name="Kept"))
+    assert view_row(db)["category"] == "Hats"
+    assert "Hats" not in psells.categories(db)
+    assert "Hats" in psells.categories(db, include_hidden=True)
+
+
+def test_the_conditions_are_read_best_first(db):
+    assert psells.conditions(db) == ["Brand new", "Open box", "Like new", "Used",
+                                     "Damaged"]
+
+
+def test_a_percentage_payout_is_unknown_until_there_is_a_retail_price(monkeypatch):
+    monkeypatch.setattr(psells, "default_partner_share_percent", lambda: 40.0)
+
+    for mode, percent in (("default", None), ("custom_percent", 30.0)):
+        item = {"partner_share_mode": mode, "partner_share_percent": percent,
+                "retail_price_cents": None}
+        assert psells.partner_share_for(item) is None, mode
+    # A fixed amount needs no retail price.
+    assert psells.partner_share_for({
+        "partner_share_mode": "custom_amount", "partner_share_amount_cents": 700,
+        "retail_price_cents": None}) == 700
+
+
+def test_an_item_without_a_payout_cannot_be_sold(db, partner_rate):
+    add_product(db, 1, quantity_received=2, retail_price_cents=None,
+                listed_price_cents=None, condition=None)
+
+    with pytest.raises(psells.SaleError, match="partner payout is unknown"):
+        psells.create_sale(db, 1, 1, 5000, "2026-10-18")
+    assert db.execute("SELECT count(*) AS n FROM sales").fetchone()["n"] == 0
+
+
+def test_the_first_listed_price_dates_the_listing_and_a_later_one_does_not(db):
+    add_product(db, 1, quantity_received=2, listed_price_cents=None)
+    today = db.execute("SELECT CURRENT_DATE AS d").fetchone()["d"]
+    assert view_row(db)["listed_on"] is None
+
+    psells.update_product(db, 1, **new_product(listed_price_cents=9000))
+    assert view_row(db)["listed_on"] == today
+
+    db.execute("UPDATE products SET listed_on = '2026-01-01'")
+    psells.update_product(db, 1, **new_product(listed_price_cents=8000))
+    assert view_row(db)["listed_on"] == date(2026, 1, 1)
+
+
+def test_every_save_raises_the_version(db):
+    add_product(db, 1, quantity_received=2)
+
+    psells.update_product(db, 1, **new_product())
+    psells.update_product(db, 1, **new_product())
+
+    assert view_row(db)["version"] == 3
+
+
+@pytest.mark.parametrize("fields, has_photo, stage", [
+    ({"condition": None, "retail_price_cents": None, "listed_price_cents": None},
+     False, "Received"),
+    # Researched needs the Marketplace price as well as the rest.
+    ({"listed_price_cents": None}, False, "Received"),
+    ({"listed_price_cents": None, "marketplace_price_cents": 8000}, False,
+     "Researched"),
+    ({"listed_price_cents": None, "marketplace_price_cents": 8000}, True,
+     "Photographed"),
+    # A photo moves an item on even before its research is complete.
+    ({"listed_price_cents": None}, True, "Photographed"),
+    # A listed price means Listed, research and photos or not: the products
+    # from before the workflow.
+    ({}, False, "Listed"),
+    # Listed outranks a photo: a listed item has photos too.
+    ({}, True, "Listed"),
+])
+def test_the_stage_is_the_furthest_reached(db, partner_rate, fields, has_photo, stage):
+    add_product(db, 1, quantity_received=2, **fields)
+
+    assert psells.product_stage(view_row(db), has_photo) == stage
+
+
+def test_an_item_with_nothing_left_is_sold_or_returned(db, partner_rate):
+    add_product(db, 1, quantity_received=1)
+    add_sale(db, 1, 1, 1)
+    add_product(db, 2, quantity_received=1)
+    add_return(db, 1, 2, 1)
+
+    assert psells.product_stage(view_row(db, 1), False) == "Sold"
+    assert psells.product_stage(view_row(db, 2), False) == "Returned"
+
+
+def test_research_needs_a_payout_that_can_be_worked_out(db, partner_rate):
+    # Discontinued at retail, with its fixed payout: researched without a
+    # retail price.
+    add_product(db, 1, quantity_received=1, retail_price_cents=0,
+                retail_discontinued=1, partner_share_mode="custom_amount",
+                partner_share_amount_cents=900, listed_price_cents=None,
+                marketplace_price_cents=12000)
+
+    assert psells.research_complete(view_row(db))
+    assert psells.product_stage(view_row(db), False) == "Researched"

@@ -23,6 +23,10 @@ from helpers import TEST_DATABASE_URL, log_in
 
 START_TEST_DATABASE = "docker compose --profile test up -d --wait db-test"
 
+TEST_CATEGORIES = ["Accessories", "Bags", "Glasses", "Hats", "Hoodies", "Shoes",
+                   "Sneakers", "Sunglasses", "T-Shirts", "Tops", "Watches",
+                   "apples"]
+
 
 @pytest.fixture(scope="session", autouse=True)
 def postgres_schema():
@@ -62,6 +66,13 @@ def postgres_schema():
         connection.execute("CREATE SCHEMA public")
         with open(schema_path) as schema:
             connection.execute(schema.read())
+        # The categories the tests file their products under. Categories are
+        # a list to choose from, and a product under any other is refused, so
+        # the list holds these from the start, as a real one would hold the
+        # business's own.
+        connection.execute(
+            "INSERT INTO categories (name) SELECT unnest(%s::text[])",
+            (TEST_CATEGORIES,))
 
 
 @pytest.fixture

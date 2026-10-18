@@ -28,6 +28,8 @@ readable; they are in its history in git, up to commit 7ecee20.
 - [The schema carries the rules it can carry, and says which it cannot](#the-schema-carries-the-rules-it-can-carry-and)
 - [Why a product ran out is worked out, not recorded](#why-a-product-ran-out-is-worked-out-not)
 - [A wrong record is corrected, and the correction is kept](#a-wrong-record-is-corrected-and-the-correction-is)
+- [Categories and conditions are lists to choose from](#categories-and-conditions-are-lists-to-choose-from)
+- [An item arrives before it is researched, and its stage is worked out](#an-item-arrives-before-it-is-researched-and-its-stage-is-worked-out)
 
 ### Storage and the database
 
@@ -807,3 +809,35 @@ readable; they are in its history in git, up to commit 7ecee20.
   logo's monogram from the reverted app work, under its two names, before
   the login, on every server that serves PSells. No manifest and no service
   worker: the security policy still allows no script at all.
+
+- <a id="categories-and-conditions-are-lists-to-choose-from"></a>**Categories and conditions are lists to choose from.** With two
+  people entering items, one category spelled two ways would split every
+  count and chart in the analytics. Each list is a table of names, and a
+  product keeps the name, with a foreign key on it: a name not on the list
+  is refused by the database, whatever wrote it, and ON UPDATE CASCADE
+  carries a rename to every product. A name keeps a product's rows readable
+  without a join, as before. A value in use cannot be deleted; it is hidden
+  instead, kept for its products and their history and not offered for a
+  new item. Conditions became Brand new, Open box, Like new, Used and
+  Damaged, the free-typed ones mapped onto them by migration 0003, which
+  also hid every category with nothing in stock, chosen by query so no real
+  category is named in the repository. After that, hiding is by hand: a
+  category never hides itself on running out. The two listing templates,
+  Facebook and Instagram, are kept in the database too and are empty in the
+  repository, so their pickup areas and hashtags stay out of it.
+
+- <a id="an-item-arrives-before-it-is-researched-and-its-stage-is-worked-out"></a>**An item arrives before it is researched, and its stage is worked out.**
+  Pierre's brother takes items in and researches them; Pierre photographs
+  and lists them. So an item's condition, retail price and listed price may
+  be empty until someone fills them in. Its stage (Received, Researched,
+  Photographed, Listed, then Sold or Returned) is worked out from what it
+  has, the furthest reached winning, and never stored, for the same reason
+  why a product ran out is not: a stored stage can disagree with the facts.
+  Every existing product has a listed price, so each lands in Listed or Sold
+  with nothing added. A sale freezes the partner's cut, and without a retail
+  price a percentage cut is unknown, so a sale is refused until the retail
+  price or a fixed payout is entered, rather than freezing a guess. The
+  dates an item arrived and was first listed are stored, being facts nobody
+  could work out later; products from before have no arrival date. Every
+  save raises the product's version, so that a save made from a page opened
+  before someone else's can be refused.

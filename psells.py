@@ -565,7 +565,8 @@ def default_partner_share_percent():
 
 
 def partner_share_for(item):
-    """The partner's cut for one unit of this item, in cents.
+    """The partner's cut for one unit of this item, in cents, or None while a
+    percentage has no retail price to apply to.
 
     This is the only place in PSells where a fraction of a cent can appear, so
     it is the only place that rounds. A percentage of a price does not have to
@@ -578,6 +579,12 @@ def partner_share_for(item):
     when money is being split.
     """
     mode = item["partner_share_mode"]
+
+    # A percentage of a retail price nobody has entered yet is not a number:
+    # the item has not been researched. None, so it is never mistaken for 0,
+    # and create_sale refuses to freeze it onto a sale.
+    if mode != "custom_amount" and item["retail_price_cents"] is None:
+        return None
 
     if mode == "default":
         percent = default_partner_share_percent()
@@ -659,6 +666,43 @@ class ProductNotFound(SaleError):
     """
 
 
+# The stages an item passes through, in order. Worked out from what the item
+# has, never stored or set by hand; see product_stage.
+STAGES = ("Received", "Researched", "Photographed", "Listed", "Sold", "Returned")
+
+
+def research_complete(product):
+    """Whether an item has been researched: its condition, a retail price (or
+    discontinued at retail), the average Marketplace price, and a payout that
+    can be worked out. Notes and details never count."""
+    return (product["condition"] is not None
+            and (product["retail_price_cents"] is not None
+                 or product["retail_discontinued"])
+            and product["marketplace_price_cents"] is not None
+            and partner_share_for(product) is not None)
+
+
+def product_stage(product, has_photo):
+    """The furthest stage an item has reached.
+
+    product is a products_view row. With nothing left in stock it is Sold if
+    any unit sold, else Returned to the partner. With stock, a listed price
+    means Listed, a photo Photographed, finished research Researched, and
+    anything less Received. The furthest wins, so a product listed before
+    the workflow existed is Listed without research or photos, and a new one
+    passes through every stage, since its listed price comes last.
+    """
+    if product["quantity_available"] <= 0:
+        return "Sold" if product["quantity_sold"] > 0 else "Returned"
+    if product["listed_price_cents"] is not None:
+        return "Listed"
+    if has_photo:
+        return "Photographed"
+    if research_complete(product):
+        return "Researched"
+    return "Received"
+
+
 def create_sale(connection, product_id, quantity, sale_price_cents, sale_date):
     """Record one sale and return the partner cut that was frozen onto it.
 
@@ -708,6 +752,15 @@ def create_sale(connection, product_id, quantity, sale_price_cents, sale_date):
         raise SaleError(f"{sale_date!r} is not a date in YYYY-MM-DD form.")
 
     partner_cut = partner_share_for(product)
+
+    # A payout is never guessed: the partner is owed what the rule gives, and
+    # a cut frozen as 0 would short him for good.
+    if partner_cut is None:
+        raise SaleError(
+            f"{product['name']} has no retail price yet, so its partner payout "
+            f"is unknown. Enter the retail price or a fixed payout before "
+            f"selling it."
+        )
 
     # One insert. The product is not touched at all: units sold is derived from
     # this table, so there is no second value that could fall out of step.
@@ -1007,6 +1060,48 @@ def product_problems(category, name, quantity_received, retail_discontinued,
     return problems
 
 
+def categories(connection, include_hidden=False):
+    """The category list, by name: the ones offered for a new item, or every
+    one, hidden ones included."""
+    return [row["name"] for row in connection.execute(
+        "SELECT name FROM categories "
+        + ("" if include_hidden else "WHERE NOT hidden ")
+        + 'ORDER BY name COLLATE "C"'
+    ).fetchall()]
+
+
+def conditions(connection, include_hidden=False):
+    """The condition list, best first: the ones offered, or every one."""
+    return [row["name"] for row in connection.execute(
+        "SELECT name FROM conditions "
+        + ("" if include_hidden else "WHERE NOT hidden ")
+        + "ORDER BY position, name"
+    ).fetchall()]
+
+
+def _listed_problems(connection, category, condition, current=None):
+    """A category or condition not on its list, as {field: sentence}.
+
+    The database refuses one anyway, through its foreign keys; this says so
+    in a sentence. A hidden one is not offered for a new item, but a product
+    that already has it keeps it: current is the product as stored, for an
+    edit.
+    """
+    problems = {}
+    for field, label, value, table in (
+            ("category", "category", category, "categories"),
+            ("condition", "condition", condition, "conditions")):
+        if value is None or not str(value).strip():
+            continue
+        row = connection.execute(
+            f"SELECT hidden FROM {table} WHERE name = %s", (str(value).strip(),)
+        ).fetchone()
+        unchanged = current is not None and current[field] == str(value).strip()
+        if row is None or (row["hidden"] and not unchanged):
+            problems[field] = f"Choose a {label} from the list."
+    return problems
+
+
 def _every_product_problem(category, name, quantity_received,
                            retail_discontinued, retail_price_cents,
                            listed_price_cents, condition, partner_share_mode,
@@ -1057,11 +1152,15 @@ def create_product(connection, category, name, quantity_received,
     nothing. Text is stripped here too, so a caller that forgets cannot store
     leading or trailing spaces.
     """
-    problems = _every_product_problem(
-        category, name, quantity_received, retail_discontinued,
-        retail_price_cents, listed_price_cents, condition,
-        partner_share_mode, partner_share_percent, partner_share_amount_cents,
-    )
+    problems = {
+        **_listed_problems(connection, category, condition),
+        **_every_product_problem(
+            category, name, quantity_received, retail_discontinued,
+            retail_price_cents, listed_price_cents, condition,
+            partner_share_mode, partner_share_percent,
+            partner_share_amount_cents,
+        ),
+    }
 
     if problems:
         raise ProductError(problems)
@@ -1075,15 +1174,16 @@ def create_product(connection, category, name, quantity_received,
             "(category, name, quantity_received, retail_price_cents, "
             "listed_price_cents, retail_discontinued, partner_share_mode, "
             "partner_share_percent, partner_share_amount_cents, "
-            "condition, notes) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            "condition, notes, listed_on) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
+            "CASE WHEN %s::integer IS NULL THEN NULL ELSE CURRENT_DATE END) "
             "RETURNING id",
             (category.strip(), name.strip(), quantity_received,
              retail_price_cents, listed_price_cents,
              1 if retail_discontinued else 0,
              partner_share_mode, partner_share_percent,
              partner_share_amount_cents, condition.strip(),
-             (notes or "").strip())
+             (notes or "").strip(), listed_price_cents)
         ).fetchone()["id"]
 
 
@@ -1138,8 +1238,12 @@ def update_product(connection, product_id, category, name, quantity_received,
     Raises ProductNotFound for an id that does not exist, the same exception
     create_sale raises for one, because it is the same fact about the world.
     """
+    current = connection.execute(
+        "SELECT category, condition FROM products WHERE id = %s", (product_id,)
+    ).fetchone()
     problems = {
         **_intake_floor_problem(connection, product_id, quantity_received),
+        **_listed_problems(connection, category, condition, current),
         **_every_product_problem(
             category, name, quantity_received, retail_discontinued,
             retail_price_cents, listed_price_cents, condition,
@@ -1158,14 +1262,20 @@ def update_product(connection, product_id, category, name, quantity_received,
             "retail_price_cents = %s, listed_price_cents = %s, "
             "retail_discontinued = %s, partner_share_mode = %s, "
             "partner_share_percent = %s, partner_share_amount_cents = %s, "
-            "condition = %s, notes = %s "
+            "condition = %s, notes = %s, "
+            # Dated when an unlisted product gets its first listed price; a
+            # product listed before the workflow keeps its unknown date. The
+            # right side of SET reads the row as it was.
+            "listed_on = CASE WHEN listed_price_cents IS NULL "
+            "AND %s::integer IS NOT NULL THEN CURRENT_DATE ELSE listed_on END, "
+            "version = version + 1 "
             "WHERE id = %s",
             (category.strip(), name.strip(), quantity_received,
              retail_price_cents, listed_price_cents,
              1 if retail_discontinued else 0,
              partner_share_mode, partner_share_percent,
              partner_share_amount_cents, condition.strip(),
-             (notes or "").strip(), product_id)
+             (notes or "").strip(), listed_price_cents, product_id)
         )
 
 # The fields a product form sends, by the names it sends them under. Every value

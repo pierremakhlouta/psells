@@ -62,7 +62,7 @@ def add_product(connection, product_id, quantity_received, **overrides):
         "partner_share_mode": "default",
         "partner_share_percent": None,
         "partner_share_amount_cents": None,
-        "condition": "Brand New",
+        "condition": "Brand new",
         "notes": "",
     }
     values.update(overrides)

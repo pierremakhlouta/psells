@@ -21,8 +21,9 @@ computed on demand; none of it is stored.
 
 Two more tables, `users` and `sessions`, hold the login. They sit beside the
 business data and never refer to it. A last one, `corrections`, records every
-edit or deletion of a sale, return or payment. All three are described at the
-end.
+edit or deletion of a sale, return or payment. All three are described near
+the end, followed by the four that hold the workflow: `categories`,
+`conditions`, `photos` and `listing_templates`.
 
 ## Core principles
 
@@ -106,17 +107,23 @@ One row per product.
 | Column                      | Type    | Notes                                    |
 |-----------------------------|---------|------------------------------------------|
 | `id`                        | integer | primary key, `GENERATED ALWAYS AS IDENTITY` |
-| `category`                  | text    | required, non-blank                      |
+| `category`                  | text    | required; a name on the `categories` list |
 | `name`                      | text    | required, non-blank, not unique          |
 | `quantity_received`         | integer | original intake; never altered by a transaction |
-| `retail_price_cents`        | integer | the price at major retailers; 0 only when retail-discontinued |
-| `listed_price_cents`        | integer | the price PSells lists it at             |
+| `retail_price_cents`        | integer | the price at major retailers; 0 only when retail-discontinued; empty until researched |
+| `listed_price_cents`        | integer | the price PSells lists it at; empty until listed |
 | `retail_discontinued`       | integer | 0 or 1                                   |
 | `partner_share_mode`        | text    | `default`, `custom_percent`, or `custom_amount` |
 | `partner_share_percent`     | double precision | set only when the mode is `custom_percent` |
 | `partner_share_amount_cents`| integer | set only when the mode is `custom_amount`  |
-| `condition`                 | text    | required                                 |
+| `condition`                 | text    | a name on the `conditions` list; empty until researched |
 | `notes`                     | text    | may be empty                             |
+| `marketplace_price_cents`   | integer | the average Facebook Marketplace price; empty until researched |
+| `details`                   | text    | what a listing says beyond its template; may be empty |
+| `on_instagram`              | boolean | also posted on Instagram                 |
+| `arrived_on`                | date    | when it arrived; today by default, empty for products from before |
+| `listed_on`                 | date    | when a listed price was first entered    |
+| `version`                   | integer | raised by every save of the product      |
 
 **ID allocation.** Every table's id comes from a sequence, which never hands out
 the same value twice, so an id freed by deleting a product is never given to
@@ -287,11 +294,13 @@ advisory, and carried over unchanged in meaning.
 | Rule | Reason |
 |---|---|
 | `id` is the primary key | identity |
-| `category`, `name`, `condition` are NOT NULL and non-blank | required fields |
+| `category`, `name` are NOT NULL and non-blank | required fields |
+| `category` is on `categories`, `condition` (when set) on `conditions` | foreign keys, ON UPDATE CASCADE |
 | `notes` is NOT NULL and may be an empty string | optional text, never missing |
 | `quantity_received >= 1` | a product with no units is not a product |
 | `retail_price_cents >= 0` | prices are never negative |
 | `listed_price_cents >= 0` | zero is permitted; the prompt allows it |
+| `marketplace_price_cents >= 0` | prices are never negative |
 | `retail_discontinued` is 0 or 1 | boolean |
 | `partner_share_mode` is one of the three modes | no fourth mode can exist |
 | `partner_share_percent` is NULL or between 0 and 100 | a percentage is bounded |
@@ -309,7 +318,7 @@ advisory, and carried over unchanged in meaning.
 
 | `retail_discontinued` | `retail_price_cents` | `partner_share_mode` |
 |---|---|---|
-| 0 | greater than 0 | any of the three |
+| 0 | empty, or greater than 0 | any of the three |
 | 1 | exactly 0 | `custom_amount` |
 
 Note the consequence for input: because a zero retail price is reserved for
@@ -442,6 +451,26 @@ are computed from the four business tables as they now are.
 An existing database gets the table from `migrations/0002_corrections.sql`; a
 new one gets it from the end of `schema.sql`.
 
+
+## The workflow
+
+Items move through stages: Received, Researched, Photographed, Listed, then
+Sold or Returned once no stock is left. The stage is computed by
+`product_stage`, never stored, the furthest reached winning: a listed price
+means Listed, a photo Photographed, and the research is complete once the
+condition, retail price (or retail-discontinued), Marketplace price and
+partner payout are all known. A sale is refused while the payout is unknown,
+which happens when a percentage share has no retail price to apply to.
+
+| Table | One row represents | Notes |
+|---|---|---|
+| `categories` | a category to choose from | `name` primary key, trimmed and non-blank; `hidden` keeps it off the list for new items |
+| `conditions` | a condition to choose from | as `categories`, plus `position`, the order they are offered in, best first |
+| `photos` | one photo of a product | the file is on disk, `file_name` unique; `product_id` is ON DELETE RESTRICT |
+| `listing_templates` | the listing text for one platform | `platform` is `facebook` or `instagram`; empty in the repository |
+
+A category or condition in use cannot be deleted, since a product refers to
+it; it is hidden instead. Renaming one renames it on every product.
 
 ## The analytics warehouse
 

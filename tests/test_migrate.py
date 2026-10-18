@@ -40,14 +40,17 @@ def build_source(path, extra_sql=""):
 def _fill(connection, extra_sql):
     with open(SQLITE_SCHEMA) as schema:
         connection.executescript(schema.read())
+    # The rows use a condition and categories on today's lists: the move
+    # copies every value as it is, and the target is today's schema, whose
+    # foreign keys refuse any other.
     connection.executescript("""
         INSERT INTO products VALUES
             (1, 'Watches', 'Field Watch', 3, 20000, 14000, 0, 'default',
-             NULL, NULL, 'Brand New', ''),
+             NULL, NULL, 'Brand new', ''),
             (2, 'Watches', 'Trail Watch', 2, 30000, 22000, 0, 'custom_percent',
              33.333333333333336, NULL, 'Used', 'no box'),
             (5, 'Hats', 'Field Cap', 5, 4500, 3000, 0, 'custom_amount',
-             NULL, 1200, 'Brand New', ''),
+             NULL, 1200, 'Brand new', ''),
             (9, 'Watches', 'Dive Watch', 1, 0, 18000, 1, 'custom_amount',
              NULL, 9000, 'Used', 'scratched bezel');
         INSERT INTO sales VALUES
@@ -110,7 +113,7 @@ def test_the_next_record_gets_a_new_id_in_every_table(db, source,
     migration.migrate(source, db)
 
     product_id = psells.create_product(
-        db, "Hats", "New Cap", 1, False, 1000, 900, "New", "",
+        db, "Hats", "New Cap", 1, False, 1000, 900, "Brand new", "",
         "custom_amount", None, 100)
     payment_id = psells.create_payment(db, 100, "2026-08-01", "")
 

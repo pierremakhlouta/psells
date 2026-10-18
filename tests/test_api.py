@@ -36,7 +36,7 @@ def test_a_product_is_served_with_every_field(client, db):
     assert product["id"] == 1
     assert product["name"] == "Jordan 1 Chicago"
     assert product["category"] == "Shoes"
-    assert product["condition"] == "Brand New"
+    assert product["condition"] == "Brand new"
     assert product["notes"] == "boxed"
     assert product["quantity_received"] == 10
     assert product["retail_price_cents"] == 10000

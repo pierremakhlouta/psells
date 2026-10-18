@@ -53,7 +53,7 @@ def test_a_product_is_one_row_with_every_column(client, db):
     rows = table_rows(client.get("/").text)
 
     assert rows == [[
-        "1", "Jordan 1 Chicago", "Shoes", "Brand New",
+        "1", "Jordan 1 Chicago", "Shoes", "Brand new",
         "10", "$90.00", "$40.00", "$100.00", "Sell Return Edit",
     ]]
 
@@ -876,7 +876,7 @@ GOOD = {
     "quantity_received": "10",
     "retail_price": "100.00",
     "listed_price": "90.00",
-    "condition": "Brand New",
+    "condition": "Brand new",
 }
 
 
@@ -966,7 +966,7 @@ def test_the_form_stores_what_create_product_would(client, db):
     psells.create_product(
         db, category="Shoes", name="Jordan 1 Chicago", quantity_received=10,
         retail_discontinued=False, retail_price_cents=10000,
-        listed_price_cents=9000, condition="Brand New", notes="boxed",
+        listed_price_cents=9000, condition="Brand new", notes="boxed",
         partner_share_mode="default", partner_share_percent=None,
         partner_share_amount_cents=None,
     )
@@ -1094,7 +1094,7 @@ def test_the_edit_form_opens_filled_with_the_product(client, db):
     data = form_data(edit_form(client))
 
     assert data == {
-        "category": "Shoes", "name": "Product 1", "condition": "Brand New",
+        "category": "Shoes", "name": "Product 1", "condition": "Brand new",
         "quantity_received": "10", "retail_price": "100.00",
         "listed_price": "90.00", "partner_share_mode": "custom_percent",
         "partner_share_percent": "33.333333", "partner_share_amount": "",
@@ -1119,7 +1119,11 @@ def test_saving_the_form_untouched_changes_nothing(client, db, overrides):
     response = submit_edit_form(client)
 
     assert response.status_code == 303
-    assert stored(db) == before
+    after = stored(db)
+    # Every save counts, for the check that refuses a stale one; nothing
+    # else may change.
+    assert after.pop("version") == before.pop("version") + 1
+    assert after == before
 
 
 def test_an_edit_answers_303_and_says_so(client, db):

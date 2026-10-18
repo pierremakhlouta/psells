@@ -384,12 +384,22 @@ ls migrations/
 ```
 
 ```
-./backup.sh && docker compose exec -T db sh -c 'psql -v ON_ERROR_STOP=1 --single-transaction -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < migrations/0002_corrections.sql
+./backup.sh && docker compose exec -T db sh -c 'psql -v ON_ERROR_STOP=1 --single-transaction -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < migrations/0003_workflow.sql
 ```
 
-A deploy applies none: the demo's too is applied by hand, through Session
-Manager. Tried: 0001 in Phase 05b and 0002 after Phase 09, on the real
-stack.
+A deploy applies none: the demo's too is applied by hand, in a session on
+the server (the command under "The demonstration's alert email arrives"),
+as soon as the deploy that carries the migration finishes, since the new
+code expects the new tables. Then put the demo's records back, so it has the
+new seed:
+
+```
+cd /opt/psells && sudo docker compose -f compose.yaml -f compose.aws.yaml exec -T db sh -c 'psql -v ON_ERROR_STOP=1 --single-transaction -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < migrations/0003_workflow.sql && sudo systemctl start psells-reset.service
+```
+
+0003 drops and rebuilds `products_view`, which takes the analytics' read-only
+role's access with it; the migration gives it back where that role exists.
+Tried: 0001 in Phase 05b and 0002 after Phase 09, on the real stack.
 
 ### Check the Terraform matches what runs
 

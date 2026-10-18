@@ -585,8 +585,9 @@ def test_the_reset_is_one_transaction_that_empties_then_loads():
     statements = reset_statements()
 
     assert statements[0] == "BEGIN"
-    assert statements[1] == ("TRUNCATE corrections, sales, returns, payments, "
-                             "products RESTART IDENTITY")
+    assert statements[1] == ("TRUNCATE corrections, photos, sales, returns, "
+                             "payments, products, categories, conditions "
+                             "RESTART IDENTITY")
     assert statements[-1] == "COMMIT"
     assert statements.count("BEGIN") == 1 and statements.count("COMMIT") == 1
 
@@ -611,6 +612,9 @@ def test_the_reset_puts_the_seed_back_and_keeps_the_login(db):
     auth.set_password(db, "demo", "an-invented-demo-password")
     for statement in reset_statements()[1:-1]:
         db.execute(statement)
+    # The visitor adds a category of their own first, as the settings page
+    # lets anyone with the login do.
+    db.execute("INSERT INTO categories (name) VALUES ('Visitors')")
     copy_a_product(db, "Visitors", "Something odd")
     sale = db.execute("SELECT * FROM sales ORDER BY id LIMIT 1").fetchone()
     db.execute("INSERT INTO corrections (record_type, record_id, action, before) "
@@ -627,6 +631,9 @@ def test_the_reset_puts_the_seed_back_and_keeps_the_login(db):
     assert counts == {"products": 80, "sales": 240, "returns": 12,
                       "payments": 11, "corrections": 0, "users": 1}
     assert db.execute("SELECT count(*) AS n FROM products WHERE category = 'Visitors'"
+                      ).fetchone()["n"] == 0
+    # And their category is gone with it.
+    assert db.execute("SELECT count(*) AS n FROM categories WHERE name = 'Visitors'"
                       ).fetchone()["n"] == 0
     # The ids start again where the seed leaves them.
     assert copy_a_product(db, "Hats", "Next") == 81

@@ -30,7 +30,7 @@ GOOD_PRODUCT = {
     "partner_share_mode": "default",
     "partner_share_percent": None,
     "partner_share_amount_cents": None,
-    "condition": "Brand New",
+    "condition": "Brand new",
     "notes": "",
 }
 
@@ -151,9 +151,8 @@ def test_an_unknown_partner_share_mode_is_refused(db):
 
 
 @pytest.mark.parametrize("column", [
-    "category", "name", "quantity_received", "retail_price_cents",
-    "listed_price_cents", "retail_discontinued", "partner_share_mode",
-    "condition", "notes",
+    "category", "name", "quantity_received", "retail_discontinued",
+    "partner_share_mode", "notes",
 ])
 def test_a_required_product_column_cannot_be_null(db, column):
     row = GOOD_PRODUCT | {column: None}
@@ -161,6 +160,50 @@ def test_a_required_product_column_cannot_be_null(db, column):
     with pytest.raises(errors.NotNullViolation):
         with db.transaction():
             insert_product(db, **row)
+
+
+def test_an_item_arrives_before_its_condition_and_prices_are_known(db):
+    # Research fills these in later; a listed price comes last of all.
+    insert_product(db, **GOOD_PRODUCT | {
+        "condition": None, "retail_price_cents": None, "listed_price_cents": None})
+
+    row = db.execute("SELECT condition, retail_price_cents, listed_price_cents "
+                     "FROM products").fetchone()
+    assert list(row.values()) == [None, None, None]
+
+
+@pytest.mark.parametrize("column, value", [
+    ("category", "Not on the list"), ("condition", "Mint"),
+])
+def test_a_category_or_condition_must_be_on_its_list(db, column, value):
+    with pytest.raises(errors.ForeignKeyViolation):
+        with db.transaction():
+            insert_product(db, **GOOD_PRODUCT | {column: value})
+
+
+def test_renaming_a_category_renames_it_on_every_product(db):
+    insert_product(db, **GOOD_PRODUCT)
+    category = GOOD_PRODUCT["category"]
+
+    db.execute("UPDATE categories SET name = 'Renamed' WHERE name = %s", (category,))
+
+    assert db.execute("SELECT category FROM products").fetchone()["category"] == "Renamed"
+
+
+def test_a_category_in_use_cannot_be_deleted(db):
+    insert_product(db, **GOOD_PRODUCT)
+
+    with pytest.raises(errors.ForeignKeyViolation):
+        with db.transaction():
+            db.execute("DELETE FROM categories WHERE name = %s",
+                       (GOOD_PRODUCT["category"],))
+
+
+def test_the_conditions_start_in_order_best_first(db):
+    names = [row["name"] for row in db.execute(
+        "SELECT name FROM conditions ORDER BY position")]
+
+    assert names == ["Brand new", "Open box", "Like new", "Used", "Damaged"]
 
 
 def test_a_discontinued_product_with_a_fixed_amount_is_accepted(db):
@@ -546,6 +589,7 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MIGRATIONS = [
     ("0001_authentication.sql", "-- Authentication ---"),
     ("0002_corrections.sql", "-- Corrections ---"),
+    ("0003_workflow.sql", "-- Workflow ---"),
 ]
 
 
@@ -640,6 +684,40 @@ def test_the_migrations_build_what_schema_sql_builds(db):
     assert any(row["table_name"] == "corrections" for row in fresh[0])
     assert [row["tgname"] for row in fresh[5]] == ["corrections_append_only"]
     assert fresh == migrated
+
+
+def test_the_workflow_migration_maps_the_records_it_finds(db):
+    # Records as they stood before 0003: conditions typed freely, and one
+    # category sold out and one sent back, besides one still in stock.
+    schema = read("schema.sql")
+    db.execute("CREATE SCHEMA old")
+    db.execute("SET LOCAL search_path TO old")
+    db.execute(schema.split(MIGRATIONS[2][1])[0])
+
+    rows = [("Hats", "Brand New", 2), ("Hats", "brand new", 1),
+            ("Mugs", "Like New", 1), ("Kites", "Used (Like New)", 1),
+            ("Kites", "Used (Good)", 1)]
+    ids = []
+    for category, condition, quantity in rows:
+        ids.append(insert_product(db, category=category, condition=condition,
+                                  quantity_received=quantity))
+    insert_sale(db, ids[0])             # Hats: one of the two left
+    insert_sale(db, ids[2])             # Mugs: sold out
+    insert_return(db, ids[3])           # Kites: one sent back,
+    insert_sale(db, ids[4])             # the other sold
+
+    db.execute(read("migrations", "0003_workflow.sql"))
+
+    conditions = db.execute(
+        "SELECT condition FROM products ORDER BY id").fetchall()
+    categories = db.execute(
+        "SELECT name, hidden FROM categories ORDER BY name").fetchall()
+    db.execute("SET LOCAL search_path TO public")
+
+    assert [row["condition"] for row in conditions] == [
+        "Brand new", "Brand new", "Like new", "Like new", "Used"]
+    assert [(row["name"], row["hidden"]) for row in categories] == [
+        ("Hats", False), ("Kites", True), ("Mugs", True)]
 
 
 @pytest.mark.parametrize("name", [name for name, _ in MIGRATIONS])
