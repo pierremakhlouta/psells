@@ -155,7 +155,7 @@ class Product(BaseModel):
     id: int
     category: str
     name: str
-    condition: str
+    condition: str | None = Field(description="None until researched.")
     notes: str
 
     quantity_received: int = Field(description="Units originally taken in.")
@@ -165,8 +165,9 @@ class Product(BaseModel):
         description="received minus sold minus returned."
     )
 
-    retail_price_cents: int
-    listed_price_cents: int
+    retail_price_cents: int | None = Field(
+        description="None until researched; 0 when discontinued at retail.")
+    listed_price_cents: int | None = Field(description="None until listed.")
     retail_discontinued: bool = Field(
         description=(
             "Discontinued at retail. The product is still held, still listed "
@@ -177,8 +178,11 @@ class Product(BaseModel):
     partner_share_mode: str
     partner_share_percent: float | None
     partner_share_amount_cents: int | None
-    partner_share_cents: int = Field(
-        description="The partner's cut for one unit, as it stands today."
+    partner_share_cents: int | None = Field(
+        description=(
+            "The partner's cut for one unit, as it stands today; None while "
+            "a percentage has no retail price to apply to."
+        )
     )
 
 

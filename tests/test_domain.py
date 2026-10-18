@@ -743,11 +743,11 @@ def test_a_mode_carries_only_its_own_value(db):
 def test_a_field_that_could_not_be_read_is_required(db):
     """None is what a caller parsing text passes for a field it could not
     read. product_problems skips it, create_product refuses it."""
-    problems = refusal(db, name=None, listed_price_cents=None)
+    problems = refusal(db, name=None, quantity_received=None)
 
     assert problems == {
         "name": "This field is required.",
-        "listed_price": "This field is required.",
+        "quantity_received": "This field is required.",
     }
     assert psells.product_problems(**{
         k: v for k, v in new_product(name=None).items() if k != "notes"
@@ -953,13 +953,12 @@ def test_a_product_is_read_from_text_and_stored_in_cents(db):
 def test_every_field_left_empty_is_reported_at_once(db):
     problems = text_refusal(db, **{key: "" for key in form_text()})
 
+    # The condition, the retail price, the listed price and the Marketplace
+    # price may wait: an item arrives before it is researched.
     assert problems == {
         "category": "Category cannot be blank.",
         "name": "Name cannot be blank.",
-        "condition": "Condition cannot be blank.",
         "quantity_received": "This field is required.",
-        "retail_price": "This field is required.",
-        "listed_price": "This field is required.",
         "partner_share_mode": "This field is required.",
     }
 
@@ -1700,3 +1699,126 @@ def test_a_template_with_a_placeholder_psells_cannot_fill_is_refused(
         f"PSells cannot fill {unknown}. The placeholders are {{name}}, "
         "{price}, {retail}, {condition}, {details}.")
     assert psells.listing_templates(db)["instagram"] == ""
+
+
+# An item that arrives before it is researched -------------------------------------
+
+LIGHT = {"retail_price_cents": None, "listed_price_cents": None,
+         "condition": None}
+
+
+def test_an_item_arrives_with_only_its_category_name_and_quantity(db):
+    product_id = psells.create_product_from_text(db, form_text(
+        retail_price="", listed_price="", condition=""))
+
+    row = view_row(db, product_id)
+    assert (row["condition"], row["retail_price_cents"],
+            row["listed_price_cents"], row["marketplace_price_cents"],
+            row["details"]) == (None, None, None, None, "")
+    assert psells.product_stage(row, False) == "Received"
+
+
+def test_research_typed_into_the_form_is_stored(db, partner_rate):
+    product_id = psells.create_product_from_text(db, form_text(
+        listed_price="", marketplace_price="85.50", details=" With box "))
+
+    row = view_row(db, product_id)
+    assert (row["marketplace_price_cents"], row["details"]) == (8550, "With box")
+    assert psells.product_stage(row, False) == "Researched"
+
+
+def test_a_negative_marketplace_price_is_refused(db):
+    assert text_refusal(db, marketplace_price="-5") == {
+        "marketplace_price": "Marketplace price cannot be negative."}
+    assert refusal(db, marketplace_price_cents=-1) == {
+        "marketplace_price": "Marketplace price cannot be negative."}
+
+
+def test_an_edit_that_does_not_name_the_research_keeps_it(db):
+    # The terminal's edit does not ask for the Marketplace price or details
+    # yet, so leaving them out must keep them, not empty them.
+    add_product(db, 1, quantity_received=2, marketplace_price_cents=7000,
+                details="With box")
+
+    psells.update_product(db, 1, **new_product(name="Renamed"))
+
+    row = view_row(db)
+    assert (row["name"], row["marketplace_price_cents"], row["details"]) == (
+        "Renamed", 7000, "With box")
+
+
+def test_an_edit_can_empty_the_research_it_names(db):
+    add_product(db, 1, quantity_received=2, marketplace_price_cents=7000,
+                details="With box")
+
+    psells.update_product(db, 1, **new_product(**LIGHT),
+                          marketplace_price_cents=None, details="")
+
+    row = view_row(db)
+    assert (row["condition"], row["retail_price_cents"],
+            row["listed_price_cents"], row["marketplace_price_cents"],
+            row["details"]) == (None, None, None, None, "")
+
+
+def test_a_form_offers_a_products_own_hidden_value_and_no_other(db):
+    add_product(db, 1, quantity_received=1, category="Hats", condition="Used")
+    db.execute("UPDATE categories SET hidden = true WHERE name IN ('Hats', 'Bags')")
+    db.execute("UPDATE conditions SET hidden = true WHERE name = 'Used'")
+
+    new = psells.form_choices(db)
+    edit = psells.form_choices(db, view_row(db))
+
+    assert "Hats" not in new["category"] and "Used" not in new["condition"]
+    assert "Hats" in edit["category"] and "Used" in edit["condition"]
+    assert "Bags" not in edit["category"]
+
+
+def test_the_terminal_prints_an_unresearched_item_without_failing(db, capsys,
+                                                                 partner_rate):
+    add_product(db, 1, quantity_received=1, **LIGHT)
+
+    psells.print_product(view_row(db))
+
+    printed = capsys.readouterr().out
+    assert "Listed Price: Not yet" in printed
+    assert "Partner Cut: Unknown" in printed
+    assert "Condition: Not yet" in printed
+
+
+def test_the_terminal_refuses_to_sell_before_asking_anything(db, capsys,
+                                                            answers,
+                                                            partner_rate):
+    add_product(db, 1, quantity_received=1, **LIGHT)
+    answers("Product 1")  # the product to sell, and nothing more
+
+    psells.record_sale(db)
+
+    assert "has no retail price yet" in capsys.readouterr().out
+    assert db.execute("SELECT COUNT(*) AS n FROM sales").fetchone()["n"] == 0
+
+
+def test_the_terminal_says_why_a_product_was_not_added(db, capsys, answers,
+                                                       partner_rate):
+    answers("Shose", "Boots", "1", "no", "100", "90", "Brand new", "",
+            "default")
+
+    psells.add(db)
+
+    assert "Not added. Choose a category from the list." in capsys.readouterr().out
+    assert db.execute("SELECT COUNT(*) AS n FROM products").fetchone()["n"] == 0
+
+
+def test_the_terminal_edits_an_unresearched_item_keeping_its_blanks(db, capsys,
+                                                                   answers,
+                                                                   partner_rate):
+    add_product(db, 1, quantity_received=2, marketplace_price_cents=5000, **LIGHT)
+    before = view_row(db)
+    # The product, then Enter at every question, then no change of share.
+    answers("Product 1", "", "", "", "", "", "", "", "", "no")
+
+    psells.edit(db)
+
+    assert "Product updated successfully." in capsys.readouterr().out
+    after = view_row(db)
+    assert after.pop("version") == before.pop("version") + 1
+    assert after == before

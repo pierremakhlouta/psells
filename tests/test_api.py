@@ -124,6 +124,19 @@ def test_products_come_back_in_id_order(client, db):
     ]
 
 
+def test_an_unresearched_product_comes_back_with_nulls_not_an_error(client, db):
+    add_product(db, 1, quantity_received=1, retail_price_cents=None,
+                listed_price_cents=None, condition=None)
+
+    response = client.get("/products")
+
+    assert response.status_code == 200
+    product = response.json()[0]
+    assert (product["condition"], product["retail_price_cents"],
+            product["listed_price_cents"], product["partner_share_cents"]) == (
+        None, None, None, None)
+
+
 # Dashboard -------------------------------------------------------------------
 
 def test_the_dashboard_is_all_zeros_on_an_empty_database(client):

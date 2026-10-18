@@ -843,4 +843,8 @@ readable; they are in its history in git, up to commit 7ecee20.
   dates an item arrived and was first listed are stored, being facts nobody
   could work out later; products from before have no arrival date. Every
   save raises the product's version, so that a save made from a page opened
-  before someone else's can be refused.
+  before someone else's can be refused. What is not known yet reads "Not
+  yet" on the pages and in the terminal, and null in the API, never 0. The
+  terminal application does not ask for the Marketplace price or the
+  listing details yet, so an edit made there keeps them as stored rather
+  than emptying research done on the pages.

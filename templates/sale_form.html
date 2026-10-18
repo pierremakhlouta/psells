@@ -2,7 +2,7 @@
 
 {% block title %}Sell {{ product.name }} · PSells{% endblock %}
 
-{% from "macros.html" import field, form_token with context %}
+{% from "macros.html" import field, form_token, maybe_money with context %}
 
 {% block content %}
 <h1>Record a sale</h1>
@@ -14,12 +14,20 @@
   <dl>
     <div><dt>Product</dt><dd>{{ product.name }}, id {{ product.id }}</dd></div>
     <div><dt>Available</dt><dd class="num">{{ product.quantity_available }}</dd></div>
-    <div><dt>Listed price</dt><dd class="num">{{ product.listed_price_cents|money }}</dd></div>
-    <div><dt>Partner cut per unit</dt><dd class="num">{{ partner_cut|money }}</dd></div>
+    <div><dt>Listed price</dt><dd class="num">{{ maybe_money(product.listed_price_cents) }}</dd></div>
+    <div><dt>Partner cut per unit</dt><dd class="num">{{ maybe_money(partner_cut, "Unknown") }}</dd></div>
   </dl>
 </section>
 
-{% if product.quantity_available > 0 %}
+{% if partner_cut is none and product.quantity_available > 0 %}
+
+{#- create_sale refuses it too; this says so before anything is typed. -#}
+<p class="form-error" role="alert">This item has no retail price yet, so the
+  partner payout is unknown. Enter the retail price or a fixed payout with
+  <a href="{{ url_for('edit_product_page', product_id=product.id) }}">Edit</a>
+  before selling it.</p>
+
+{% elif product.quantity_available > 0 %}
 
 {% if errors %}
 <p class="form-error" role="alert">The sale was not recorded. Fix the fields marked below.</p>
@@ -30,7 +38,7 @@
 <form class="product-form" action="{{ url_for('sell_product_submit', product_id=product.id) }}" method="post">
   {{ form_token() }}
   {{ field("quantity", "Quantity sold", inputmode="numeric", required=true) }}
-  {{ field("sale_price", "Sale price per unit ($)", hint="Listed at " ~ product.listed_price_cents|money ~ ".", inputmode="decimal", required=true) }}
+  {{ field("sale_price", "Sale price per unit ($)", hint=("Listed at " ~ product.listed_price_cents|money ~ "." if product.listed_price_cents is not none else ""), inputmode="decimal", required=true) }}
   {{ field("date", "Date", hint="Today unless you change it.", type="date") }}
 
   <div class="actions">

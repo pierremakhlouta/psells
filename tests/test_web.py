@@ -999,7 +999,8 @@ def test_a_refused_form_keeps_everything_typed(client, db):
     form = forms(response.text)[-1]
 
     assert response.status_code == 422
-    assert form_data(form) == {**typed, "partner_share_percent": ""}
+    assert form_data(form) == {**typed, "partner_share_percent": "",
+                               "marketplace_price": "", "details": ""}
     assert "checked" in field(form, "retail_discontinued")
     assert field(form, "partner_share_mode")["value"] == "custom_amount"
     assert field(form, "listed_price")["aria-invalid"] == "true"
@@ -1090,7 +1091,8 @@ def test_every_row_links_to_its_edit_page(client, db):
 def test_the_edit_form_opens_filled_with_the_product(client, db):
     add_product(db, 1, quantity_received=10, notes="boxed",
                 partner_share_mode="custom_percent",
-                partner_share_percent=33.333333)
+                partner_share_percent=33.333333,
+                marketplace_price_cents=7550, details="With its box")
 
     data = form_data(edit_form(client))
 
@@ -1099,7 +1101,8 @@ def test_the_edit_form_opens_filled_with_the_product(client, db):
         "quantity_received": "10", "retail_price": "100.00",
         "listed_price": "90.00", "partner_share_mode": "custom_percent",
         "partner_share_percent": "33.333333", "partner_share_amount": "",
-        "notes": "boxed",
+        "notes": "boxed", "marketplace_price": "75.50",
+        "details": "With its box",
     }
 
 
@@ -1110,11 +1113,18 @@ def test_the_edit_form_opens_filled_with_the_product(client, db):
     {"retail_discontinued": 1, "retail_price_cents": 0,
      "partner_share_mode": "custom_amount", "partner_share_amount_cents": 700},
     {"notes": ""},
+    # An item not researched yet, and one researched but not listed.
+    {"retail_price_cents": None, "listed_price_cents": None, "condition": None},
+    {"listed_price_cents": None, "marketplace_price_cents": 6550,
+     "details": "With box"},
+    # A category hidden since: the edit keeps it.
+    {"category": "Bags"},
 ])
 def test_saving_the_form_untouched_changes_nothing(client, db, overrides):
     """What the form shows must read back as exactly what is stored,
     including a percentage no short form would survive."""
     add_product(db, 1, quantity_received=10, **overrides)
+    db.execute("UPDATE categories SET hidden = true WHERE name = 'Bags'")
     before = stored(db)
 
     response = submit_edit_form(client)
@@ -2198,4 +2208,59 @@ def test_a_list_or_platform_not_in_settings_is_not_found(client, db):
     assert client.post("/settings/products/add", data={"name": "x"}).status_code == 422
     assert client.post("/settings/templates/tiktok", data={"body": "x"}).status_code == 422
     assert psells.categories(db, include_hidden=True) == before
+
+
+# An item that arrives before it is researched -----------------------------------
+
+LIGHT = {"retail_price_cents": None, "listed_price_cents": None,
+         "condition": None}
+
+
+def test_the_add_form_chooses_category_and_condition_from_the_lists(client, db):
+    db.execute("UPDATE categories SET hidden = true WHERE name = 'Bags'")
+    form = add_form(client)
+
+    category, condition = field(form, "category"), field(form, "condition")
+    assert category["options"] == ["", *psells.categories(db)]
+    assert "Bags" not in category["options"]
+    assert condition["options"] == ["", *psells.conditions(db)]
+    # Nothing chosen until someone chooses.
+    assert category["value"] == condition["value"] == ""
+
+
+def test_an_item_is_added_with_only_category_name_and_quantity(client, db):
+    response = submit_add_form(client, category="Shoes", name="Boots",
+                               quantity_received="2")
+
+    assert response.status_code == 303
+    row = db.execute("SELECT * FROM products_view").fetchone()
+    assert (row["name"], row["condition"], row["retail_price_cents"],
+            row["listed_price_cents"]) == ("Boots", None, None, None)
+
+
+def test_an_unresearched_item_reads_not_yet_on_every_page(client, db):
+    add_product(db, 1, quantity_received=2, **LIGHT)
+
+    (row,) = table_rows(client.get("/").text)
+    assert row[CONDITION] == "Not yet"
+    assert row[LISTED] == "Not yet"
+    assert row[PARTNER_CUT] == "Unknown"
+    assert row[RETAIL] == "Not yet"
+
+    add_product(db, 2, quantity_received=1, **LIGHT)
+    add_return(db, 1, item_id=2, quantity=1)
+    page = client.get("/out-of-stock")
+    assert page.status_code == 200
+    assert "Not yet" in page.text and "Unknown" in page.text
+
+
+def test_an_item_with_an_unknown_payout_offers_no_sale_form(client, db):
+    add_product(db, 1, quantity_received=2, **LIGHT)
+
+    page = client.get("/products/1/sell")
+
+    assert page.status_code == 200
+    assert ("has no retail price yet, so the partner payout is unknown"
+            in " ".join(page.text.split()))
+    assert [form for form in forms(page.text) if form["method"] == "post"] == []
 

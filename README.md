@@ -149,7 +149,9 @@ and a test fails if `seed.sql` is edited by hand.
   **Edit** and **Delete** to correct one entered wrongly. A sale keeps its
   frozen figures, and every correction is kept, as the record was, in the
   `corrections` log.
-- **Add product**, **Record payment**, and **Sell**, **Return** and **Edit**
+- **Add product** (only the category, name and quantity at first; the
+  research and the listed price can follow with **Edit**), **Record
+  payment**, and **Sell**, **Return** and **Edit**
   from each product's row.
 - **Analytics**: headline figures, revenue and profit by month, categories
   and products, as charts drawn on the server, since no page runs a script.

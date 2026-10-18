@@ -403,7 +403,9 @@ def ask_date(prompt):
 
 
 def ask_edit_text(prompt, current):
-    value = input(f"{prompt} [{current}]: ").strip()
+    # None is a value not entered yet, shown as nothing and kept on Enter.
+    shown = "" if current is None else current
+    value = input(f"{prompt} [{shown}]: ").strip()
 
     if value == "":
         return current
@@ -446,7 +448,9 @@ def ask_edit_number(
 
 def ask_edit_money(prompt, current_cents, min_cents=None, max_cents=None):
     while True:
-        text = input(f"{prompt} [{format_cents(current_cents)}]: ").strip()
+        shown = "not yet" if current_cents is None else format_cents(
+            current_cents)
+        text = input(f"{prompt} [{shown}]: ").strip()
 
         if text == "":
             return current_cents
@@ -704,6 +708,13 @@ def product_stage(product, has_photo):
     return "Received"
 
 
+def unknown_payout_problem(product):
+    """Why a product whose partner payout is unknown cannot be sold."""
+    return (f"{product['name']} has no retail price yet, so its partner "
+            "payout is unknown. Enter the retail price or a fixed payout "
+            "before selling it.")
+
+
 def create_sale(connection, product_id, quantity, sale_price_cents, sale_date):
     """Record one sale and return the partner cut that was frozen onto it.
 
@@ -755,13 +766,9 @@ def create_sale(connection, product_id, quantity, sale_price_cents, sale_date):
     partner_cut = partner_share_for(product)
 
     # A payout is never guessed: the partner is owed what the rule gives, and
-    # a cut frozen as 0 would short him for good.
+    # a cut frozen as 0 would short them for good.
     if partner_cut is None:
-        raise SaleError(
-            f"{product['name']} has no retail price yet, so its partner payout "
-            f"is unknown. Enter the retail price or a fixed payout before "
-            f"selling it."
-        )
+        raise SaleError(unknown_payout_problem(product))
 
     # One insert. The product is not touched at all: units sold is derived from
     # this table, so there is no second value that could fall out of step.
@@ -1080,6 +1087,18 @@ def conditions(connection, include_hidden=False):
     ).fetchall()]
 
 
+def form_choices(connection, current=None):
+    """What a product form's two lists offer: the values shown, and the
+    product's own when it has a hidden one, so an edit keeps it. current is
+    the product as stored, for an edit."""
+    offered = {"category": categories(connection),
+               "condition": conditions(connection)}
+    for field, values in offered.items():
+        if current is not None and current[field] and current[field] not in values:
+            values.append(current[field])
+    return offered
+
+
 def _listed_problems(connection, category, condition, current=None):
     """A category or condition not on its list, as {field: sentence}.
 
@@ -1263,11 +1282,10 @@ def _every_product_problem(category, name, quantity_received,
         partner_share_mode, partner_share_percent, partner_share_amount_cents,
     )
 
+    # The condition, the retail price and the listed price are not here: an
+    # item arrives before it is researched, and is listed later still.
     needed = [("category", category), ("name", name),
               ("quantity_received", quantity_received),
-              ("retail_price", retail_price_cents),
-              ("listed_price", listed_price_cents),
-              ("condition", condition),
               ("partner_share_mode", partner_share_mode)]
 
     if partner_share_mode == "custom_percent":
@@ -1282,10 +1300,32 @@ def _every_product_problem(category, name, quantity_received,
 
     return problems
 
+# What update_product's research arguments default to: keep the stored value.
+# The terminal application does not ask for them yet, and an edit made there
+# must not empty what was researched on the pages.
+_KEEP = object()
+
+
+def _optional_text(text):
+    """Text stripped, or None when there is none: an empty condition is one
+    not chosen yet, which the list's foreign key would refuse as ""."""
+    text = (text or "").strip()
+    return text or None
+
+
+def _marketplace_problem(marketplace_price_cents):
+    if marketplace_price_cents is not None and not (
+            _is_whole_number(marketplace_price_cents)
+            and marketplace_price_cents >= 0):
+        return {"marketplace_price": "Marketplace price cannot be negative."}
+    return {}
+
+
 def create_product(connection, category, name, quantity_received,
                    retail_discontinued, retail_price_cents, listed_price_cents,
                    condition, notes, partner_share_mode, partner_share_percent,
-                   partner_share_amount_cents):
+                   partner_share_amount_cents, marketplace_price_cents=None,
+                   details=""):
     """Store one new product and return the id the database gave it.
 
     The whole of adding a product with none of the asking. add is the same
@@ -1300,6 +1340,7 @@ def create_product(connection, category, name, quantity_received,
     """
     problems = {
         **_listed_problems(connection, category, condition),
+        **_marketplace_problem(marketplace_price_cents),
         **_every_product_problem(
             category, name, quantity_received, retail_discontinued,
             retail_price_cents, listed_price_cents, condition,
@@ -1320,16 +1361,17 @@ def create_product(connection, category, name, quantity_received,
             "(category, name, quantity_received, retail_price_cents, "
             "listed_price_cents, retail_discontinued, partner_share_mode, "
             "partner_share_percent, partner_share_amount_cents, "
-            "condition, notes, listed_on) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
+            "condition, notes, marketplace_price_cents, details, listed_on) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
             "CASE WHEN %s::integer IS NULL THEN NULL ELSE CURRENT_DATE END) "
             "RETURNING id",
             (category.strip(), name.strip(), quantity_received,
              retail_price_cents, listed_price_cents,
              1 if retail_discontinued else 0,
              partner_share_mode, partner_share_percent,
-             partner_share_amount_cents, condition.strip(),
-             (notes or "").strip(), listed_price_cents)
+             partner_share_amount_cents, _optional_text(condition),
+             (notes or "").strip(), marketplace_price_cents,
+             (details or "").strip(), listed_price_cents)
         ).fetchone()["id"]
 
 
@@ -1363,7 +1405,8 @@ def _intake_floor_problem(connection, product_id, quantity_received):
 def update_product(connection, product_id, category, name, quantity_received,
                    retail_discontinued, retail_price_cents, listed_price_cents,
                    condition, notes, partner_share_mode, partner_share_percent,
-                   partner_share_amount_cents):
+                   partner_share_amount_cents, marketplace_price_cents=_KEEP,
+                   details=_KEEP):
     """Replace every field of one product with the values given.
 
     The whole of editing a product with none of the asking. edit is the same
@@ -1385,11 +1428,18 @@ def update_product(connection, product_id, category, name, quantity_received,
     create_sale raises for one, because it is the same fact about the world.
     """
     current = connection.execute(
-        "SELECT category, condition FROM products WHERE id = %s", (product_id,)
+        "SELECT category, condition, marketplace_price_cents, details "
+        "FROM products WHERE id = %s", (product_id,)
     ).fetchone()
+    if current is not None:
+        if marketplace_price_cents is _KEEP:
+            marketplace_price_cents = current["marketplace_price_cents"]
+        if details is _KEEP:
+            details = current["details"]
     problems = {
         **_intake_floor_problem(connection, product_id, quantity_received),
         **_listed_problems(connection, category, condition, current),
+        **_marketplace_problem(marketplace_price_cents),
         **_every_product_problem(
             category, name, quantity_received, retail_discontinued,
             retail_price_cents, listed_price_cents, condition,
@@ -1409,6 +1459,7 @@ def update_product(connection, product_id, category, name, quantity_received,
             "retail_discontinued = %s, partner_share_mode = %s, "
             "partner_share_percent = %s, partner_share_amount_cents = %s, "
             "condition = %s, notes = %s, "
+            "marketplace_price_cents = %s, details = %s, "
             # Dated when an unlisted product gets its first listed price; a
             # product listed before the workflow keeps its unknown date. The
             # right side of SET reads the row as it was.
@@ -1420,8 +1471,9 @@ def update_product(connection, product_id, category, name, quantity_received,
              retail_price_cents, listed_price_cents,
              1 if retail_discontinued else 0,
              partner_share_mode, partner_share_percent,
-             partner_share_amount_cents, condition.strip(),
-             (notes or "").strip(), listed_price_cents, product_id)
+             partner_share_amount_cents, _optional_text(condition),
+             (notes or "").strip(), marketplace_price_cents,
+             (details or "").strip(), listed_price_cents, product_id)
         )
 
 # The fields a product form sends, by the names it sends them under. Every value
@@ -1430,6 +1482,7 @@ PRODUCT_FORM_FIELDS = (
     "category", "name", "quantity_received", "retail_discontinued",
     "retail_price", "listed_price", "condition", "notes",
     "partner_share_mode", "partner_share_percent", "partner_share_amount",
+    "marketplace_price", "details",
 )
 
 MONEY_TEXT_PROBLEM = "Please enter an amount in dollars, for example 12.50."
@@ -1451,9 +1504,10 @@ def read_product_text(fields):
     text = {key: (fields.get(key) or "").strip() for key in PRODUCT_FORM_FIELDS}
     problems = {}
 
-    def money(key):
+    def money(key, required=True):
         if not text[key]:
-            problems[key] = "This field is required."
+            if required:
+                problems[key] = "This field is required."
             return None
 
         try:
@@ -1479,7 +1533,10 @@ def read_product_text(fields):
         problems["retail_discontinued"] = "Discontinued is either ticked or not."
 
     retail_discontinued = text["retail_discontinued"] == "yes"
-    retail_price_cents = 0 if retail_discontinued else money("retail_price")
+    # Blank until researched, as are the condition and the Marketplace price;
+    # blank until listed, the listed price.
+    retail_price_cents = (0 if retail_discontinued
+                          else money("retail_price", required=False))
 
     mode = text["partner_share_mode"] or None
     percent = None
@@ -1504,9 +1561,11 @@ def read_product_text(fields):
         "quantity_received": quantity_received,
         "retail_discontinued": retail_discontinued,
         "retail_price_cents": retail_price_cents,
-        "listed_price_cents": money("listed_price"),
-        "condition": text["condition"],
+        "listed_price_cents": money("listed_price", required=False),
+        "condition": text["condition"] or None,
         "notes": text["notes"],
+        "marketplace_price_cents": money("marketplace_price", required=False),
+        "details": text["details"],
         "partner_share_mode": mode,
         "partner_share_percent": percent,
         "partner_share_amount_cents": amount_cents,
@@ -1526,9 +1585,12 @@ def create_product_from_text(connection, fields):
 
     if problems:
         rule_values = {key: value for key, value in values.items()
-                       if key != "notes"}
-        raise ProductError({**_every_product_problem(**rule_values),
-                            **problems})
+                       if key not in ("notes", "details",
+                                      "marketplace_price_cents")}
+        raise ProductError({
+            **_every_product_problem(**rule_values),
+            **_marketplace_problem(values["marketplace_price_cents"]),
+            **problems})
 
     return create_product(connection, **values)
 
@@ -1547,17 +1609,21 @@ def product_form_text(product):
     amount = product["partner_share_amount_cents"]
     discontinued = bool(product["retail_discontinued"])
 
+    def money(cents):
+        return "" if cents is None else format_cents(cents, symbol=False)
+
     return {
         "category": product["category"],
         "name": product["name"],
         "quantity_received": str(product["quantity_received"]),
         "retail_discontinued": "yes" if discontinued else "",
-        "retail_price": "" if discontinued else format_cents(
-            product["retail_price_cents"], symbol=False),
-        "listed_price": format_cents(product["listed_price_cents"],
-                                     symbol=False),
-        "condition": product["condition"],
+        "retail_price": "" if discontinued else money(
+            product["retail_price_cents"]),
+        "listed_price": money(product["listed_price_cents"]),
+        "condition": product["condition"] or "",
         "notes": product["notes"],
+        "marketplace_price": money(product["marketplace_price_cents"]),
+        "details": product["details"],
         "partner_share_mode": product["partner_share_mode"],
         "partner_share_percent": "" if percent is None else str(percent),
         "partner_share_amount": "" if amount is None else format_cents(
@@ -1576,11 +1642,13 @@ def update_product_from_text(connection, product_id, fields):
 
     if problems:
         rule_values = {key: value for key, value in values.items()
-                       if key != "notes"}
+                       if key not in ("notes", "details",
+                                      "marketplace_price_cents")}
         raise ProductError({
             **_intake_floor_problem(connection, product_id,
                                     values["quantity_received"]),
             **_every_product_problem(**rule_values),
+            **_marketplace_problem(values["marketplace_price_cents"]),
             **problems,
         })
 
@@ -2090,6 +2158,11 @@ def view_dashboard(connection):
     print(f"Balance owing: {format_cents(totals['balance_owing'])}")
 
 
+def maybe_cents(cents, blank="Not yet"):
+    """format_cents for an amount that may not be entered yet."""
+    return blank if cents is None else format_cents(cents)
+
+
 def print_product(product, reason=None):
     """One product's block. reason is out_of_stock_reason's, for the
     out-of-stock list only."""
@@ -2101,10 +2174,10 @@ def print_product(product, reason=None):
     print(f"Available: {product['quantity_available']}")
     if reason is not None:
         print(f"Reason: {reason}")
-    print(f"Listed Price: {format_cents(product['listed_price_cents'])}")
-    print(f"Partner Cut: {format_cents(partner_cut)}")
+    print(f"Listed Price: {maybe_cents(product['listed_price_cents'])}")
+    print(f"Partner Cut: {maybe_cents(partner_cut, 'Unknown')}")
     print(f"Discontinued: {'Yes' if product['retail_discontinued'] else 'No'}")
-    print(f"Condition: {product['condition']}")
+    print(f"Condition: {product['condition'] or 'Not yet'}")
     print()
 def view_inventory(connection):
     """The products in stock, as the inventory page lists them. Those with
@@ -2352,11 +2425,15 @@ def add(connection):
 
     mode, percent, amount_cents = ask_partner_share(retail_discontinued)
 
-    create_product(
-        connection, category, name, quantity_received, retail_discontinued,
-        retail_price_cents, listed_price_cents, condition, notes,
-        mode, percent, amount_cents,
-    )
+    try:
+        create_product(
+            connection, category, name, quantity_received, retail_discontinued,
+            retail_price_cents, listed_price_cents, condition, notes,
+            mode, percent, amount_cents,
+        )
+    except ProductError as refused:
+        print(f"Not added. {refused}")
+        return
 
     print("Product added successfully.")
 
@@ -2458,11 +2535,15 @@ def edit(connection):
         if change == "yes":
             mode, percent, amount_cents = ask_partner_share(retail_discontinued)
 
-    update_product(
-        connection, product["id"], category, name, quantity_received,
-        retail_discontinued, retail_price_cents, listed_price_cents,
-        condition, notes, mode, percent, amount_cents,
-    )
+    try:
+        update_product(
+            connection, product["id"], category, name, quantity_received,
+            retail_discontinued, retail_price_cents, listed_price_cents,
+            condition, notes, mode, percent, amount_cents,
+        )
+    except ProductError as refused:
+        print(f"Not saved. {refused}")
+        return
 
     print("Product updated successfully.")
 
@@ -2530,6 +2611,11 @@ def record_sale(connection):
 
     if available <= 0:
         print("No stock available to sell.")
+        return
+
+    # Said before the questions, not after them; create_sale refuses it too.
+    if partner_share_for(product) is None:
+        print(unknown_payout_problem(product))
         return
 
     quantity = ask_int(

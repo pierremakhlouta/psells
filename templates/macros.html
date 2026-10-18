@@ -17,6 +17,29 @@
 </div>
 {% endmacro %}
 
+{#- An amount that may not be known yet: an item is researched and listed
+    after it arrives. blank is what the cell says until then. -#}
+{% macro maybe_money(cents, blank="Not yet") -%}
+{% if cents is none %}{{ blank }}{% else %}{{ cents|money }}{% endif %}
+{%- endmacro %}
+
+{#- One choice from a list: the values offered, after an empty first option
+    that reads blank, so nothing is chosen until someone chooses. -#}
+{% macro choice(key, label, options, blank, required=false) %}
+<div class="field{% if errors[key] %} has-error{% endif %}">
+  <label for="{{ key }}">{{ label }}</label>
+  <select id="{{ key }}" name="{{ key }}"
+          {%- if required %} required{% endif %}
+          {%- if errors[key] %} aria-invalid="true" aria-describedby="{{ key }}-error"{% endif %}>
+    <option value="">{{ blank }}</option>
+    {% for option in options %}
+    <option value="{{ option }}"{% if values[key] == option %} selected{% endif %}>{{ option }}</option>
+    {% endfor %}
+  </select>
+  {% if errors[key] %}<p class="error" id="{{ key }}-error">{{ errors[key] }}</p>{% endif %}
+</div>
+{% endmacro %}
+
 {#- The session's form token, as a hidden field. Every form that posts, behind
     the login, carries it, and tests/test_forms.py fails on one that does not.
     The value comes from the session the page was served for, which

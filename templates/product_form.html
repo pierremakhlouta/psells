@@ -2,7 +2,7 @@
 
 {% block title %}{% if product %}Edit {{ product.name }}{% else %}Add a product{% endif %} · PSells{% endblock %}
 
-{% from "macros.html" import field, form_token with context %}
+{% from "macros.html" import choice, field, form_token with context %}
 
 {% block content %}
 {% if product %}
@@ -12,6 +12,9 @@
   Changing the partner share affects later sales only.</p>
 {% else %}
 <h1>Add a product</h1>
+<p class="lead">Only the category, name and quantity are needed when an item
+  arrives. The rest can be filled in later, with Edit, as it is researched and
+  listed.</p>
 {% endif %}
 
 {% if errors %}
@@ -30,10 +33,10 @@
     parse_money. required is a convenience only; the server checks everything. -#}
 <form class="product-form" action="{{ action }}" method="post">
   {{ form_token() }}
-  {{ field("category", "Category", required=true) }}
+  {{ choice("category", "Category", choices.category, "Choose a category", required=true) }}
   {{ field("name", "Name", required=true) }}
-  {{ field("condition", "Condition", required=true) }}
   {{ field("quantity_received", "Quantity received", inputmode="numeric", required=true) }}
+  {{ choice("condition", "Condition", choices.condition, "Not chosen yet") }}
 
   <div class="field check wide{% if errors.retail_discontinued %} has-error{% endif %}">
     <input type="checkbox" id="retail_discontinued" name="retail_discontinued" value="yes"
@@ -42,8 +45,8 @@
     {% if errors.retail_discontinued %}<p class="error">{{ errors.retail_discontinued }}</p>{% endif %}
   </div>
 
-  {{ field("retail_price", "Retail price ($)", hint="Leave blank if discontinued at retail.", inputmode="decimal") }}
-  {{ field("listed_price", "Listed price ($)", inputmode="decimal", required=true) }}
+  {{ field("retail_price", "Retail price ($)", hint="Blank until researched, and if discontinued at retail.", inputmode="decimal") }}
+  {{ field("marketplace_price", "Marketplace price ($)", hint="What it sells for on Facebook Marketplace, on average.", inputmode="decimal") }}
 
   <div class="field{% if errors.partner_share_mode %} has-error{% endif %}">
     <label for="partner_share_mode">Partner share</label>
@@ -60,7 +63,9 @@
 
   {{ field("partner_share_percent", "Partner percentage (%)", hint="Only for a custom percentage.", inputmode="decimal") }}
   {{ field("partner_share_amount", "Partner amount per unit ($)", hint="Only for a fixed amount.", inputmode="decimal") }}
-  {{ field("notes", "Notes", wide=true) }}
+  {{ field("listed_price", "Listed price ($)", hint="Blank until it is listed.", inputmode="decimal") }}
+  {{ field("details", "Details for the listing", hint="What a listing says beyond the template: accessories, marks, sizes.", wide=true) }}
+  {{ field("notes", "Notes", hint="For yourselves; never in a listing.", wide=true) }}
 
   <div class="actions">
     <button type="submit">{% if product %}Save changes{% else %}Add product{% endif %}</button>

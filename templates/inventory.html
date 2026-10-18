@@ -2,6 +2,8 @@
 
 {% block title %}Inventory · PSells{% endblock %}
 
+{% from "macros.html" import maybe_money %}
+
 {% block content %}
 <h1>Inventory</h1>
 <p class="lead">Products with at least one unit available. Those with none are under <a href="{{ url_for('out_of_stock_page') }}">Out of stock</a>.</p>
@@ -60,9 +62,9 @@
 
 {#- Every figure arrives worked out. This file formats and never computes: the
     partner cut comes from partner_share_for in web.py, and the money filter is
-    psells.format_cents. Neither money column can be None, which matters
-    because the filter would fail on one. listed_price_cents is NOT NULL in the
-    schema, and partner_share_for always returns a whole number of cents. -#}
+    psells.format_cents. A price not entered yet, and a cut that cannot be
+    worked out without it, are None, which the filter would fail on, so they
+    go through maybe_money. -#}
 <table>
   <thead>
     <tr>
@@ -83,11 +85,11 @@
       <td class="num">{{ product.id }}</td>
       <td>{{ product.name }}</td>
       <td>{{ product.category }}</td>
-      <td>{{ product.condition }}</td>
+      <td>{{ product.condition or "Not yet" }}</td>
       <td class="num">{{ product.quantity_available }}</td>
-      <td class="num">{{ product.listed_price_cents|money }}</td>
-      <td class="num">{{ partner_cut|money }}</td>
-      <td class="num">{% if product.retail_discontinued %}Discontinued{% else %}{{ product.retail_price_cents|money }}{% endif %}</td>
+      <td class="num">{{ maybe_money(product.listed_price_cents) }}</td>
+      <td class="num">{{ maybe_money(partner_cut, "Unknown") }}</td>
+      <td class="num">{% if product.retail_discontinued %}Discontinued{% else %}{{ maybe_money(product.retail_price_cents) }}{% endif %}</td>
       <td class="row-actions">
         {%- if product.quantity_available > 0 %}<a href="{{ url_for('sell_product_page', product_id=product.id) }}">Sell</a>
         <a href="{{ url_for('return_product_page', product_id=product.id) }}">Return</a> {% endif -%}

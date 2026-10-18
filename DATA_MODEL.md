@@ -462,6 +462,13 @@ condition, retail price (or retail-discontinued), Marketplace price and
 partner payout are all known. A sale is refused while the payout is unknown,
 which happens when a percentage share has no retail price to apply to.
 
+An item is added with its category, name and quantity alone; the condition,
+retail price, Marketplace price, listed price and details are filled in as it
+is researched and listed. Until then each is NULL (details empty), and every
+page, the terminal application and the API show it as not yet known rather
+than as zero. A form chooses the category and condition from the lists, and
+an edit keeps a hidden value the product already has.
+
 | Table | One row represents | Notes |
 |---|---|---|
 | `categories` | a category to choose from | `name` primary key, trimmed and non-blank; `hidden` keeps it off the list for new items |
@@ -496,7 +503,8 @@ Every figure comes from psells' own readers: a sale's total, cut and profit
 are the ones `sales_history` works out from the sale's frozen columns, and a
 product's quantities are the ones `products_view` gives. Money is whole cents.
 A product discontinued at retail has a NULL retail price here, where the
-business database stores 0, and a `CHECK` keeps the two in step. Notes are not
+business database stores 0, and a `CHECK` holds that; an item not yet
+researched has NULL there too, and may have no condition or listed price. Notes are not
 copied. A run commits only if the warehouse adds up to all nine dashboard
 figures.
 

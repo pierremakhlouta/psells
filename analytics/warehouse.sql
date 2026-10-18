@@ -18,15 +18,16 @@ DROP TABLE IF EXISTS fact_sales, fact_returns, fact_payments, dim_product,
 -- One row per product, as psells' products_view has it, with the stock
 -- psells works out, and whether psells counts it in stock. retail_price_cents is NULL for a product discontinued at
 -- retail, which the business database stores as 0: here it means "no retail
--- price", so averages and comparisons leave it out.
+-- price", so averages and comparisons leave it out. It, the condition and
+-- the listed price are also NULL for an item not yet researched or listed.
 CREATE TABLE dim_product (
     product_id                 integer PRIMARY KEY,
     category                   text    NOT NULL,
     name                       text    NOT NULL,
-    condition                  text    NOT NULL,
+    condition                  text,
     retail_discontinued        boolean NOT NULL,
     retail_price_cents         integer,
-    listed_price_cents         integer NOT NULL,
+    listed_price_cents         integer,
     partner_share_mode         text    NOT NULL,
     partner_share_percent      double precision,
     partner_share_amount_cents integer,
@@ -35,7 +36,7 @@ CREATE TABLE dim_product (
     quantity_returned          integer NOT NULL,
     quantity_available         integer NOT NULL,
     in_stock                   boolean NOT NULL,
-    CHECK ((retail_price_cents IS NULL) = retail_discontinued)
+    CHECK (NOT retail_discontinued OR retail_price_cents IS NULL)
 );
 
 -- Every day from the first event to the last, with what a report groups by.

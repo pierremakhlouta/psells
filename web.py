@@ -323,12 +323,15 @@ class ProductForm(BaseModel):
     partner_share_mode: str = ""
     partner_share_percent: str = ""
     partner_share_amount: str = ""
+    marketplace_price: str = ""
+    details: str = ""
 
 
 BLANK_PRODUCT = ProductForm(partner_share_mode="default").model_dump()
 
 
-def product_form(request, values, problems, status_code=200, product=None):
+def product_form(request, connection, values, problems, status_code=200,
+                 product=None):
     """The product form, for adding or for editing one product.
 
     Empty, filled from the stored product, or as it was typed, with a sentence
@@ -345,7 +348,8 @@ def product_form(request, values, problems, status_code=200, product=None):
         request,
         "product_form.html",
         {"values": values, "errors": problems, "product": product,
-         "action": action},
+         "action": action,
+         "choices": psells.form_choices(connection, product)},
         status_code=status_code,
     )
 
@@ -358,8 +362,8 @@ def not_found(request, product_id):
 
 
 @router.get("/products/new", response_class=HTMLResponse)
-def add_product_page(request: Request):
-    return product_form(request, BLANK_PRODUCT, {})
+def add_product_page(request: Request, connection: Connection):
+    return product_form(request, connection, BLANK_PRODUCT, {})
 
 
 @router.post("/products/new", response_class=HTMLResponse)
@@ -379,7 +383,8 @@ def add_product_submit(request: Request, connection: Connection,
     try:
         product_id = psells.create_product_from_text(connection, fields)
     except psells.ProductError as refused:
-        return product_form(request, fields, refused.problems, status_code=422)
+        return product_form(request, connection, fields, refused.problems,
+                            status_code=422)
 
     return RedirectResponse(
         request.url_for("inventory_page").include_query_params(added=product_id),
@@ -412,8 +417,8 @@ def edit_product_page(request: Request, connection: Connection,
     if product is None:
         return not_found(request, product_id)
 
-    return product_form(request, psells.product_form_text(product), {},
-                        product=product)
+    return product_form(request, connection, psells.product_form_text(product),
+                        {}, product=product)
 
 
 @router.post("/products/{product_id:int}/edit", response_class=HTMLResponse)
@@ -438,7 +443,7 @@ def edit_product_submit(request: Request, connection: Connection,
     try:
         psells.update_product_from_text(connection, product_id, fields)
     except psells.ProductError as refused:
-        return product_form(request, fields, refused.problems,
+        return product_form(request, connection, fields, refused.problems,
                             status_code=422, product=product)
 
     return RedirectResponse(

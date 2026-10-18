@@ -111,6 +111,18 @@ def test_a_discontinued_products_retail_price_is_none_not_zero(records):
     assert psells.all_products(records)[1]["retail_price_cents"] == 0
 
 
+def test_an_unresearched_product_reaches_the_warehouse_with_its_blanks(records):
+    add_product(records, 4, 1, retail_price_cents=None, listed_price_cents=None,
+                condition=None)
+
+    built(records)
+
+    (row,) = rows(records, "SELECT condition, retail_price_cents, "
+                  "listed_price_cents FROM dim_product WHERE product_id = 4")
+    assert (row["condition"], row["retail_price_cents"],
+            row["listed_price_cents"]) == (None, None, None)
+
+
 def test_share_settings_keep_missing_as_missing(records):
     built(records)
     products = {row["product_id"]: row
