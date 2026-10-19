@@ -24,8 +24,18 @@ are written out by hand first, so every case the pages can show is present
 whatever the random draw: the three partner-share modes, a product
 discontinued at retail, glasses for a search to find, and one product out of
 stock for each reason.
+
+Then seven items at every stage of the workflow, after all of those so
+nothing above them changes: received, researched (one not worth listing),
+photographed, and listed (one on Instagram, one not selling). Their dates are
+written as days before the day the seed is loaded, so after every nightly
+reset of the demo they have waited the same number of days. The older
+products have no arrival or listing date, like the real ones from before the
+workflow. Their photos are plain invented pictures this script writes into
+sample_data/photos, checked like seed.sql.
 """
 
+import io
 import os
 import random
 import sys
@@ -153,6 +163,48 @@ def hand_written():
     return products, events
 
 
+class DaysAgo:
+    """A date written as so many days before the day the seed is loaded, so
+    the workflow's items wait the same number of days after every nightly
+    reset of the demo, rather than ageing past every limit."""
+
+    def __init__(self, days):
+        self.days = days
+
+
+def workflow_items():
+    """One or more invented items at every stage of the workflow, with the
+    dates and photos that put them there, added after every other product so
+    nothing above them changes: (product, arrived days ago, listed days ago
+    or None, photo count)."""
+    def item(category, name, received, retail, listed, condition, marketplace,
+             details="", on_instagram=False, mode="default", amount=None):
+        made = product(category, name, received, retail, listed, mode=mode,
+                       amount=amount, condition=condition)
+        made.update({"marketplace_price_cents": marketplace, "details": details,
+                     "on_instagram": on_instagram})
+        return made
+
+    return [
+        # Received: nothing known yet but what it is and how many.
+        (item("Cups", "Insulated Camp Mug Olive", 3, None, None, None, None), 2, None, 0),
+        (item("Hats", "Corduroy Bucket Hat Rust", 1, None, None, None, None), 6, None, 0),
+        # Researched, and one of them not worth listing: a $40.00 retail price
+        # pays the partner $12.00, leaving $13.00 at a $25.00 Marketplace price.
+        (item("Wallets", "Slim Card Holder Tan", 2, 4500, None, "Brand new", 3500), 9, None, 0),
+        (item("Cups", "Enamel Camp Mug Speckled", 2, 4000, None, "Open box", 2500), 11, None, 0),
+        # Photographed.
+        (item("Bags", "Waxed Crossbody Bag Brown", 1, 12000, None, "Like new", 9000,
+              details="Adjustable strap"), 14, None, 2),
+        # Listed: one recently, and on Instagram too; one long enough to be
+        # flagged as not selling.
+        (item("Headphones", "Compact Earbuds White", 4, 9000, 6500, "Brand new", 7000,
+              details="Charging case and three tip sizes", on_instagram=True), 20, 5, 2),
+        (item("Jackets", "Fleece Vest Grey", 1, 7500, 5000, "Used", 5500,
+              details="Small mark on the hem"), 60, 45, 1),
+    ]
+
+
 def random_products(rng, count):
     products = []
     names = set()
@@ -250,7 +302,15 @@ def build():
                                  rng.choice(PAYMENT_NOTES)))
                 owed -= amount
         month = nxt
-    return products, sales, returns, payments
+    # The workflow's items last: no sales, so nothing above them moves.
+    photos = []
+    for item, arrived, listed_days, photo_count in workflow_items():
+        item["arrived_on"] = DaysAgo(arrived)
+        item["listed_on"] = None if listed_days is None else DaysAgo(listed_days)
+        products.append(item)
+        for _ in range(photo_count):
+            photos.append((len(products), f"sample-{len(photos) + 1}.jpg"))
+    return products, sales, returns, payments, photos
 
 
 def quote(text):
@@ -264,6 +324,8 @@ def sql(value):
         return quote(value)
     if isinstance(value, date):
         return quote(value.isoformat())
+    if isinstance(value, DaysAgo):
+        return f"CURRENT_DATE - {value.days}"
     return repr(value)
 
 
@@ -290,7 +352,15 @@ HEADER = """\
 """
 
 
-def render(products, sales, returns, payments):
+PRODUCT_COLUMNS = ("id", "category", "name", "quantity_received",
+                   "retail_price_cents", "listed_price_cents",
+                   "retail_discontinued", "partner_share_mode",
+                   "partner_share_percent", "partner_share_amount_cents",
+                   "condition", "notes", "marketplace_price_cents", "details",
+                   "on_instagram", "arrived_on", "listed_on")
+
+
+def render(products, sales, returns, payments, photos):
     lines = [HEADER, "BEGIN;", ""]
     for name in sorted({p["category"] for p in products}):
         lines.append(f"INSERT INTO categories (name) VALUES ({sql(name)}) "
@@ -303,14 +373,15 @@ def render(products, sales, returns, payments):
                      f"({sql(platform)}, {sql(body)}) "
                      "ON CONFLICT (platform) DO UPDATE SET body = EXCLUDED.body;")
     lines.append("")
+    # The columns named, so a product from before the workflow gets no
+    # arrival date rather than the column's default of the day it is loaded.
     for number, p in enumerate(products, start=1):
-        values = [number, p["category"], p["name"], p["quantity_received"],
-                  p["retail_price_cents"], p["listed_price_cents"],
-                  p["retail_discontinued"], p["partner_share_mode"],
-                  p["partner_share_percent"], p["partner_share_amount_cents"],
-                  p["condition"], p["notes"]]
-        lines.append("INSERT INTO products OVERRIDING SYSTEM VALUE VALUES ("
-                     + ", ".join(sql(v) for v in values) + ");")
+        row = {"id": number, "marketplace_price_cents": None, "details": "",
+               "on_instagram": False, "arrived_on": None, "listed_on": None, **p}
+        lines.append(f"INSERT INTO products ({', '.join(PRODUCT_COLUMNS)}) "
+                     "OVERRIDING SYSTEM VALUE VALUES ("
+                     + ", ".join(sql(row[column]) for column in PRODUCT_COLUMNS)
+                     + ");")
     lines.append("")
     for number, (day, index, quantity, price, cut) in enumerate(sales, start=1):
         lines.append("INSERT INTO sales OVERRIDING SYSTEM VALUE VALUES ("
@@ -326,20 +397,63 @@ def render(products, sales, returns, payments):
         lines.append("INSERT INTO payments OVERRIDING SYSTEM VALUE VALUES ("
                      + ", ".join(sql(v) for v in (number, day, amount, notes)) + ");")
     lines.append("")
-    for table in ("products", "sales", "returns", "payments"):
+    for number, (product_id, file_name) in enumerate(photos, start=1):
+        lines.append("INSERT INTO photos (id, product_id, file_name) "
+                     "OVERRIDING SYSTEM VALUE VALUES ("
+                     + ", ".join(sql(v) for v in (number, product_id, file_name))
+                     + ");")
+    lines.append("")
+    for table in ("products", "sales", "returns", "payments", "photos"):
         lines.append(f"SELECT setval(pg_get_serial_sequence('{table}', 'id'), "
                      f"(SELECT max(id) FROM {table}));")
     lines += ["", "COMMIT;", ""]
     return "\n".join(lines)
 
 
+PHOTO_DIR = os.path.join(HERE, "photos")
+PHOTO_COLOURS = [(70, 110, 160), (150, 90, 60), (90, 140, 90), (160, 140, 70),
+                 (120, 90, 150)]
+
+
+def placeholder(number):
+    """A plain invented picture for sample photo `number`: a coloured field
+    with a lighter panel, labelled, 800 by 600. Pillow writes the same bytes
+    for the same picture, so the file can be checked like seed.sql."""
+    from PIL import Image, ImageDraw
+
+    colour = PHOTO_COLOURS[(number - 1) % len(PHOTO_COLOURS)]
+    image = Image.new("RGB", (800, 600), colour)
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((200, 150, 600, 450), fill=tuple(min(255, c + 70) for c in colour))
+    draw.text((330, 290), f"Sample photo {number}", fill=(255, 255, 255))
+    out = io.BytesIO()
+    image.save(out, "JPEG", quality=80)
+    return out.getvalue()
+
+
 def main():
-    text = render(*build())
+    built = build()
+    text = render(*built)
+    photos = {name: placeholder(number)
+              for number, (_, name) in enumerate(built[4], start=1)}
     if "--check" in sys.argv:
         with open(SEED_FILE) as file:
-            sys.exit(0 if file.read() == text else 1)
+            same = file.read() == text
+        on_disk = sorted(os.listdir(PHOTO_DIR)) if os.path.isdir(PHOTO_DIR) else []
+        same = same and on_disk == sorted(photos)
+        for name, data in photos.items():
+            if same:
+                with open(os.path.join(PHOTO_DIR, name), "rb") as file:
+                    same = file.read() == data
+        sys.exit(0 if same else 1)
     with open(SEED_FILE, "w") as file:
         file.write(text)
+    os.makedirs(PHOTO_DIR, exist_ok=True)
+    for name in os.listdir(PHOTO_DIR):
+        os.remove(os.path.join(PHOTO_DIR, name))
+    for name, data in photos.items():
+        with open(os.path.join(PHOTO_DIR, name), "wb") as file:
+            file.write(data)
 
 
 if __name__ == "__main__":

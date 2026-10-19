@@ -12,8 +12,9 @@
 # a failure halfway leaves the demo as it was. The corrections go too: they
 # describe records that no longer exist, by ids the seed hands out again.
 # The login is kept. Then the photos visitors uploaded are deleted from the
-# photos volume, their rows having gone with the records, and the warehouse
-# is rebuilt, so the analytics page shows the same records.
+# photos volume, their rows having gone with the records, the seed's
+# placeholder photos are put back, and the warehouse is rebuilt, so the
+# analytics page shows the same records.
 #
 # Never where the real data is: it refuses to run beside data/config.json,
 # which exists only on the Mac.
@@ -65,6 +66,9 @@ main() {
     # Every file in the volume, never the folder, which the app writes into.
     compose exec -T app find /photos -mindepth 1 -delete ||
         fail "the uploaded photos could not be deleted"
+    # And the seed's placeholder photos back, the files its photo rows name.
+    tar -cf - -C sample_data/photos . | compose exec -T app tar -xf - -C /photos ||
+        fail "the sample photos could not be put back"
 
     compose run --rm --no-deps etl || fail "the analytics ETL did not complete"
 }

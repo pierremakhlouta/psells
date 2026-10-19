@@ -158,3 +158,43 @@ def test_the_next_row_of_each_kind_gets_the_id_after_the_seed(seeded):
             f"FROM {table}").fetchone()
 
         assert row["last"] == row["highest"], table
+
+
+# The workflow -------------------------------------------------------------------
+
+def test_every_stage_has_items_and_both_flags_show(seeded):
+    groups = psells.pipeline(seeded)
+    on = psells.today(seeded)
+    working = [p for stage in ("Received", "Researched", "Photographed", "Listed")
+               for p in groups[stage]]
+
+    assert all(groups[stage] for stage in psells.STAGES), psells.stage_counts(groups)
+    # One worth flagging each way, from the sample configuration's own figures.
+    assert [p["name"] for p in working
+            if psells.listing_figures(p)["not_worth_listing"]] == [
+        "Enamel Camp Mug Speckled"]
+    assert [p["name"] for p in working
+            if psells.waiting(p, on)["not_selling"]] == ["Fleece Vest Grey"]
+    # And one on Instagram, so both listing boxes show.
+    assert [p["name"] for p in groups["Listed"] if p["on_instagram"]] == [
+        "Compact Earbuds White"]
+
+
+def test_the_older_products_have_no_workflow_dates(seeded):
+    dated = [p for p in psells.all_products(seeded) if p["arrived_on"] is not None]
+
+    assert len(dated) == 7
+    assert all(p["id"] > 80 for p in dated)
+
+
+def test_every_photo_row_has_its_placeholder_file():
+    photo_dir = os.path.join(psells.PROJECT_DIR, "sample_data", "photos")
+    with open(SEED) as file:
+        named = re.findall(r"INSERT INTO photos .*?'([^']+\.jpg)'\);", file.read())
+
+    assert len(named) == 5
+    assert sorted(os.listdir(photo_dir)) == sorted(named)
+    from PIL import Image
+    for name in named:
+        with Image.open(os.path.join(photo_dir, name)) as image:
+            assert (image.format, image.size) == ("JPEG", (800, 600))

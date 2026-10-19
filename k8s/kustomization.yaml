@@ -41,6 +41,15 @@ configMapGenerator:
       - headers.conf=../nginx/snippets/headers.conf
       - icon.conf=../nginx/snippets/icon.conf
       - photos.conf=../nginx/snippets/photos.conf
+  # The seed's placeholder photos, copied into the app's photos folder by
+  # its init container.
+  - name: sample-photos
+    files:
+      - ../sample_data/photos/sample-1.jpg
+      - ../sample_data/photos/sample-2.jpg
+      - ../sample_data/photos/sample-3.jpg
+      - ../sample_data/photos/sample-4.jpg
+      - ../sample_data/photos/sample-5.jpg
   - name: nginx-static
     files:
       - apple-touch-icon.png=../static/apple-touch-icon.png

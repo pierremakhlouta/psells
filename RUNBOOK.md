@@ -337,6 +337,12 @@ PSELLS_NETWORK=10.213.48 PSELLS_CONFIG_FILE=./sample_data/config.json docker com
 docker compose -p psells-sample exec -T db sh -c 'psql -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" "$POSTGRES_DB"' < sample_data/seed.sql
 ```
 
+Then the placeholder photos the seed's photo rows name:
+
+```
+tar -cf - -C sample_data/photos . | docker compose -p psells-sample exec -T app tar -xf - -C /photos
+```
+
 ```
 docker compose -p psells-sample exec app python set_password.py
 ```

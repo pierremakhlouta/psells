@@ -435,7 +435,12 @@ def test_an_empty_database_gets_the_schema_then_the_sample_data():
 
     assert "live psql -q -v ON_ERROR_STOP=1 --single-transaction < schema.sql" in data
     assert data.index("schema.sql") < data.index("sample_data/seed.sql")
-    assert "compose exec" not in data
+    # The database through live, which may be RDS, never the db container.
+    assert "compose exec -T db" not in data
+    # And the photos the seed's rows name, into the app's photos volume.
+    assert ("tar -cf - -C sample_data/photos . | compose exec -T app tar -xf - "
+            "-C /photos") in data
+    assert data.index("sample_data/seed.sql") < data.index("sample_data/photos")
 
 
 def test_the_backup_dumps_the_live_database_and_proves_it_in_the_container():
@@ -627,16 +632,17 @@ def test_the_reset_puts_the_seed_back_and_keeps_the_login(db):
 
     counts = {table: db.execute(f"SELECT count(*) AS n FROM {table}").fetchone()["n"]
               for table in ("products", "sales", "returns", "payments",
-                            "corrections", "users")}
-    assert counts == {"products": 80, "sales": 240, "returns": 12,
-                      "payments": 11, "corrections": 0, "users": 1}
+                            "corrections", "users", "photos")}
+    assert counts == {"products": 87, "sales": 240, "returns": 12,
+                      "payments": 11, "corrections": 0, "users": 1,
+                      "photos": 5}
     assert db.execute("SELECT count(*) AS n FROM products WHERE category = 'Visitors'"
                       ).fetchone()["n"] == 0
     # And their category is gone with it.
     assert db.execute("SELECT count(*) AS n FROM categories WHERE name = 'Visitors'"
                       ).fetchone()["n"] == 0
     # The ids start again where the seed leaves them.
-    assert copy_a_product(db, "Hats", "Next") == 81
+    assert copy_a_product(db, "Hats", "Next") == 88
 
 
 def test_the_reset_runs_nightly_before_the_backup_and_then_rebuilds_analytics():
@@ -663,6 +669,8 @@ def test_the_reset_deletes_the_uploaded_photos_after_the_records(project):
     (folder / ".env").write_text("POSTGRES_USER=psells\nPOSTGRES_DB=psells\n")
     (folder / "sample_data").mkdir()
     (folder / "sample_data" / "seed.sql").write_text("BEGIN;\nSELECT 1;\nCOMMIT;\n")
+    (folder / "sample_data" / "photos").mkdir()
+    (folder / "sample_data" / "photos" / "sample-1.jpg").write_bytes(b"jpeg")
     (bin_dir / "docker").write_text(
         f'#!/bin/sh\necho "$*" >> "{calls}"\ncat > /dev/null\necho 3\n')
 
@@ -674,6 +682,8 @@ def test_the_reset_deletes_the_uploaded_photos_after_the_records(project):
                   if call.endswith("exec -T db psql -U psells -d psells -q -v ON_ERROR_STOP=1")]
     (photos,) = [i for i, call in enumerate(made)
                  if call.endswith(" exec -T app find /photos -mindepth 1 -delete")]
+    (sample,) = [i for i, call in enumerate(made)
+                 if call.endswith(" exec -T app tar -xf - -C /photos")]
     (etl,) = [i for i, call in enumerate(made) if call.endswith(" run --rm --no-deps etl")]
-    assert records < photos < etl
+    assert records < photos < sample < etl
     assert "-f compose.aws.yaml" in made[photos]

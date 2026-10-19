@@ -70,6 +70,32 @@ spec:
       hostAliases:
         - ip: 127.0.0.1
           hostnames: ["app"]
+      # The seed's photo rows name files the photos folder does not have on a
+      # new pod, so they are copied in from the sample-photos ConfigMap
+      # before the app starts. The app's own image, pin and limits.
+      initContainers:
+        - name: sample-photos
+          image: ghcr.io/pierremakhlouta/psells:4d8b234a5eab7fcc242882f5dbdf709c4c6dce5a@sha256:fb533a8010ab63c8ab97eb6b7415f9b56322bb4b14a0943ddcb61732b177c150
+          command: ["sh", "-c", "cp /sample-photos/*.jpg /photos/"]
+          securityContext:
+            runAsUser: 10001
+            runAsGroup: 10001
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
+          volumeMounts:
+            - name: sample-photos
+              mountPath: /sample-photos
+              readOnly: true
+            - name: app-photos
+              mountPath: /photos
       containers:
         - name: app
           image: ghcr.io/pierremakhlouta/psells:4d8b234a5eab7fcc242882f5dbdf709c4c6dce5a@sha256:fb533a8010ab63c8ab97eb6b7415f9b56322bb4b14a0943ddcb61732b177c150
@@ -212,5 +238,8 @@ spec:
           emptyDir: {}
         - name: app-photos
           emptyDir: {}
+        - name: sample-photos
+          configMap:
+            name: sample-photos
         - name: nginx-tmp
           emptyDir: {}

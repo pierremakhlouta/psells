@@ -264,7 +264,10 @@ fi
 products=$(live psql -tA -c "SELECT count(*) FROM products")
 if [ "$products" = "0" ]; then
     live psql -q -v ON_ERROR_STOP=1 < sample_data/seed.sql
-    echo "loaded sample_data/seed.sql"
+    # The files the seed's photo rows name, into the photos volume.
+    tar -cf - -C sample_data/photos . | compose exec -T app tar -xf - -C /photos ||
+        fail "the sample photos could not be put in place"
+    echo "loaded sample_data/seed.sql and its photos"
 else
     echo "the database has $products products; left as it is"
 fi

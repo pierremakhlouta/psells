@@ -525,3 +525,25 @@ def test_the_cluster_serves_the_same_icon_as_compose():
     icon = configmap("nginx-static")
     with open(os.path.join(psells.PROJECT_DIR, "static", "apple-touch-icon.png"), "rb") as file:
         assert base64.b64decode(icon["binaryData"]["apple-touch-icon.png"]) == file.read()
+
+
+def test_the_seeds_photos_are_copied_in_before_the_app_starts():
+    (init,) = app_pod()["initContainers"]
+    photo_dir = os.path.join(psells.PROJECT_DIR, "sample_data", "photos")
+
+    # The app's own image, so the repin moves both, and the app's user.
+    assert init["image"] == container("app")["image"]
+    context = init["securityContext"]
+    assert (context["runAsUser"], context["runAsGroup"]) == (10001, 10001)
+    assert context["allowPrivilegeEscalation"] is False
+    assert context["readOnlyRootFilesystem"] is True
+    assert context["capabilities"] == {"drop": ["ALL"]}
+    assert init["resources"]["limits"]["memory"]
+    assert init["command"] == ["sh", "-c", "cp /sample-photos/*.jpg /photos/"]
+    mounts = {m["mountPath"]: m["name"] for m in init["volumeMounts"]}
+    assert mounts == {"/sample-photos": "sample-photos", "/photos": "app-photos"}
+    assert {m["mountPath"]: m["name"] for m in container("app")["volumeMounts"]
+            }["/photos"] == "app-photos"
+    # Every placeholder the seed names, and nothing else.
+    photos_map = configmap("sample-photos")
+    assert sorted(photos_map.get("binaryData", {})) == sorted(os.listdir(photo_dir))
