@@ -123,7 +123,7 @@ One row per product.
 | `on_instagram`              | boolean | also posted on Instagram                 |
 | `arrived_on`                | date    | when it arrived; today by default, empty for products from before |
 | `listed_on`                 | date    | when a listed price was first entered    |
-| `version`                   | integer | raised by every save of the product      |
+| `version`                   | integer | raised by every save; a save made from an older version is refused |
 
 **ID allocation.** Every table's id comes from a sequence, which never hands out
 the same value twice, so an id freed by deleting a product is never given to

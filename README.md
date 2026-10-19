@@ -133,7 +133,8 @@ container, against the same database:
 in the `psells_pgdata` volume and the photos in `psells_photos`; never
 `docker compose down -v` on the real stack, which deletes both. To try anything on invented records instead, use
 the sample stack in [RUNBOOK.md](RUNBOOK.md), "Try something on the sample
-stack". The sample business, about 80 products and a year of sales, is
+stack". The sample business, about 80 products and a year of sales, then
+seven items across the workflow with placeholder photos, is
 written by `sample_data/generate_seed.py` with the application's own rules,
 and a test fails if `seed.sql` is edited by hand.
 
@@ -284,6 +285,7 @@ first. The files, one concern each:
 | `test_auth.py`, `test_login.py` | passwords, sessions, and the login on every route |
 | `test_forms.py`, `test_cross_site.py` | the form token, and writes from another site |
 | `test_web.py` | the pages, against the API, and templates that never compute |
+| `test_photos.py` | what is kept of an upload, the photo files and rows, and the photo pages |
 | `test_schema.py` | every rule in `schema.sql`, and the migrations building the same |
 | `test_connect.py`, `test_migrate.py` | the database connection, and the move out of SQLite |
 | `test_backup.py` | the backup, the off-Mac copy, the notifications, the certificate check, the launchd jobs |
@@ -305,8 +307,13 @@ image, and the Kubernetes cluster.
 - **The real records are reachable only while the Mac is on**: from the Mac,
   and from the tailnet's devices through Tailscale.
 - **One account, a password and nothing else**, at least fifteen characters,
-  with nginx limiting guesses. The demo's is public, and a visitor's change is
-  seen by the next until the nightly reset.
+  with nginx limiting guesses, shared by the two people who use it, so the
+  records do not say who changed what. The demo's is public, and a visitor's
+  change is seen by the next until the nightly reset.
+- **The terminal application lags the pages**: it prints the research and
+  listing fields but does not ask for them, and has no photos or settings.
+- **Photos are JPEG or PNG**, kept at 1600 pixels; a HEIC file picked on a
+  Mac is refused (an iPhone converts its own when uploading).
 - **Monitoring covers the demo only.** The Mac has its notifications, and the
   application's own errors are not in Grafana.
 - **The monitoring agent's scan has a dated exception** for an OpenSSL flaw
