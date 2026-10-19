@@ -353,6 +353,7 @@ class ProductForm(BaseModel):
     partner_share_amount: str = ""
     marketplace_price: str = ""
     details: str = ""
+    on_instagram: str = ""
     version: str = ""
 
 
@@ -394,6 +395,8 @@ def product_form(request, connection, values, problems, status_code=200,
          "choices": psells.form_choices(connection, product),
          "figures": None if product is None
          else psells.listing_figures(product),
+         "listings": {} if product is None
+         else psells.listings(connection, product),
          "photos": [] if product is None
          else photos.product_photos(connection, product["id"]),
          "photo_problem": photo_problem,

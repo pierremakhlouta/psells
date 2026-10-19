@@ -82,6 +82,13 @@
   {{ field("partner_share_percent", "Partner percentage (%)", hint="Only for a custom percentage.", inputmode="decimal") }}
   {{ field("partner_share_amount", "Partner amount per unit ($)", hint="Only for a fixed amount.", inputmode="decimal") }}
   {{ field("listed_price", "Listed price ($)", hint="Blank until it is listed.", inputmode="decimal") }}
+
+  <div class="field check wide{% if errors.on_instagram %} has-error{% endif %}">
+    <input type="checkbox" id="on_instagram" name="on_instagram" value="yes"
+           {%- if values.on_instagram == "yes" %} checked{% endif %}>
+    <label for="on_instagram">Also on Instagram</label>
+    {% if errors.on_instagram %}<p class="error">{{ errors.on_instagram }}</p>{% endif %}
+  </div>
   {{ field("details", "Details for the listing", hint="What a listing says beyond the template: accessories, marks, sizes.", wide=true) }}
   {{ field("notes", "Notes", hint="For yourselves; never in a listing.", wide=true) }}
 
@@ -90,6 +97,26 @@
     <a href="{{ url_for('inventory_page') }}">Cancel</a>
   </div>
 </form>
+
+{% if product and listings %}
+{#- listings is psells.listings: each platform's text for this item, filled
+    in from its template. Read-only boxes, so the text can be selected and
+    copied with its line breaks; nothing here changes it. -#}
+<section id="listing" aria-labelledby="listing-heading">
+  <h2 id="listing-heading">Listing</h2>
+  {% for platform, text in listings.items() %}
+  {% set label = "Facebook" if platform == "facebook" else "Instagram" %}
+  <div class="field wide">
+    <label for="listing-{{ platform }}">{{ label }}</label>
+    {% if text %}
+    <textarea id="listing-{{ platform }}" rows="12" readonly>{{ text }}</textarea>
+    {% else %}
+    <p>No {{ label }} template yet. Write one in <a href="{{ url_for('settings_page') }}">Settings</a>.</p>
+    {% endif %}
+  </div>
+  {% endfor %}
+</section>
+{% endif %}
 
 {% if product %}
 {#- photos is product_photos, oldest first. Each image is served by

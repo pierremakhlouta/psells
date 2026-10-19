@@ -160,7 +160,10 @@ and a test fails if `seed.sql` is edited by hand.
   `data/config.json` (`minimum_listing_profit_cents`) reads **Not worth
   listing** there and beside its name in the inventory. **Edit** also holds the
   item's photos: upload up to ten at a time, from a phone or a computer,
-  see them, download one or all of them as a zip, and delete one.
+  see them, download one or all of them as a zip, and delete one. A listed
+  item's Edit page shows its Facebook listing, and its Instagram one once
+  **Also on Instagram** is ticked, filled in from the templates in
+  **Settings** and ready to copy.
 - **Analytics**: headline figures, revenue and profit by month, categories
   and products, as charts drawn on the server, since no page runs a script.
 - **Settings**: the category and condition lists (add, rename, hide, or

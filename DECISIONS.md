@@ -849,7 +849,16 @@ readable; they are in its history in git, up to commit 7ecee20.
   itself compares it, so nothing can slip in between a check and the
   write. Refused, the page shows the item as it now is, and the change is
   made again from that; nothing is merged, since two people's edits of one
-  field cannot be merged by rule. What is not known yet reads "Not
+  field cannot be merged by rule. A listed item's Edit page shows its listing text,
+  filled in by psells from the platform's template: Facebook for every
+  listed item, Instagram once "Also on Instagram" is ticked, which is how
+  PSells records that it went there too. A line whose placeholder has
+  nothing to say is left out rather than posted half empty: the retail
+  price when it is unknown or the item is discontinued at retail, and the
+  condition or the details when there are none. With more than one unit in
+  stock, "Multiple quantities available" follows the price's line. The text
+  sits in a read-only box, to be selected and copied, since no page runs a
+  script that could copy it. What is not known yet reads "Not
   yet" on the pages and in the terminal, and null in the API, never 0. The
   terminal application does not ask for the Marketplace price or the
   listing details yet, so an edit made there keeps them as stored rather

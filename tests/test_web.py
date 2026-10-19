@@ -1130,6 +1130,8 @@ def test_the_edit_form_opens_filled_with_the_product(client, db):
      "details": "With box"},
     # A category hidden since: the edit keeps it.
     {"category": "Bags"},
+    # Also on Instagram, which an unticked box would otherwise clear.
+    {"on_instagram": True},
 ])
 def test_saving_the_form_untouched_changes_nothing(client, db, overrides):
     """What the form shows must read back as exactly what is stored,
@@ -2422,3 +2424,81 @@ def test_a_refused_edit_keeps_its_version(client, db):
 
     assert response.status_code == 422
     assert field(product_form_in(response.text), "version")["value"] == "1"
+
+
+# The listing --------------------------------------------------------------------
+
+def set_templates(db, facebook, instagram=""):
+    for platform, body in (("facebook", facebook), ("instagram", instagram)):
+        psells.save_listing_template(db, platform, body)
+
+
+def listing_boxes(html):
+    return {platform: " ".join(text.split()) for platform, text in re.findall(
+        r'<textarea id="listing-(\w+)" rows="12" readonly>(.*?)</textarea>',
+        html, re.S)}
+
+
+def test_a_listed_item_shows_its_facebook_listing_ready_to_copy(client, db):
+    set_templates(db, "{name}\n\nPrice: {price}\nRetail: {retail}",
+                  "IG {name}")
+    add_product(db, 1, quantity_received=1, name="Boots <b>9</b>")
+
+    page = client.get("/products/1/edit").text
+
+    raw = re.search(r'<textarea id="listing-facebook"[^>]*>(.*?)</textarea>',
+                    page, re.S).group(1)
+    # Line breaks kept, the name escaped, the figures psells formats.
+    assert raw == ("Boots &lt;b&gt;9&lt;/b&gt;\n\nPrice: $90.00\n"
+                   "Retail: $100.00")
+    assert raw.replace("&lt;", "<").replace("&gt;", ">") == psells.listing_text(
+        psells.all_products(db)[0], psells.listing_templates(db)["facebook"])
+    # Not on Instagram yet: no Instagram box.
+    assert set(listing_boxes(page)) == {"facebook"}
+
+
+def test_ticking_also_on_instagram_saves_it_and_shows_its_listing(client, db):
+    set_templates(db, "FB {name}", "IG {name}")
+    add_product(db, 1, quantity_received=1)
+
+    response = submit_edit_form(client, on_instagram="yes")
+
+    assert response.status_code == 303
+    assert stored(db)["on_instagram"] is True
+    assert listing_boxes(client.get("/products/1/edit").text) == {
+        "facebook": "FB Product 1", "instagram": "IG Product 1"}
+    # And unticked, it is cleared.
+    data = form_data(edit_form(client))
+    data.pop("on_instagram")
+    client.post("/products/1/edit", data=data)
+    assert stored(db)["on_instagram"] is False
+
+
+def test_an_item_not_listed_yet_shows_no_listing(client, db):
+    set_templates(db, "FB {name}", "IG {name}")
+    add_product(db, 1, quantity_received=1, listed_price_cents=None,
+                on_instagram=True)
+
+    page = client.get("/products/1/edit").text
+
+    assert listing_boxes(page) == {}
+    assert 'id="listing-heading"' not in page
+
+
+def test_without_a_template_the_listing_says_where_to_write_one(client, db):
+    add_product(db, 1, quantity_received=1)
+
+    page = " ".join(client.get("/products/1/edit").text.split())
+
+    assert listing_boxes(page) == {}
+    assert ('No Facebook template yet. Write one in <a '
+            'href="http://testserver/settings">Settings</a>.') in page
+
+
+def test_also_on_instagram_is_ticked_or_not(client, db):
+    add_product(db, 1, quantity_received=1)
+
+    response = submit_edit_form(client, on_instagram="maybe")
+
+    assert response.status_code == 422
+    assert "Also on Instagram is either ticked or not." in response.text

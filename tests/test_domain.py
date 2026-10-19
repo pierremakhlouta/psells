@@ -2004,3 +2004,82 @@ def test_the_terminal_refuses_an_edit_someone_saved_over_meanwhile(
             "saved. Choose it again to see it as it is now.") in out
     assert "Product updated successfully." not in out
     assert view_row(db)["name"] == "From the page"
+
+
+# The listing text ----------------------------------------------------------------
+
+SEED_LIKE = ("{name}.\n\nRetail price: {retail}\nMy price: {price}\n\n"
+             "Condition: {condition}.\n\n{details}\n\nPickup at the station.")
+
+
+def listed(**overrides):
+    product = {"name": "Kettle", "listed_price_cents": 4500,
+               "retail_price_cents": 8999, "retail_discontinued": 0,
+               "condition": "Open box", "details": "With its box",
+               "quantity_available": 1, "on_instagram": False}
+    product.update(overrides)
+    return product
+
+
+def test_every_placeholder_is_filled_and_the_lines_kept():
+    assert psells.listing_text(listed(), SEED_LIKE) == (
+        "Kettle.\n\nRetail price: $89.99\nMy price: $45.00\n\n"
+        "Condition: Open box.\n\nWith its box\n\nPickup at the station.")
+
+
+@pytest.mark.parametrize("overrides, gone", [
+    ({"retail_price_cents": None}, "Retail price"),
+    ({"retail_price_cents": 0, "retail_discontinued": 1}, "Retail price"),
+    ({"condition": None}, "Condition"),
+    ({"details": ""}, "With its box"),
+    ({"details": "   "}, "With its box"),
+])
+def test_a_line_with_nothing_to_say_is_left_out(overrides, gone):
+    text = psells.listing_text(listed(**overrides), SEED_LIKE)
+
+    assert gone not in text
+    assert "\n\n\n" not in text
+    # No line of spaces left where the details were.
+    assert [line for line in text.split("\n") if line and not line.strip()] == []
+    assert text.startswith("Kettle.") and text.endswith("Pickup at the station.")
+
+
+def test_details_over_several_lines_keep_them():
+    text = psells.listing_text(listed(details="Box\nManual"), "{details}")
+
+    assert text == "Box\nManual"
+
+
+def test_more_than_one_in_stock_says_so_after_the_price():
+    text = psells.listing_text(listed(quantity_available=3), SEED_LIKE)
+
+    assert "My price: $45.00\nMultiple quantities available\n" in text
+    assert text.count("Multiple quantities available") == 1
+
+
+def test_more_than_one_in_stock_ends_a_listing_without_a_price_line():
+    assert psells.listing_text(listed(quantity_available=2), "{name}") == (
+        "Kettle\n\nMultiple quantities available")
+
+
+def test_an_empty_template_makes_no_listing():
+    assert psells.listing_text(listed(), "  \n ") == ""
+
+
+def test_every_listed_item_is_on_facebook_and_instagram_once_ticked(db):
+    psells.save_listing_template(db, "facebook", "FB {name}")
+    psells.save_listing_template(db, "instagram", "IG {name}")
+
+    assert psells.listings(db, listed(listed_price_cents=None)) == {}
+    assert psells.listings(db, listed()) == {"facebook": "FB Kettle"}
+    assert psells.listings(db, listed(on_instagram=True)) == {
+        "facebook": "FB Kettle", "instagram": "IG Kettle"}
+
+
+def test_the_instagram_tick_is_kept_by_an_edit_that_does_not_mention_it(
+        db, partner_rate):
+    add_product(db, 1, quantity_received=1, on_instagram=True)
+
+    psells.update_product(db, 1, **new_product(name="Renamed"))
+
+    assert view_row(db)["on_instagram"] is True

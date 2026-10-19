@@ -1361,6 +1361,67 @@ def save_listing_template(connection, platform, body):
             (body, platform))
 
 
+MULTIPLE_QUANTITIES = "Multiple quantities available"
+
+
+def listing_text(product, body):
+    """The listing for one product from one platform's template, ready to
+    paste, or "" when the template is empty.
+
+    Each placeholder is filled from the product: {name}, {price} the listed
+    price, {retail}, {condition} and {details}. A line whose placeholder has
+    nothing to say is left out rather than posted half empty: {retail} when
+    the retail price is unknown or the item is discontinued at retail, and
+    {condition}, {details} or {price} when there is none. Blank lines left
+    behind close up to one. With more than one unit in stock, a line saying
+    so follows the price's line, or ends the listing if no line has the
+    price.
+    """
+    if not body.strip():
+        return ""
+
+    retail = product["retail_price_cents"]
+    listed = product["listed_price_cents"]
+    values = {
+        "name": product["name"],
+        "price": None if listed is None else format_cents(listed),
+        "retail": (None if retail is None or product["retail_discontinued"]
+                   else format_cents(retail)),
+        "condition": product["condition"],
+        "details": (product["details"] or "").strip() or None,
+    }
+    several = product["quantity_available"] > 1
+
+    lines = []
+    said_several = False
+    for line in body.split("\n"):
+        names = re.findall(r"\{(\w+)\}", line)
+        if any(values.get(name) is None for name in names):
+            continue
+        lines.append(re.sub(r"\{(\w+)\}",
+                            lambda found: values[found.group(1)], line))
+        if several and "price" in names and not said_several:
+            lines.append(MULTIPLE_QUANTITIES)
+            said_several = True
+    if several and not said_several:
+        lines += ["", MULTIPLE_QUANTITIES]
+
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+
+
+def listings(connection, product):
+    """The listings a listed product shows, {platform: text}: Facebook for
+    every listed item, Instagram too once it is ticked as also there. An
+    item not listed yet has none."""
+    if product["listed_price_cents"] is None:
+        return {}
+    bodies = listing_templates(connection)
+    shown = [platform for platform in TEMPLATE_PLATFORMS
+             if platform != "instagram" or product["on_instagram"]]
+    return {platform: listing_text(product, bodies[platform])
+            for platform in shown}
+
+
 def _every_product_problem(category, name, quantity_received,
                            retail_discontinued, retail_price_cents,
                            listed_price_cents, condition, partner_share_mode,
@@ -1419,7 +1480,7 @@ def create_product(connection, category, name, quantity_received,
                    retail_discontinued, retail_price_cents, listed_price_cents,
                    condition, notes, partner_share_mode, partner_share_percent,
                    partner_share_amount_cents, marketplace_price_cents=None,
-                   details=""):
+                   details="", on_instagram=False):
     """Store one new product and return the id the database gave it.
 
     The whole of adding a product with none of the asking. add is the same
@@ -1455,8 +1516,9 @@ def create_product(connection, category, name, quantity_received,
             "(category, name, quantity_received, retail_price_cents, "
             "listed_price_cents, retail_discontinued, partner_share_mode, "
             "partner_share_percent, partner_share_amount_cents, "
-            "condition, notes, marketplace_price_cents, details, listed_on) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
+            "condition, notes, marketplace_price_cents, details, "
+            "on_instagram, listed_on) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
             "CASE WHEN %s::integer IS NULL THEN NULL ELSE CURRENT_DATE END) "
             "RETURNING id",
             (category.strip(), name.strip(), quantity_received,
@@ -1465,7 +1527,7 @@ def create_product(connection, category, name, quantity_received,
              partner_share_mode, partner_share_percent,
              partner_share_amount_cents, _optional_text(condition),
              (notes or "").strip(), marketplace_price_cents,
-             (details or "").strip(), listed_price_cents)
+             (details or "").strip(), bool(on_instagram), listed_price_cents)
         ).fetchone()["id"]
 
 
@@ -1515,7 +1577,7 @@ def update_product(connection, product_id, category, name, quantity_received,
                    retail_discontinued, retail_price_cents, listed_price_cents,
                    condition, notes, partner_share_mode, partner_share_percent,
                    partner_share_amount_cents, marketplace_price_cents=_KEEP,
-                   details=_KEEP, expected_version=None):
+                   details=_KEEP, on_instagram=_KEEP, expected_version=None):
     """Replace every field of one product with the values given.
 
     The whole of editing a product with none of the asking. edit is the same
@@ -1544,14 +1606,16 @@ def update_product(connection, product_id, category, name, quantity_received,
     and the write.
     """
     current = connection.execute(
-        "SELECT category, condition, marketplace_price_cents, details "
-        "FROM products WHERE id = %s", (product_id,)
+        "SELECT category, condition, marketplace_price_cents, details, "
+        "on_instagram FROM products WHERE id = %s", (product_id,)
     ).fetchone()
     if current is not None:
         if marketplace_price_cents is _KEEP:
             marketplace_price_cents = current["marketplace_price_cents"]
         if details is _KEEP:
             details = current["details"]
+        if on_instagram is _KEEP:
+            on_instagram = current["on_instagram"]
     problems = {
         **_intake_floor_problem(connection, product_id, quantity_received),
         **_listed_problems(connection, category, condition, current),
@@ -1575,7 +1639,7 @@ def update_product(connection, product_id, category, name, quantity_received,
             "retail_discontinued = %s, partner_share_mode = %s, "
             "partner_share_percent = %s, partner_share_amount_cents = %s, "
             "condition = %s, notes = %s, "
-            "marketplace_price_cents = %s, details = %s, "
+            "marketplace_price_cents = %s, details = %s, on_instagram = %s, "
             # Dated when an unlisted product gets its first listed price; a
             # product listed before the workflow keeps its unknown date. The
             # right side of SET reads the row as it was.
@@ -1589,8 +1653,8 @@ def update_product(connection, product_id, category, name, quantity_received,
              partner_share_mode, partner_share_percent,
              partner_share_amount_cents, _optional_text(condition),
              (notes or "").strip(), marketplace_price_cents,
-             (details or "").strip(), listed_price_cents, product_id,
-             expected_version, expected_version)
+             (details or "").strip(), bool(on_instagram), listed_price_cents,
+             product_id, expected_version, expected_version)
         )
 
         if updated.rowcount == 0 and current is not None:
@@ -1602,7 +1666,7 @@ PRODUCT_FORM_FIELDS = (
     "category", "name", "quantity_received", "retail_discontinued",
     "retail_price", "listed_price", "condition", "notes",
     "partner_share_mode", "partner_share_percent", "partner_share_amount",
-    "marketplace_price", "details",
+    "marketplace_price", "details", "on_instagram",
 )
 
 MONEY_TEXT_PROBLEM = "Please enter an amount in dollars, for example 12.50."
@@ -1653,6 +1717,9 @@ def read_product_text(fields):
         problems["retail_discontinued"] = "Discontinued is either ticked or not."
 
     retail_discontinued = text["retail_discontinued"] == "yes"
+
+    if text["on_instagram"] not in ("", "yes"):
+        problems["on_instagram"] = "Also on Instagram is either ticked or not."
     # Blank until researched, as are the condition and the Marketplace price;
     # blank until listed, the listed price.
     retail_price_cents = (0 if retail_discontinued
@@ -1686,6 +1753,7 @@ def read_product_text(fields):
         "notes": text["notes"],
         "marketplace_price_cents": money("marketplace_price", required=False),
         "details": text["details"],
+        "on_instagram": text["on_instagram"] == "yes",
         "partner_share_mode": mode,
         "partner_share_percent": percent,
         "partner_share_amount_cents": amount_cents,
@@ -1706,7 +1774,8 @@ def create_product_from_text(connection, fields):
     if problems:
         rule_values = {key: value for key, value in values.items()
                        if key not in ("notes", "details",
-                                      "marketplace_price_cents")}
+                                      "marketplace_price_cents",
+                                      "on_instagram")}
         raise ProductError({
             **_every_product_problem(**rule_values),
             **_marketplace_problem(values["marketplace_price_cents"]),
@@ -1744,6 +1813,7 @@ def product_form_text(product):
         "notes": product["notes"],
         "marketplace_price": money(product["marketplace_price_cents"]),
         "details": product["details"],
+        "on_instagram": "yes" if product["on_instagram"] else "",
         "partner_share_mode": product["partner_share_mode"],
         "partner_share_percent": "" if percent is None else str(percent),
         "partner_share_amount": "" if amount is None else format_cents(
@@ -1774,7 +1844,8 @@ def update_product_from_text(connection, product_id, fields):
     if problems:
         rule_values = {key: value for key, value in values.items()
                        if key not in ("notes", "details",
-                                      "marketplace_price_cents")}
+                                      "marketplace_price_cents",
+                                      "on_instagram")}
         raise ProductError({
             **_intake_floor_problem(connection, product_id,
                                     values["quantity_received"]),
