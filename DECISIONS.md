@@ -876,4 +876,10 @@ readable; they are in its history in git, up to commit 7ecee20.
   served behind the login like every page. A product with photos is
   deleted only once its photos are, one by one, so deleting a product never
   quietly deletes files. Pillow is pinned at 12.3.0 rather than 13.0.0,
-  which was two days old.
+  which was two days old. The daily backup archives the photos after the database:
+  every photo the database records must be in the archive, and a new
+  archive is kept, and encrypted into iCloud, only when the photos changed,
+  since a stored photo never changes; otherwise thirty identical copies of
+  every photo would pile up in both places. The newest archive is kept
+  however old. An archive whose iCloud copy fails is not kept, so the next
+  morning makes and sends it again.

@@ -208,8 +208,9 @@ the PSells logo. Details:
 **Three background jobs** (launchd): the stack started at login; a backup at
 09:00 that restores each dump into a throwaway database and counts it before
 keeping it, copies it to iCloud Drive encrypted with
-[age](https://age-encryption.org) and decrypts that copy to prove it, and
-checks the certificates; and the analytics rebuilt every hour. Each shows a
+[age](https://age-encryption.org) and decrypts that copy to prove it,
+archives the items' photos the same way when they have changed, and checks
+the certificates; and the analytics rebuilt every hour. Each shows a
 notification when it fails. Installing them, and every procedure, is in
 [RUNBOOK.md](RUNBOOK.md).
 

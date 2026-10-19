@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Daily backup of the PSells database.
+# Daily backup of the PSells database and the items' photos.
 #
 # Run by launchd; launchd/local.psells.backup.plist is the job, and the README
 # shows how to install it. Also safe to run by hand.
@@ -8,7 +8,8 @@
 # Takes a pg_dump of the database in the Compose stack into
 # ~/PSells-Backups/daily/, proves the dump restores, appends a line to
 # ~/PSells-Backups/backup.log, puts an encrypted copy into iCloud Drive with
-# offsite-backup.sh, and removes copies older than KEEP_DAYS.
+# offsite-backup.sh, archives the photos with backup-photos.sh, and removes
+# copies older than KEEP_DAYS.
 
 # -e  stop at the first command that fails, rather than carrying on and
 #     reporting success at the end.
@@ -152,6 +153,13 @@ done < <("$SCRIPT_DIR/check-certificates.sh")
 OFFSITE="$("$SCRIPT_DIR/offsite-backup.sh" "psells-$STAMP.dump" "config-$STAMP.json" 2>&1)" \
     || fail "the off-Mac copy: $OFFSITE"
 log "offsite ok  $OFFSITE"
+
+# The photos, which live in their own volume rather than in the dump. After
+# the database's copies, so a failure here never costs the records'. See
+# backup-photos.sh: an archive is kept only when the photos changed.
+PHOTOS="$("$SCRIPT_DIR/backup-photos.sh" "$STAMP" 2>&1)" \
+    || fail "the photos: $PHOTOS"
+log "photos ok  $PHOTOS"
 
 # Remove old copies. The -name filters matter: a -delete with a loose pattern
 # is how people remove things they meant to keep. The .db pattern retires the

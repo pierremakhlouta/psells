@@ -143,6 +143,14 @@ log's second line for the day says `offsite ok`. The private key is also in
 your password manager, as "PSells backup key (age)". The demonstration's
 backups go to S3 and hold invented records only.
 
+The items' photos are in the same run (`backup-photos.sh`), after the
+database: the photos volume is archived into `~/PSells-Backups/photos/`, and
+every photo the database records must be in the archive or the backup fails.
+A photo never changes once stored, so an archive is kept only when the photos
+changed; the log's line says `photos ok  unchanged` otherwise. A new archive
+is encrypted into the same iCloud folder as `photos-...tar.age` and proved the
+same way. Both places keep 30 days, and the newest photos archive however old.
+
 ### Restore from the off-Mac copy
 
 When the Mac and its backups are gone. On the new Mac, with age installed
@@ -151,12 +159,13 @@ password manager to the clipboard, then unpack the newest copy into a folder
 of its own:
 
 ```
-mkdir -p ~/PSells-Restore && cd ~/PSells-Restore && ls -1t ~/Library/Mobile\ Documents/com~apple~CloudDocs/PSells-Backups/*.tar.age | head -1 | xargs -I{} sh -c 'pbpaste | age -d -i - "{}" | tar -xf -' && pbcopy < /dev/null && ls -1
+mkdir -p ~/PSells-Restore && cd ~/PSells-Restore && ls -1t ~/Library/Mobile\ Documents/com~apple~CloudDocs/PSells-Backups/psells-*.tar.age | head -1 | xargs -I{} sh -c 'pbpaste | age -d -i - "{}" | tar -xf -' && ls -1t ~/Library/Mobile\ Documents/com~apple~CloudDocs/PSells-Backups/photos-*.tar.age | head -1 | xargs -I{} sh -c 'pbpaste | age -d -i - "{}" > photos.tar' && pbcopy < /dev/null && ls -1
 ```
 
-It lists the dump and the configuration copy. Put the configuration in place
-as `data/config.json`, then restore the dump as in "Restore a backup", with
-`dump=~/PSells-Restore/psells-...dump`. Tried with invented files and a
+It lists the dump, the configuration copy and `photos.tar`. Put the
+configuration in place as `data/config.json`, restore the dump as in "Restore
+a backup", with `dump=~/PSells-Restore/psells-...dump`, then the photos as in
+"Restore the photos", with `archive=~/PSells-Restore/photos.tar`. Tried with invented files and a
 throwaway key, 9 October 2026: the dump comes back identical.
 
 ### Restore a backup
@@ -186,6 +195,25 @@ dump=~/PSells-Backups/daily/psells-2026-10-09.dump && [ -s "$dump" ] && docker c
 Then log in and check the dashboard's figures. Tried on the sample stack, in
 a throwaway project, 9 October 2026: the restore exits 0 and every row and the
 corrections log's trigger come back.
+
+### Restore the photos
+
+Puts every photo in an archive back into the photos volume, beside whatever
+is there; nothing is deleted. Restore the database first, so the rows that
+point at the photos are there. List the archives and choose the newest:
+
+```
+ls -1 ~/PSells-Backups/photos/
+```
+
+Then put its name in place of `photos-2026-10-19_090000.tar` below:
+
+```
+archive=~/PSells-Backups/photos/photos-2026-10-19_090000.tar && [ -s "$archive" ] && docker compose exec -T app tar -xf - -C /photos < "$archive" && docker compose exec -T app sh -c 'ls /photos | wc -l'
+```
+
+It prints how many files the volume holds. Tried on the sample stack, 19
+October 2026.
 
 ### The certificates
 

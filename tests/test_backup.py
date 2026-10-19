@@ -12,6 +12,8 @@ import plistlib
 import shutil
 import subprocess
 
+import pytest
+
 import psells
 
 
@@ -618,3 +620,240 @@ def test_the_check_reads_what_openssl_says_not_its_exit_status(tmp_path):
 
     assert lines == ["The Mac's certificate: expires within 30 days, Nov  1 00:00:00 2026 GMT"]
     assert notices[0].startswith("-|PSells certificate expires soon|")
+
+
+# The photos -----------------------------------------------------------------------
+#
+# backup-photos.sh is run here in a copy of the project, with the real tar,
+# age and offsite-backup.sh, and a stand-in for docker that archives a folder
+# standing in for the photos volume and answers the database's list of photo
+# names from a file. No test reaches the real Docker.
+
+PHOTOS_SCRIPT = os.path.join(psells.PROJECT_DIR, "backup-photos.sh")
+
+
+class PhotoBackup:
+    """A copy of the project, a photos volume and a database's photo rows,
+    and run() to back them up."""
+
+    def __init__(self, tmp_path):
+        self.tmp = tmp_path
+        self.secret, public = make_key()
+        self.project = tmp_path / "psells"
+        (self.project / "data").mkdir(parents=True)
+        for script in (PHOTOS_SCRIPT, OFFSITE_SCRIPT):
+            shutil.copy(script, self.project / os.path.basename(script))
+        (self.project / "data" / "backup-recipient.txt").write_text(public)
+        self.volume = tmp_path / "volume"
+        self.volume.mkdir()
+        self.rows = tmp_path / "rows"
+        self.rows.write_text("")
+        self.archives = tmp_path / "photo-backups"
+        self.offsite = tmp_path / "icloud"
+        self.calls = tmp_path / "calls"
+        self.bin = tmp_path / "bin"
+        self.bin.mkdir()
+        stand_in(self.bin / "docker", f'''echo "$*" >> "{self.calls}"
+case "$*" in
+  *" exec -T app tar -cf - -C /photos ."*) exec tar -cf - -C "{self.volume}" . ;;
+  *" exec -T db sh -c "*) exec cat "{self.rows}" ;;
+esac
+exit 0
+''')
+        stand_in(self.bin / "security", f"echo '{self.secret}'\n")
+
+    def photo(self, name, data=b"jpeg bytes", row=True):
+        (self.volume / name).write_bytes(data)
+        if row:
+            self.rows.write_text(self.rows.read_text() + name + "\n")
+
+    def run(self, stamp):
+        return subprocess.run(
+            ["bash", str(self.project / "backup-photos.sh"), stamp],
+            capture_output=True, text=True,
+            env=dict(os.environ, PATH=f"{self.bin}:{os.environ['PATH']}",
+                     PSELLS_PHOTO_BACKUP_DIR=str(self.archives),
+                     PSELLS_OFFSITE_DIR=str(self.offsite)))
+
+    def kept(self):
+        return sorted(p.name for p in self.archives.iterdir())
+
+    def copies(self):
+        return sorted(p.name for p in self.offsite.iterdir()) if self.offsite.exists() else []
+
+    def names_in(self, archive):
+        listing = subprocess.run(["tar", "-tf", str(archive)], capture_output=True,
+                                 text=True, check=True).stdout.split()
+        return sorted(name.removeprefix("./") for name in listing
+                      if name.endswith(".jpg"))
+
+    def decrypted(self, copy):
+        key = self.tmp / "key.txt"
+        key.write_text(self.secret + "\n")
+        return subprocess.run(["age", "-d", "-i", str(key), str(copy)],
+                              capture_output=True, check=True).stdout
+
+
+@pytest.fixture
+def photo_backup(tmp_path):
+    return PhotoBackup(tmp_path)
+
+
+def test_the_photos_are_archived_proved_and_copied_off_the_mac(photo_backup):
+    photo_backup.photo("a.jpg")
+    photo_backup.photo("b.jpg")
+
+    result = photo_backup.run("2026-10-19_090000")
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.startswith(
+        "photos-2026-10-19_090000.tar  2 photos, 0 without a row; offsite "
+        "photos-2026-10-19_090000.tar.age  ")
+    assert photo_backup.kept() == ["photos-2026-10-19_090000.tar"]
+    archive = photo_backup.archives / "photos-2026-10-19_090000.tar"
+    assert photo_backup.names_in(archive) == ["a.jpg", "b.jpg"]
+    (copy,) = photo_backup.copies()
+    assert copy == "photos-2026-10-19_090000.tar.age"
+    encrypted = (photo_backup.offsite / copy).read_bytes()
+    assert encrypted.startswith(b"age-encryption.org/v1\n")
+    assert b"jpeg bytes" not in encrypted
+    assert photo_backup.decrypted(photo_backup.offsite / copy) == archive.read_bytes()
+    assert photo_backup.secret not in result.stdout + result.stderr
+
+
+def test_unchanged_photos_make_no_new_archive(photo_backup):
+    photo_backup.photo("a.jpg")
+    photo_backup.run("2026-10-19_090000")
+
+    result = photo_backup.run("2026-10-20_090000")
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == (
+        "unchanged  1 photos, still in photos-2026-10-19_090000.tar, "
+        "0 without a row\n")
+    assert photo_backup.kept() == ["photos-2026-10-19_090000.tar"]
+    assert photo_backup.copies() == ["photos-2026-10-19_090000.tar.age"]
+
+
+def test_a_new_photo_makes_a_new_archive(photo_backup):
+    photo_backup.photo("a.jpg")
+    photo_backup.run("2026-10-19_090000")
+    photo_backup.photo("b.jpg")
+
+    result = photo_backup.run("2026-10-20_090000")
+
+    assert result.returncode == 0, result.stderr
+    assert photo_backup.kept() == ["photos-2026-10-19_090000.tar",
+                                   "photos-2026-10-20_090000.tar"]
+    assert photo_backup.names_in(
+        photo_backup.archives / "photos-2026-10-20_090000.tar") == ["a.jpg", "b.jpg"]
+
+
+def test_a_photo_the_database_records_but_the_volume_lacks_fails_it(photo_backup):
+    photo_backup.photo("a.jpg")
+    photo_backup.rows.write_text("a.jpg\ngone.jpg\n")
+
+    result = photo_backup.run("2026-10-19_090000")
+
+    assert result.returncode == 1
+    assert ("1 photos the database records are not in the volume, first "
+            "gone.jpg") in result.stderr
+    assert photo_backup.kept() == []
+    assert photo_backup.copies() == []
+
+
+def test_a_file_without_a_row_is_counted_and_kept(photo_backup):
+    photo_backup.photo("a.jpg")
+    photo_backup.photo("spare.jpg", row=False)
+
+    result = photo_backup.run("2026-10-19_090000")
+
+    assert result.returncode == 0, result.stderr
+    assert "2 photos, 1 without a row" in result.stdout
+
+
+def test_old_archives_go_but_the_newest_is_kept_however_old(photo_backup):
+    photo_backup.photo("a.jpg")
+    photo_backup.run("2026-08-01_090000")
+    for old in (photo_backup.archives / "photos-2026-08-01_090000.tar",
+                photo_backup.offsite / "photos-2026-08-01_090000.tar.age"):
+        os.utime(old, (0, 0))
+
+    # Unchanged, months later: the one archive is still the newest, and stays.
+    assert photo_backup.run("2026-10-19_090000").returncode == 0
+    assert photo_backup.kept() == ["photos-2026-08-01_090000.tar"]
+
+    # Changed: a new newest, and the old one, past 30 days, goes, here and in
+    # iCloud.
+    photo_backup.photo("b.jpg")
+    assert photo_backup.run("2026-10-20_090000").returncode == 0
+    assert photo_backup.kept() == ["photos-2026-10-20_090000.tar"]
+    assert photo_backup.copies() == ["photos-2026-10-20_090000.tar.age"]
+
+
+def test_the_photo_backup_never_rebuilds_stops_or_recreates_anything(photo_backup):
+    photo_backup.photo("a.jpg")
+    photo_backup.run("2026-10-19_090000")
+
+    calls = photo_backup.calls.read_text().splitlines()
+    assert calls[0].endswith(" up -d --wait --no-recreate app")
+    for call in calls:
+        assert call.startswith(
+            f"compose --project-directory {photo_backup.project} "), call
+        for word in (" down", " stop", " restart", "--build", " rm ", " run "):
+            assert word not in call, (word, call)
+
+
+def test_a_photos_copy_that_does_not_decrypt_with_the_keychains_key_is_not_kept(
+        photo_backup):
+    other, _ = make_key()
+    stand_in(photo_backup.bin / "security", f"echo '{other}'\n")
+    photo_backup.photo("a.jpg")
+
+    result = photo_backup.run("2026-10-19_090000")
+
+    assert result.returncode == 1
+    assert "does not decrypt with the Keychain's key" in result.stderr
+    assert photo_backup.copies() == []
+
+
+def test_the_backup_archives_the_photos_after_the_records_copies():
+    with open(BACKUP_SCRIPT) as file:
+        text = file.read()
+
+    call = 'PHOTOS="$("$SCRIPT_DIR/backup-photos.sh" "$STAMP" 2>&1)"'
+    assert call in text
+    assert text.index('log "offsite ok  $OFFSITE"') < text.index(call)
+    assert '|| fail "the photos: $PHOTOS"' in text
+    assert 'log "photos ok  $PHOTOS"' in text
+    assert os.access(PHOTOS_SCRIPT, os.X_OK)
+
+
+def test_a_photos_copy_that_decrypts_to_different_bytes_is_not_kept(photo_backup):
+    # The real age, but what it decrypts comes back with one word changed.
+    real_age = shutil.which("age")
+    stand_in(photo_backup.bin / "age",
+             f'case " $* " in *" -d "*) "{real_age}" "$@" | sed s/jpeg/jpeX/ ;;\n'
+             f'  *) exec "{real_age}" "$@" ;; esac\n')
+    photo_backup.photo("a.jpg")
+
+    result = photo_backup.run("2026-10-19_090000")
+
+    assert result.returncode == 1
+    assert "the encrypted copy of photos-2026-10-19_090000.tar does not match" in result.stderr
+    assert photo_backup.copies() == []
+
+
+def test_a_photos_copy_that_failed_is_made_again_the_next_morning(photo_backup):
+    other, _ = make_key()
+    stand_in(photo_backup.bin / "security", f"echo '{other}'\n")
+    photo_backup.photo("a.jpg")
+    assert photo_backup.run("2026-10-19_090000").returncode == 1
+    assert photo_backup.kept() == []
+
+    stand_in(photo_backup.bin / "security", f"echo '{photo_backup.secret}'\n")
+    result = photo_backup.run("2026-10-20_090000")
+
+    assert result.returncode == 0, result.stderr
+    assert photo_backup.kept() == ["photos-2026-10-20_090000.tar"]
+    assert photo_backup.copies() == ["photos-2026-10-20_090000.tar.age"]
