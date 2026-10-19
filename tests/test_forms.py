@@ -52,9 +52,10 @@ def routes(router, methods):
 
 WRITES = (routes(web.router, {"POST"})
           + routes(api.protected, {"POST", "PUT", "PATCH", "DELETE"}))
-# Every page, without the one GET that answers a photo rather than a page.
-PAGES = [page for page in routes(web.router, {"GET"})
-         if page != ("GET", "/photos/1")]
+# Every page, without the GETs that answer a file rather than a page.
+FILES = {("GET", "/photos/1"), ("GET", "/photos/1/download"),
+         ("GET", "/products/1/photos.zip")}
+PAGES = [page for page in routes(web.router, {"GET"}) if page not in FILES]
 
 
 def a_photo():
@@ -149,6 +150,12 @@ def test_every_rendered_form_that_posts_holds_this_sessions_token(
 
 
 # Every write needs it -------------------------------------------------------------
+
+def test_the_files_left_out_of_the_pages_are_real_routes():
+    # A name left here after its route was renamed would hide nothing, and
+    # the route under its new name would be checked as a page and fail.
+    assert FILES <= set(routes(web.router, {"GET"}))
+
 
 def test_the_walk_finds_the_writes_it_should():
     assert ("POST", "/products/1/sell") in WRITES

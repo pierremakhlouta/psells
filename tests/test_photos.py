@@ -422,3 +422,68 @@ def test_a_product_with_photos_offers_no_delete_until_they_are_gone(client, db):
     assert client.post("/products/1/delete").status_code == 409
     assert psells.find_items_by_name_or_category(psells.all_products(db),
                                                  "Product 1")
+
+
+# Downloads ------------------------------------------------------------------------
+
+def test_each_photo_downloads_named_by_its_item_and_place(client, db):
+    add_product(db, 1, quantity_received=1)
+    upload(client, ("IMG_0001.jpg", jpeg()), ("IMG_0002.jpg", jpeg()))
+    first, second = photos.product_photos(db, 1)
+
+    page = client.get("/products/1/edit").text
+    assert f'href="http://testserver/photos/{second["id"]}/download"' in page
+
+    response = client.get(f"/photos/{second['id']}/download")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/jpeg"
+    assert response.headers["content-disposition"] == (
+        'attachment; filename="psells-1-2.jpg"')
+    with open(photos.path_of(second), "rb") as kept:
+        assert response.content == kept.read()
+
+
+def test_download_all_is_one_zip_of_every_photo_in_order(client, db):
+    import zipfile
+
+    add_product(db, 1, quantity_received=1)
+    upload(client, ("a.jpg", jpeg((300, 200))), ("b.jpg", jpeg((200, 300))))
+    rows = photos.product_photos(db, 1)
+
+    page = client.get("/products/1/edit").text
+    assert 'href="http://testserver/products/1/photos.zip"' in page
+
+    response = client.get("/products/1/photos.zip")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/zip"
+    assert response.headers["content-disposition"] == (
+        'attachment; filename="psells-1-photos.zip"')
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        assert archive.namelist() == ["psells-1-1.jpg", "psells-1-2.jpg"]
+        for name, row in zip(archive.namelist(), rows):
+            assert archive.getinfo(name).compress_type == zipfile.ZIP_STORED
+            with open(photos.path_of(row), "rb") as kept:
+                assert archive.read(name) == kept.read()
+
+
+def test_an_item_without_photos_offers_no_download_and_has_no_zip(client, db):
+    add_product(db, 1, quantity_received=1)
+
+    assert "photos.zip" not in client.get("/products/1/edit").text
+    assert client.get("/products/1/photos.zip").status_code == 404
+    assert client.get("/products/9/photos.zip").status_code == 404
+    assert client.get("/photos/999/download").status_code == 404
+
+
+def test_the_upload_hint_states_the_limits_photos_py_applies(client, db,
+                                                             monkeypatch):
+    # The demo's, as photos.py sets them when PSELLS_DEMO is 1.
+    monkeypatch.setattr(photos, "MAX_PHOTOS_PER_UPLOAD", 3)
+    monkeypatch.setattr(photos, "MAX_PHOTO_MB", 8)
+    add_product(db, 1, quantity_received=1)
+
+    page = " ".join(client.get("/products/1/edit").text.split())
+
+    assert "JPEG or PNG, up to 3 at a time, 8 MB each." in page

@@ -16,6 +16,7 @@ import io
 import os
 import uuid
 import warnings
+import zipfile
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 
@@ -24,9 +25,15 @@ import psells
 PHOTOS_DIR = psells.path_from_environment("PSELLS_PHOTOS", "data", "photos")
 
 # What one upload may carry. nginx refuses a request over its own limit before
-# it reaches the app; these say which photo was too big, and why.
-MAX_PHOTO_BYTES = 25 * 1024 * 1024
-MAX_PHOTOS_PER_UPLOAD = 10
+# it reaches the app; these say which photo was too big, and why. Smaller on
+# the demo, whose login is public and whose server has 1 GiB of memory: the
+# app holds an upload in memory while it prepares the photos, and the disk
+# is small. compose.aws.yaml sets PSELLS_DEMO, and
+# nginx/sites/*/photo-limit.conf matches each.
+DEMO = os.environ.get("PSELLS_DEMO", "") == "1"
+MAX_PHOTO_MB = 8 if DEMO else 25
+MAX_PHOTO_BYTES = MAX_PHOTO_MB * 1024 * 1024
+MAX_PHOTOS_PER_UPLOAD = 3 if DEMO else 10
 
 LONG_SIDE = 1600
 JPEG_QUALITY = 85
@@ -48,7 +55,7 @@ def prepare(data, label):
     made an error too.
     """
     if len(data) > MAX_PHOTO_BYTES:
-        raise PhotoError(f"{label} is over 25 MB.")
+        raise PhotoError(f"{label} is over {MAX_PHOTO_MB} MB.")
 
     try:
         with warnings.catch_warnings():
@@ -163,6 +170,24 @@ def product_photos(connection, product_id):
     return connection.execute(
         "SELECT * FROM photos WHERE product_id = %s ORDER BY added_at, id",
         (product_id,)).fetchall()
+
+
+def download_name(product_id, position):
+    """What a downloaded photo is called: the item's id and the photo's place
+    among its photos, counting from 1. Never the uploader's name, and nothing
+    from the item's name, so nothing typed reaches a header or a file system."""
+    return f"psells-{product_id}-{position}.jpg"
+
+
+def zip_of(product_id, product_photo_rows):
+    """Every one of an item's photos in one zip, in their order, each under
+    its download_name. Stored, not compressed: a JPEG is compressed already,
+    and squeezing it again only costs time."""
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_STORED) as archive:
+        for position, photo in enumerate(product_photo_rows, start=1):
+            archive.write(path_of(photo), download_name(product_id, position))
+    return out.getvalue()
 
 
 def find_photo(connection, photo_id):

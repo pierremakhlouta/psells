@@ -882,4 +882,14 @@ readable; they are in its history in git, up to commit 7ecee20.
   since a stored photo never changes; otherwise thirty identical copies of
   every photo would pile up in both places. The newest archive is kept
   however old. An archive whose iCloud copy fails is not kept, so the next
-  morning makes and sends it again.
+  morning makes and sends it again. Each photo downloads on its own, and all of an
+  item's as one zip, for whoever posts the listing from another computer.
+  A download is named by the item's id and the photo's place
+  (psells-12-3.jpg), never by the uploader's file name or the item's name,
+  so nothing typed reaches a header or someone's disk; the zip stores the
+  JPEGs as they are rather than compressing them again. On the demo, whose
+  login is public and whose server has 1 GiB, an upload carries at most
+  three photos of 8 MB each; nginx's limit sits in each site's folder
+  (photo-limit.conf), since it takes no variable, and a test holds each to
+  what the app accepts. The nightly reset deletes the photos visitors
+  uploaded, so a stranger's photo never outlives the night.

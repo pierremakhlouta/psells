@@ -258,7 +258,9 @@ renewed, naming the command below.
 ### The demo's public login and its nightly reset
 
 The demonstration's login is published, and its records are put back every
-night at 07:00 UTC by `deploy/aws/reset-demo.sh`, which keeps the login. Set
+night at 07:00 UTC by `deploy/aws/reset-demo.sh`, which keeps the login and
+deletes every photo visitors uploaded. Uploads there are smaller than on the
+Mac: three photos of 8 MB each at a time. Set
 or change the published password in a session on the server (the command
 below, under "The demonstration's alert email arrives"), then:
 

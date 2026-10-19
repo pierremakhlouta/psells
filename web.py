@@ -28,7 +28,8 @@ import os
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Form, Request
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import (FileResponse, HTMLResponse, RedirectResponse,
+                               Response)
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from starlette.datastructures import FormData, UploadFile
@@ -395,6 +396,8 @@ def product_form(request, connection, values, problems, status_code=200,
          "photos": [] if product is None
          else photos.product_photos(connection, product["id"]),
          "photo_problem": photo_problem,
+         "photo_limits": {"count": photos.MAX_PHOTOS_PER_UPLOAD,
+                          "megabytes": photos.MAX_PHOTO_MB},
          "photo_notice": PHOTO_NOTICES.get(
              request.query_params.get("photos", ""))},
         status_code=status_code,
@@ -773,6 +776,38 @@ def photo_file(connection: Connection, photo_id: int):
 
     return FileResponse(photos.path_of(photo), media_type="image/jpeg",
                         headers={"Cache-Control": "private, max-age=86400"})
+
+
+@router.get("/photos/{photo_id:int}/download")
+def download_photo(connection: Connection, photo_id: int):
+    """One photo as a file to save, named by its item and its place."""
+    photo = photos.find_photo(connection, photo_id)
+
+    if photo is None or not os.path.exists(photos.path_of(photo)):
+        return HTMLResponse("No such photo.", status_code=404)
+
+    position = [row["id"] for row in photos.product_photos(
+        connection, photo["product_id"])].index(photo_id) + 1
+
+    return FileResponse(
+        photos.path_of(photo), media_type="image/jpeg",
+        filename=photos.download_name(photo["product_id"], position),
+        headers={"Cache-Control": "private, no-store"})
+
+
+@router.get("/products/{product_id:int}/photos.zip")
+def download_all_photos(connection: Connection, product_id: int):
+    """Every photo of one item, in one zip to save."""
+    rows = photos.product_photos(connection, product_id)
+
+    if not rows:
+        return HTMLResponse("This item has no photos.", status_code=404)
+
+    return Response(
+        photos.zip_of(product_id, rows), media_type="application/zip",
+        headers={"Content-Disposition":
+                 f'attachment; filename="psells-{product_id}-photos.zip"',
+                 "Cache-Control": "private, no-store"})
 
 
 def photo_delete_page(request, connection, photo):

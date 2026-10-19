@@ -23,6 +23,7 @@ import glob
 import hashlib
 import ipaddress
 import json
+import importlib
 import os
 import re
 import stat
@@ -33,6 +34,7 @@ import sys
 import pytest
 import yaml
 
+import photos
 import psells
 from helpers import TEST_DATABASE_URL
 
@@ -635,6 +637,29 @@ def test_the_limit_sits_where_every_request_to_the_app_passes():
         map(str, [("location", "/"), ("location", "/"),
                   ("location", "~", "^/products/[0-9]+/photos$"),
                   ("location", "~", "^/products/[0-9]+/photos$")]))
+
+
+@pytest.mark.parametrize("site, demo", [("localhost", ""), ("aws", "1")])
+def test_each_sites_upload_limit_fits_what_the_app_takes(monkeypatch, site,
+                                                         demo):
+    # Room for every photo the app accepts in one upload, so nginx never
+    # refuses what the app would take, and little more, so nginx refuses an
+    # upload far over before it reaches the app: at most 16 MB for the form.
+    monkeypatch.setenv("PSELLS_DEMO", demo)
+    try:
+        importlib.reload(photos)
+        allowed = photos.MAX_PHOTOS_PER_UPLOAD * photos.MAX_PHOTO_MB
+    finally:
+        monkeypatch.delenv("PSELLS_DEMO")
+        importlib.reload(photos)
+
+    # The one size inside a location, wherever the site's servers set it.
+    sizes = {words[1] for blocks, words in nginx_directives(site)
+             if words[0] == "client_max_body_size" and len(blocks) > 1}
+    assert len(sizes) == 1, sizes
+    (limit,) = sizes
+    assert limit.endswith("m")
+    assert allowed <= int(limit[:-1]) <= allowed + 16
 
 
 def test_only_the_photo_upload_takes_a_larger_body():

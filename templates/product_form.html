@@ -103,10 +103,12 @@
     {% for photo in photos %}
     <li>
       <a href="{{ url_for('photo_file', photo_id=photo.id) }}"><img src="{{ url_for('photo_file', photo_id=photo.id) }}" alt="Photo {{ loop.index }} of {{ product.name }}" loading="lazy"></a>
+      <a href="{{ url_for('download_photo', photo_id=photo.id) }}">Download</a>
       <a href="{{ url_for('delete_photo_page', photo_id=photo.id) }}">Delete</a>
     </li>
     {% endfor %}
   </ul>
+  <p><a href="{{ url_for('download_all_photos', product_id=product.id) }}">Download all photos (zip)</a></p>
   {% else %}
   <p>No photos yet.</p>
   {% endif %}
@@ -115,7 +117,7 @@
     <input type="file" name="photos" accept="image/jpeg,image/png" multiple required aria-label="Photos to add">
     <button type="submit">Add photos</button>
   </form>
-  <p class="lead">JPEG or PNG, up to 10 at a time, 25 MB each. Each is kept
+  <p class="lead">JPEG or PNG, up to {{ photo_limits.count }} at a time, {{ photo_limits.megabytes }} MB each. Each is kept
     at 1600 pixels on its long side, without its location.</p>
 </section>
 

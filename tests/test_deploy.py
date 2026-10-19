@@ -654,3 +654,26 @@ def test_the_reset_runs_nightly_before_the_backup_and_then_rebuilds_analytics():
     # The warehouse after the records, through the server's files.
     assert text.index("live psql -q -v ON_ERROR_STOP=1") < text.index("run --rm --no-deps etl")
     assert SERVER_FILES.replace(" -f compose.analytics.yaml", " \\\n        -f compose.analytics.yaml") in text
+
+
+def test_the_reset_deletes_the_uploaded_photos_after_the_records(project):
+    folder, bin_dir, calls = project
+    shutil.copy(os.path.join(DEPLOY_DIR, "live-database.sh"),
+                folder / "deploy" / "aws" / "live-database.sh")
+    (folder / ".env").write_text("POSTGRES_USER=psells\nPOSTGRES_DB=psells\n")
+    (folder / "sample_data").mkdir()
+    (folder / "sample_data" / "seed.sql").write_text("BEGIN;\nSELECT 1;\nCOMMIT;\n")
+    (bin_dir / "docker").write_text(
+        f'#!/bin/sh\necho "$*" >> "{calls}"\ncat > /dev/null\necho 3\n')
+
+    result = run(folder, bin_dir, "reset-demo.sh")
+
+    assert result.returncode == 0, result.stderr
+    made = calls.read_text().splitlines()
+    (records,) = [i for i, call in enumerate(made)
+                  if call.endswith("exec -T db psql -U psells -d psells -q -v ON_ERROR_STOP=1")]
+    (photos,) = [i for i, call in enumerate(made)
+                 if call.endswith(" exec -T app find /photos -mindepth 1 -delete")]
+    (etl,) = [i for i, call in enumerate(made) if call.endswith(" run --rm --no-deps etl")]
+    assert records < photos < etl
+    assert "-f compose.aws.yaml" in made[photos]

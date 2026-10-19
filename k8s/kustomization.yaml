@@ -48,3 +48,4 @@ configMapGenerator:
     files:
       - http.conf=../nginx/sites/localhost/http.conf
       - https.conf=../nginx/sites/localhost/https.conf
+      - photo-limit.conf=../nginx/sites/localhost/photo-limit.conf

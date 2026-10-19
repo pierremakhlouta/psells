@@ -11,8 +11,9 @@
 # the corrections log, with their ids started again, and loads the seed, so
 # a failure halfway leaves the demo as it was. The corrections go too: they
 # describe records that no longer exist, by ids the seed hands out again.
-# The login is kept. Then the warehouse is rebuilt, so the analytics page
-# shows the same records.
+# The login is kept. Then the photos visitors uploaded are deleted from the
+# photos volume, their rows having gone with the records, and the warehouse
+# is rebuilt, so the analytics page shows the same records.
 #
 # Never where the real data is: it refuses to run beside data/config.json,
 # which exists only on the Mac.
@@ -60,6 +61,10 @@ main() {
     reset_sql | live psql -q -v ON_ERROR_STOP=1 > /dev/null ||
         fail "the records could not be put back; the demo is as it was"
     echo "reset: $(live psql -tA -c "SELECT count(*) FROM products") products, $(live psql -tA -c "SELECT count(*) FROM sales") sales"
+
+    # Every file in the volume, never the folder, which the app writes into.
+    compose exec -T app find /photos -mindepth 1 -delete ||
+        fail "the uploaded photos could not be deleted"
 
     compose run --rm --no-deps etl || fail "the analytics ETL did not complete"
 }
