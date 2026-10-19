@@ -761,3 +761,16 @@ def test_a_connection_lost_partway_through_is_a_503_too(client, monkeypatch):
 
     assert response.status_code == 503
     assert response.headers["retry-after"] == "60"
+
+
+def test_a_product_carries_its_research_and_listing_fields(client, db):
+    add_product(db, 1, quantity_received=1, marketplace_price_cents=6550,
+                details="With its box", on_instagram=True)
+    add_product(db, 2, quantity_received=1, **{"listed_price_cents": None})
+
+    first, second = client.get("/products").json()
+
+    assert (first["marketplace_price_cents"], first["details"],
+            first["on_instagram"]) == (6550, "With its box", True)
+    assert (second["marketplace_price_cents"], second["details"],
+            second["on_instagram"]) == (None, "", False)

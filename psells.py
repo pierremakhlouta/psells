@@ -2378,9 +2378,14 @@ def print_product(product, reason=None):
     if reason is not None:
         print(f"Reason: {reason}")
     print(f"Listed Price: {maybe_cents(product['listed_price_cents'])}")
+    print(f"Marketplace Price: "
+          f"{maybe_cents(product['marketplace_price_cents'])}")
     print(f"Partner Cut: {maybe_cents(partner_cut, 'Unknown')}")
     print(f"Discontinued: {'Yes' if product['retail_discontinued'] else 'No'}")
     print(f"Condition: {product['condition'] or 'Not yet'}")
+    if product["details"]:
+        print(f"Details: {product['details']}")
+    print(f"On Instagram: {'Yes' if product['on_instagram'] else 'No'}")
     print()
 def view_inventory(connection):
     """The products in stock, as the inventory page lists them. Those with

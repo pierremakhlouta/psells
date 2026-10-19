@@ -168,6 +168,11 @@ class Product(BaseModel):
     retail_price_cents: int | None = Field(
         description="None until researched; 0 when discontinued at retail.")
     listed_price_cents: int | None = Field(description="None until listed.")
+    marketplace_price_cents: int | None = Field(
+        description="The average Facebook Marketplace price; None until "
+                    "researched.")
+    details: str = Field(description="What a listing says beyond its template.")
+    on_instagram: bool = Field(description="Also posted on Instagram.")
     retail_discontinued: bool = Field(
         description=(
             "Discontinued at retail. The product is still held, still listed "

@@ -1228,8 +1228,9 @@ def test_out_of_stock_lists_each_product_with_its_reason(db, capsys,
         ("3", "0", "Sold out"), ("4", "0", "Returned"),
         ("5", "0", "2 sold, 1 returned of 3")]
     assert list(blocks[0]) == ["ID", "Name", "Category", "Available", "Reason",
-                               "Listed Price", "Partner Cut", "Discontinued",
-                               "Condition"]
+                               "Listed Price", "Marketplace Price",
+                               "Partner Cut", "Discontinued", "Condition",
+                               "On Instagram"]
 
 
 def test_sales_history_prints_newest_first_with_its_figures(db, capsys,
@@ -1291,9 +1292,14 @@ def test_the_terminal_lists_what_the_api_serves(db, capsys, client):
             block["Reason"] = reason
         block.update({
             "Listed Price": money(p["listed_price_cents"]),
+            "Marketplace Price": psells.maybe_cents(
+                p["marketplace_price_cents"]),
             "Partner Cut": money(p["partner_share_cents"]),
             "Discontinued": "Yes" if p["retail_discontinued"] else "No",
             "Condition": p["condition"]})
+        if p["details"]:
+            block["Details"] = p["details"]
+        block["On Instagram"] = "Yes" if p["on_instagram"] else "No"
         return block
 
     assert shown(psells.view_inventory) == [

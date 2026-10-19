@@ -2083,3 +2083,34 @@ def test_the_instagram_tick_is_kept_by_an_edit_that_does_not_mention_it(
     psells.update_product(db, 1, **new_product(name="Renamed"))
 
     assert view_row(db)["on_instagram"] is True
+
+
+def test_the_terminal_prints_the_research_and_listing_fields(capsys):
+    psells.print_product({
+        "id": 1, "name": "Kettle", "category": "Kitchen",
+        "quantity_available": 1, "listed_price_cents": 4500,
+        "marketplace_price_cents": 5000, "retail_discontinued": 0,
+        "retail_price_cents": None, "partner_share_mode": "custom_amount",
+        "partner_share_amount_cents": 700, "partner_share_percent": None,
+        "condition": "Open box", "details": "With its box",
+        "on_instagram": True})
+
+    printed = capsys.readouterr().out
+    assert "Marketplace Price: $50.00" in printed
+    assert "Details: With its box" in printed
+    assert "On Instagram: Yes" in printed
+
+
+def test_the_terminal_says_nothing_of_details_an_item_does_not_have(capsys):
+    psells.print_product({
+        "id": 1, "name": "Kettle", "category": "Kitchen",
+        "quantity_available": 1, "listed_price_cents": None,
+        "marketplace_price_cents": None, "retail_discontinued": 0,
+        "retail_price_cents": None, "partner_share_mode": "custom_amount",
+        "partner_share_amount_cents": 700, "partner_share_percent": None,
+        "condition": None, "details": "", "on_instagram": False})
+
+    printed = capsys.readouterr().out
+    assert "Marketplace Price: Not yet" in printed
+    assert "Details" not in printed
+    assert "On Instagram: No" in printed
