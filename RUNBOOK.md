@@ -13,7 +13,8 @@ first.
 Two rules apply everywhere:
 
 - **Never `docker compose down -v` on the real stack**, and never
-  `docker volume rm` or `prune`: the real records live in the `pgdata` volume.
+  `docker volume rm` or `prune`: the real records live in the `pgdata` volume
+  and the items' photos in the `photos` volume.
   `-v` is only for a throwaway project named with `-p`.
 - **Back up before anything that changes the real database**: `./backup.sh`.
 

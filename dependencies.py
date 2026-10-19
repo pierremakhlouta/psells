@@ -124,9 +124,15 @@ async def check_form_token(request: Request, session: Session):
         # it sends the request to log in.
         return
 
+    form = None
     submitted = request.headers.get(FORM_TOKEN_HEADER)
     if submitted is None:
-        submitted = (await request.form()).get(FORM_TOKEN_FIELD)
+        form = await request.form()
+        submitted = form.get(FORM_TOKEN_FIELD)
 
     if not auth.form_token_matches(session, submitted):
+        # A refused photo upload has had its files spooled to disk already,
+        # and no route will run to close them.
+        if form is not None:
+            await form.close()
         raise FormTokenRefused()

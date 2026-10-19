@@ -68,6 +68,9 @@ flowchart TB
     core["psells.py:<br/>every business rule, once"] --> db[("PostgreSQL<br/>schema.sql")]
     web --> wh["warehouse.py and charts.py<br/>(the analytics page)"]
     wh --> dw[("Analytics warehouse<br/>views only")]
+    web --> ph["photos.py<br/>(the items' photos)"]
+    ph --> core
+    ph --> vol[("photos volume<br/>JPEG files")]
 ```
 
 The terminal application, the API and the web pages are three front doors

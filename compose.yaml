@@ -130,6 +130,10 @@ services:
       # cannot change it, and sees nothing else from the folder it lives in.
       # Required, never defaulted, so the file in use is always a choice.
       - "${PSELLS_CONFIG_FILE:?set PSELLS_CONFIG_FILE in .env}:/config/config.json:ro"
+      # The items' photos, files beside the database rather than in it. Like
+      # pgdata, a named volume inside Docker Desktop's disk: "down -v" would
+      # delete it, plain "down" keeps it. backup.sh copies it.
+      - "photos:/photos"
     networks:
       default:
         # Fixed too, because nginx looks up "app" once, when it starts, and
@@ -241,3 +245,5 @@ volumes:
   # "docker compose down -v" deletes it, and so does resetting Docker Desktop.
   # Plain "docker compose down" keeps it.
   pgdata:
+  # The items' photos, written by the app.
+  photos:

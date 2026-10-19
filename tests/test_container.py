@@ -118,6 +118,23 @@ def test_every_copied_file_is_made_readable_before_the_server_user_takes_over():
     assert last_copy < chmod < user
 
 
+def test_the_photo_folder_is_the_server_users_and_where_the_app_looks():
+    # A new volume takes the owner of the folder it is mounted on, so the
+    # folder must exist and be psells' before USER, or the app cannot write
+    # a photo. And the app must be told that folder, or it writes beside
+    # itself, where the volume is not.
+    steps = [" ".join([instruction] + arguments)
+             for instruction, arguments in instructions()]
+    names = [instruction for instruction, _ in instructions()]
+
+    made = steps.index("RUN mkdir /photos && chown psells:psells /photos")
+    assert made < names.index("USER")
+    environment = [arguments for instruction, arguments in instructions()
+                   if instruction == "ENV"]
+    assert any("PSELLS_PHOTOS=/photos" in arguments for arguments in environment)
+    assert "photos.py" in copied_sources()
+
+
 def test_the_image_is_built_with_copy_not_add():
     # ADD also downloads URLs and unpacks archives, which a build that names
     # its files one by one has no use for.
@@ -248,7 +265,10 @@ def test_the_database_builds_its_tables_from_the_schema_read_only():
 def test_the_app_mounts_only_the_config_file_read_only_and_never_a_default():
     mounts = compose()["services"]["app"]["volumes"]
 
-    assert len(mounts) == 1
+    # The config file, and the photos volume, which is the app's to write.
+    assert len(mounts) == 2
+    assert mounts[1] == "photos:/photos"
+    assert "photos" in compose()["volumes"]
     source, target, mode = mounts[0].rsplit(":", 2)
     assert (target, mode) == ("/config/config.json", "ro")
     # Required from .env, never defaulted, so the rate in use is a choice.
@@ -603,16 +623,29 @@ def test_login_attempts_are_limited_to_five_a_minute_with_a_burst_of_five():
 def test_the_limit_sits_where_every_request_to_the_app_passes():
     # Once in each location that proxies, so no path to the app avoids it,
     # and nowhere else, where a second limit_req would count some posts
-    # twice. On the Mac there are two such locations: the main server's and
-    # the one Tailscale reaches.
+    # twice. On the Mac there are four such locations: the main server's
+    # and the one Tailscale reaches, each with the photo upload's beside it.
     directives = nginx_directives()
     limits = [blocks for blocks, words in directives if words[0] == "limit_req"]
     proxies = [blocks for blocks, words in directives if words[0] == "proxy_pass"]
 
-    assert len(limits) == len(proxies) == 2
+    assert len(limits) == len(proxies) == 4
     assert sorted(map(str, limits)) == sorted(map(str, proxies))
-    for blocks in limits:
-        assert [name for _, name in blocks][-1] == ("location", "/")
+    assert sorted(str([name for _, name in blocks][-1]) for blocks in limits) == sorted(
+        map(str, [("location", "/"), ("location", "/"),
+                  ("location", "~", "^/products/[0-9]+/photos$"),
+                  ("location", "~", "^/products/[0-9]+/photos$")]))
+
+
+def test_only_the_photo_upload_takes_a_larger_body():
+    sizes = [(blocks, words) for blocks, words in nginx_directives()
+             if words[0] == "client_max_body_size"]
+
+    assert [words for blocks, words in sizes if len(blocks) == 1] == [
+        ["client_max_body_size", "64k"]]
+    larger = [(blocks[-1][1], words) for blocks, words in sizes if len(blocks) > 1]
+    assert larger == [(("location", "~", "^/products/[0-9]+/photos$"),
+                       ["client_max_body_size", "260m"])] * 2
 
 
 def test_every_psells_response_carries_the_security_headers():
@@ -648,8 +681,10 @@ def test_the_content_security_policy_allows_nothing_it_does_not_name():
     assert policy["form-action"] == "'self'"
     assert policy["frame-ancestors"] == "'none'"
     assert policy["base-uri"] == "'none'"
-    assert set(policy) == {"default-src", "style-src", "form-action",
-                           "frame-ancestors", "base-uri"}
+    # The items' photos, from PSells itself and nowhere else.
+    assert policy["img-src"] == "'self'"
+    assert set(policy) == {"default-src", "style-src", "img-src",
+                           "form-action", "frame-ancestors", "base-uri"}
     # No script source of any kind, and no way to allow inline code wholesale.
     assert "unsafe" not in response_headers()["Content-Security-Policy"]
 
@@ -805,6 +840,7 @@ def test_nginx_conf_itself_names_no_place():
         ["include", SITE_MOUNT + "https.conf"],
         ["include", SNIPPET_MOUNT + "headers.conf"],
         ["include", SNIPPET_MOUNT + "icon.conf"],
+        ["include", SNIPPET_MOUNT + "photos.conf"],
         ["include", SNIPPET_MOUNT + "app.conf"],
         ["include", SITE_MOUNT + "servers/*.conf"],
     ]

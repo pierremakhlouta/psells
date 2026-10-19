@@ -987,6 +987,26 @@ def deletion_blocker(connection, product_id):
     return f"This product has {' and '.join(blocking)} recorded against it."
 
 
+def photo_blocker(connection, product_id):
+    """Why this product cannot be deleted yet because of its photos, or None.
+
+    Separate from deletion_blocker because it is not history: the photos can
+    be deleted, one by one from the Edit page, and then the product can.
+    Deleting a product does not quietly delete files with it.
+    """
+    count = connection.execute(
+        "SELECT COUNT(*) AS n FROM photos WHERE product_id = %s",
+        (product_id,)
+    ).fetchone()["n"]
+
+    if not count:
+        return None
+
+    return (f"This product has {count} photo" + ("" if count == 1 else "s")
+            + ". Delete " + ("it" if count == 1 else "them")
+            + " from its Edit page first, then delete the product.")
+
+
 def delete_product(connection, product_id):
     """Delete a product with no history, or raise saying why not.
 
@@ -1007,6 +1027,11 @@ def delete_product(connection, product_id):
 
     if blocker is not None:
         raise DeleteRefused(blocker)
+
+    photos = photo_blocker(connection, product_id)
+
+    if photos is not None:
+        raise DeleteRefused(photos)
 
     # IntegrityError, the parent, not the particular refusal: PostgreSQL 18
     # reports ON DELETE RESTRICT as RestrictViolation where 16 reported
@@ -2640,6 +2665,12 @@ def delete(connection):
         print(blocker)
         print("Deleting it would lose that history, so it is refused.")
         print("If you no longer stock it, leaving it in place costs nothing.")
+        return
+
+    photos = photo_blocker(connection, product["id"])
+
+    if photos is not None:
+        print(photos)
         return
 
     confirmation = ask_choice(

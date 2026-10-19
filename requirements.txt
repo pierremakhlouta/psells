@@ -26,3 +26,9 @@ psycopg[binary]==3.3.6
 # argon2-cffi-bindings, the compiled Argon2 library, and cffi with it; both
 # come as prebuilt wheels for the Mac and for the image.
 argon2-cffi==25.1.0
+
+# Reads an uploaded photo, turns it the right way up, shrinks it to 1600 px on
+# its long side and writes it as a JPEG with no metadata, in photos.py. JPEG
+# and PNG only, so no second image library for HEIC. 12.3.0 rather than 13.0.0,
+# which was two days old when this was pinned.
+pillow==12.3.0

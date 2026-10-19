@@ -47,7 +47,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # is in the folder, and this folder holds the real data. Naming each file means
 # a new data file can never reach an image by accident; .dockerignore keeps the
 # data out of the build context as well. tests/test_container.py holds both.
-COPY psells.py api.py web.py dependencies.py cross_site.py auth.py set_password.py warehouse.py charts.py ./
+COPY psells.py api.py web.py dependencies.py cross_site.py auth.py set_password.py warehouse.py charts.py photos.py ./
 COPY templates/ templates/
 
 # COPY keeps each file's permissions from the machine that built the image and
@@ -59,11 +59,17 @@ COPY templates/ templates/
 # psells, which it never needs.
 RUN chmod -R a+rX /app
 
+# The one place psells writes: the items' photos, where compose.yaml mounts
+# the photos volume. A new volume takes this folder's owner when it is first
+# mounted, so psells can write to it without the volume ever being root's.
+RUN mkdir /photos && chown psells:psells /photos
+
 USER psells
 
 # Where compose.yaml mounts the configuration file. PSELLS_DATABASE_URL has no
 # default here or anywhere: it names a host and a password, and Compose sets it.
-ENV PSELLS_CONFIG=/config/config.json
+ENV PSELLS_CONFIG=/config/config.json \
+    PSELLS_PHOTOS=/photos
 
 EXPOSE 8000
 

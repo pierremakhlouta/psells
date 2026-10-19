@@ -15,6 +15,7 @@ from psycopg.rows import dict_row
 
 import api
 import dependencies
+import photos
 import psells
 from helpers import TEST_DATABASE_URL, log_in
 
@@ -148,6 +149,15 @@ def listing_minimum(monkeypatch):
 
 
 @pytest.fixture
+def photo_dir(monkeypatch, tmp_path):
+    """Keep photos in a folder of this test's own, never in data/photos."""
+    folder = tmp_path / "photos"
+    monkeypatch.setattr(photos, "PHOTOS_DIR", str(folder))
+
+    return folder
+
+
+@pytest.fixture
 def answers(monkeypatch):
     """Queue the replies a feature function will read from input().
 
@@ -168,7 +178,7 @@ def answers(monkeypatch):
 
 
 @pytest.fixture
-def client(db, partner_rate, listing_minimum):
+def client(db, partner_rate, listing_minimum, photo_dir):
     """A logged-in test client whose requests run against the test database.
 
     It calls the application directly rather than opening a socket, and swaps

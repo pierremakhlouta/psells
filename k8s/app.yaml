@@ -123,6 +123,10 @@ spec:
               readOnly: true
             - name: app-tmp
               mountPath: /tmp
+            # The image's photo folder, writable on a read-only root. Photos
+            # last as long as the pod: the cluster holds the sample data only.
+            - name: app-photos
+              mountPath: /photos
 
         - name: nginx
           image: ghcr.io/pierremakhlouta/psells:nginx-5052fe4f69113ce0be2c825afb3599e4a1b38c5b@sha256:a7fa9e8f6abe5cabdeafac760cabe8b0b2e56e4563c046ee002fb2b760b4c547
@@ -205,6 +209,8 @@ spec:
               - key: tls.key
                 path: psells.localhost.key
         - name: app-tmp
+          emptyDir: {}
+        - name: app-photos
           emptyDir: {}
         - name: nginx-tmp
           emptyDir: {}

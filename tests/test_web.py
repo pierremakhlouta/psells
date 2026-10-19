@@ -1057,11 +1057,16 @@ def test_an_add_from_another_site_is_refused(client, db):
 
 # Editing a product -----------------------------------------------------------
 
-def edit_form(client, product_id=1):
-    response = client.get(f"/products/{product_id}/edit")
-    (form,) = [form for form in forms(response.text) if form["method"] == "post"]
+def product_form_in(html):
+    """The product form on an Edit page, not the photo upload below it."""
+    (form,) = [form for form in forms(html) if form["method"] == "post"
+               and form["action"].endswith("/edit")]
 
     return form
+
+
+def edit_form(client, product_id=1):
+    return product_form_in(client.get(f"/products/{product_id}/edit").text)
 
 
 def submit_edit_form(client, product_id=1, follow_redirects=False,
@@ -1183,7 +1188,7 @@ def test_an_emptied_name_is_refused_not_kept(client, db):
     assert response.status_code == 422
     assert stored(db)["name"] == "Keep me"
     assert "Name cannot be blank." in response.text
-    assert field(forms(response.text)[-1], "name")["value"] == ""
+    assert field(product_form_in(response.text), "name")["value"] == ""
 
 
 def test_the_intake_floor_is_enforced_from_the_page(client, db):
@@ -1206,7 +1211,7 @@ def test_a_refused_edit_keeps_what_was_typed(client, db):
     response = submit_edit_form(client, name="New name", listed_price="9O",
                                 partner_share_mode="custom_amount",
                                 partner_share_amount="5.00")
-    data = form_data(forms(response.text)[-1])
+    data = form_data(product_form_in(response.text))
 
     assert response.status_code == 422
     assert (data["name"], data["listed_price"], data["partner_share_mode"],

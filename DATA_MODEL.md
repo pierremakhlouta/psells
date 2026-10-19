@@ -473,7 +473,7 @@ an edit keeps a hidden value the product already has.
 |---|---|---|
 | `categories` | a category to choose from | `name` primary key, trimmed and non-blank; `hidden` keeps it off the list for new items |
 | `conditions` | a condition to choose from | as `categories`, plus `position`, the order they are offered in, best first |
-| `photos` | one photo of a product | the file is on disk, `file_name` unique; `product_id` is ON DELETE RESTRICT |
+| `photos` | one photo of a product | the file is in the `photos` volume (`PSELLS_PHOTOS`), named by PSells, a JPEG of at most 1600 px with no metadata; `file_name` unique; `product_id` is ON DELETE RESTRICT |
 | `listing_templates` | the listing text for one platform | `platform` is `facebook` or `instagram`; empty in the repository |
 
 A category or condition in use cannot be deleted, since a product refers to

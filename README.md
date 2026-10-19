@@ -130,8 +130,8 @@ container, against the same database:
     docker compose exec app python psells.py
 
 `docker compose down` stops the stack and keeps the records. The records are
-in the `psells_pgdata` volume; never `docker compose down -v` on the real
-stack, which deletes it. To try anything on invented records instead, use
+in the `psells_pgdata` volume and the photos in `psells_photos`; never
+`docker compose down -v` on the real stack, which deletes both. To try anything on invented records instead, use
 the sample stack in [RUNBOOK.md](RUNBOOK.md), "Try something on the sample
 stack". The sample business, about 80 products and a year of sales, is
 written by `sample_data/generate_seed.py` with the application's own rules,
@@ -158,7 +158,9 @@ and a test fails if `seed.sql` is edited by hand.
   from each product's row. **Edit** shows the partner payout and the profit
   at the Marketplace price, and an item whose profit is under the minimum in
   `data/config.json` (`minimum_listing_profit_cents`) reads **Not worth
-  listing** there and beside its name in the inventory.
+  listing** there and beside its name in the inventory. **Edit** also holds the
+  item's photos: upload up to ten at a time, from a phone or a computer,
+  see them, and delete one.
 - **Analytics**: headline figures, revenue and profit by month, categories
   and products, as charts drawn on the server, since no page runs a script.
 - **Settings**: the category and condition lists (add, rename, hide, or

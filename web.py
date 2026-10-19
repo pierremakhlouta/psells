@@ -28,14 +28,16 @@ import os
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
+from starlette.datastructures import FormData, UploadFile
 
 import psycopg
 
 import auth
 import charts
+import photos
 import psells
 import warehouse
 from dependencies import (
@@ -355,8 +357,15 @@ class ProductForm(BaseModel):
 BLANK_PRODUCT = ProductForm(partner_share_mode="default").model_dump()
 
 
+# What a photo change reports on the Edit page, by a fixed word in the address.
+PHOTO_NOTICES = {
+    "added": "Photos added.",
+    "deleted": "Photo deleted.",
+}
+
+
 def product_form(request, connection, values, problems, status_code=200,
-                 product=None):
+                 product=None, photo_problem=None):
     """The product form, for adding or for editing one product.
 
     Empty, filled from the stored product, or as it was typed, with a sentence
@@ -364,7 +373,10 @@ def product_form(request, connection, values, problems, status_code=200,
     showing and a refusal, so there is one copy of the form.
 
     When editing, figures is listing_figures for the product as stored, not as
-    typed: the payout and profit shown are the ones saved.
+    typed: the payout and profit shown are the ones saved. The page also
+    carries the product's photos, with the upload form and photo_problem, the
+    sentence for an upload refused, and a notice chosen by a fixed word in
+    the address after a photo change.
     """
     if product is None:
         action = request.url_for("add_product_submit")
@@ -379,7 +391,12 @@ def product_form(request, connection, values, problems, status_code=200,
          "action": action,
          "choices": psells.form_choices(connection, product),
          "figures": None if product is None
-         else psells.listing_figures(product)},
+         else psells.listing_figures(product),
+         "photos": [] if product is None
+         else photos.product_photos(connection, product["id"]),
+         "photo_problem": photo_problem,
+         "photo_notice": PHOTO_NOTICES.get(
+             request.query_params.get("photos", ""))},
         status_code=status_code,
     )
 
@@ -691,16 +708,120 @@ def add_payment_submit(request: Request, connection: Connection,
     )
 
 
+# Photos ----------------------------------------------------------------------
+
+async def parsed_form(request: Request):
+    """The request's form, parsed, and closed once the route has answered.
+
+    async because reading a body is, so the route itself stays a plain def.
+    Starlette keeps the form it parsed, so the form token check and this read
+    the body once between them. Each uploaded file is spooled to a temporary
+    file, closed here whichever way the route returns.
+    """
+    form = await request.form()
+    try:
+        yield form
+    finally:
+        await form.close()
+
+
+@router.post("/products/{product_id:int}/photos", response_class=HTMLResponse)
+def add_photos_submit(request: Request, connection: Connection,
+                      product_id: int,
+                      form: Annotated[FormData, Depends(parsed_form)]):
+    """Keep the photos chosen, or show the Edit page again with why not.
+
+    A file input with nothing chosen still sends one empty part with no file
+    name, which Starlette reads as text rather than a file, so only files
+    with a name are photos. Each part is read only to one byte
+    past the limit, so an oversized photo is refused without being read
+    whole. nginx allows this one address a larger body than the rest, and
+    still refuses an upload over the limits before the app sees it.
+    """
+    product = find_product(connection, product_id)
+
+    if product is None:
+        return not_found(request, product_id)
+
+    uploads = [(upload.filename, upload.file.read(photos.MAX_PHOTO_BYTES + 1))
+               for upload in form.getlist("photos")
+               if isinstance(upload, UploadFile) and upload.filename]
+
+    try:
+        photos.add_photos(connection, product_id, uploads)
+    except photos.PhotoError as refused:
+        return product_form(request, connection,
+                            psells.product_form_text(product), {},
+                            status_code=422, product=product,
+                            photo_problem=str(refused))
+
+    return RedirectResponse(
+        str(request.url_for("edit_product_page", product_id=product_id)
+            .include_query_params(photos="added")) + "#photos",
+        status_code=303,
+    )
+
+
+@router.get("/photos/{photo_id:int}")
+def photo_file(connection: Connection, photo_id: int):
+    """One photo, behind the login like every page. private: a browser may
+    keep it, a shared cache may not."""
+    photo = photos.find_photo(connection, photo_id)
+
+    if photo is None or not os.path.exists(photos.path_of(photo)):
+        return HTMLResponse("No such photo.", status_code=404)
+
+    return FileResponse(photos.path_of(photo), media_type="image/jpeg",
+                        headers={"Cache-Control": "private, max-age=86400"})
+
+
+def photo_delete_page(request, connection, photo):
+    return templates.TemplateResponse(
+        request, "photo_delete.html",
+        {"photo": photo,
+         "product": find_product(connection, photo["product_id"])})
+
+
+@router.get("/photos/{photo_id:int}/delete", response_class=HTMLResponse)
+def delete_photo_page(request: Request, connection: Connection,
+                      photo_id: int):
+    """The confirmation; the photo is deleted only when its form is posted."""
+    photo = photos.find_photo(connection, photo_id)
+
+    if photo is None:
+        return HTMLResponse("No such photo.", status_code=404)
+
+    return photo_delete_page(request, connection, photo)
+
+
+@router.post("/photos/{photo_id:int}/delete", response_class=HTMLResponse)
+def delete_photo_submit(request: Request, connection: Connection,
+                        photo_id: int):
+    photo = photos.delete_photo(connection, photo_id)
+
+    if photo is None:
+        return HTMLResponse("No such photo.", status_code=404)
+
+    return RedirectResponse(
+        str(request.url_for("edit_product_page",
+                            product_id=photo["product_id"])
+            .include_query_params(photos="deleted")) + "#photos",
+        status_code=303,
+    )
+
+
 # Deleting a product ----------------------------------------------------------
 
-def delete_page(request, product, blocker, status_code=200):
+def delete_page(request, product, blocker, photo_blocker=None,
+                status_code=200):
     """The confirmation page. It is the confirmation: the delete happens only
     when its form is posted. A product with history gets the reason instead
     of a button, so nobody confirms a delete that is then refused."""
     return templates.TemplateResponse(
         request,
         "delete_confirm.html",
-        {"product": product, "blocker": blocker},
+        {"product": product, "blocker": blocker,
+         "photo_blocker": photo_blocker},
         status_code=status_code,
     )
 
@@ -714,7 +835,8 @@ def delete_product_page(request: Request, connection: Connection,
         return not_found(request, product_id)
 
     return delete_page(request, product,
-                       psells.deletion_blocker(connection, product_id))
+                       psells.deletion_blocker(connection, product_id),
+                       psells.photo_blocker(connection, product_id))
 
 
 @router.post("/products/{product_id:int}/delete", response_class=HTMLResponse)
@@ -736,7 +858,11 @@ def delete_product_submit(request: Request, connection: Connection,
     except psells.ProductNotFound:
         return not_found(request, product_id)
     except psells.DeleteRefused as refused:
-        return delete_page(request, product, str(refused), status_code=409)
+        photo_blocker = psells.photo_blocker(connection, product_id)
+        return delete_page(
+            request, product,
+            None if photo_blocker else str(refused), photo_blocker,
+            status_code=409)
 
     return RedirectResponse(request.url_for("inventory_page"),
                             status_code=303)

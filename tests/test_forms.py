@@ -9,17 +9,20 @@ would. The pages' own way, the hidden field and no header, is tested here with
 a client that has the cookie and nothing else.
 """
 
+import io
 import os
 import re
 
 import pytest
 from fastapi.testclient import TestClient
+from PIL import Image
 
 import api
 import auth
 import dependencies
+import photos
 import web
-from helpers import (add_payment, add_product, add_return, add_sale, forms,
+from helpers import (_insert_with_id, add_payment, add_product, add_return, add_sale, forms,
                      log_in)
 
 
@@ -35,7 +38,7 @@ def rows(db):
     return {table: db.execute(f"SELECT COUNT(*) AS n FROM {table}")
             .fetchone()["n"]
             for table in ("products", "sales", "returns", "payments",
-                          "sessions", "corrections")}
+                          "sessions", "corrections", "photos")}
 
 
 def routes(router, methods):
@@ -49,18 +52,32 @@ def routes(router, methods):
 
 WRITES = (routes(web.router, {"POST"})
           + routes(api.protected, {"POST", "PUT", "PATCH", "DELETE"}))
-PAGES = routes(web.router, {"GET"})
+# Every page, without the one GET that answers a photo rather than a page.
+PAGES = [page for page in routes(web.router, {"GET"})
+         if page != ("GET", "/photos/1")]
+
+
+def a_photo():
+    out = io.BytesIO()
+    Image.new("RGB", (40, 30)).save(out, "JPEG")
+    return out.getvalue()
 
 
 @pytest.fixture
-def stock(db):
-    """Product 1 with units left, and sale 1, return 1 and payment 1, so every
-    page with an id in its path has a record to show, and every write one to
-    change."""
+def stock(db, photo_dir):
+    """Product 1 with units left, and sale 1, return 1, payment 1 and photo 1,
+    so every page with an id in its path has a record to show, and every
+    write one to change."""
     add_product(db, 1, quantity_received=5)
     add_sale(db, 1, item_id=1, quantity=1)
     add_return(db, 1, item_id=1, quantity=1)
     add_payment(db, 1, 100)
+    photos.add_photos(db, 1, [("a.jpg", a_photo())])
+    # An identity column does not start again when a test's rows are rolled
+    # back, so the one photo's row is written again with id 1.
+    (photo,) = db.execute("DELETE FROM photos RETURNING file_name").fetchall()
+    _insert_with_id(db, "photos", {"id": 1, "product_id": 1,
+                                   "file_name": photo["file_name"]})
 
 
 @pytest.fixture

@@ -86,6 +86,39 @@
 </form>
 
 {% if product %}
+{#- photos is product_photos, oldest first. Each image is served by
+    photo_file, behind the login; the upload is its own form, since a file
+    cannot travel in the product form's post. accept names JPEG and PNG, which
+    is also what makes an iPhone convert a HEIC photo before sending it. -#}
+<section id="photos" aria-labelledby="photos-heading">
+  <h2 id="photos-heading">Photos</h2>
+  {% if photo_notice %}
+  <p class="notice" role="status">{{ photo_notice }}</p>
+  {% endif %}
+  {% if photo_problem %}
+  <p class="form-error" role="alert">{{ photo_problem }} No photo was added.</p>
+  {% endif %}
+  {% if photos %}
+  <ul class="photos">
+    {% for photo in photos %}
+    <li>
+      <a href="{{ url_for('photo_file', photo_id=photo.id) }}"><img src="{{ url_for('photo_file', photo_id=photo.id) }}" alt="Photo {{ loop.index }} of {{ product.name }}" loading="lazy"></a>
+      <a href="{{ url_for('delete_photo_page', photo_id=photo.id) }}">Delete</a>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p>No photos yet.</p>
+  {% endif %}
+  <form class="search" action="{{ url_for('add_photos_submit', product_id=product.id) }}" method="post" enctype="multipart/form-data">
+    {{ form_token() }}
+    <input type="file" name="photos" accept="image/jpeg,image/png" multiple required aria-label="Photos to add">
+    <button type="submit">Add photos</button>
+  </form>
+  <p class="lead">JPEG or PNG, up to 10 at a time, 25 MB each. Each is kept
+    at 1600 pixels on its long side, without its location.</p>
+</section>
+
 <p><a href="{{ url_for('delete_product_page', product_id=product.id) }}">Delete this product</a></p>
 {% endif %}
 {% endblock %}

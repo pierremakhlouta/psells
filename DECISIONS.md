@@ -30,6 +30,7 @@ readable; they are in its history in git, up to commit 7ecee20.
 - [A wrong record is corrected, and the correction is kept](#a-wrong-record-is-corrected-and-the-correction-is)
 - [Categories and conditions are lists to choose from](#categories-and-conditions-are-lists-to-choose-from)
 - [An item arrives before it is researched, and its stage is worked out](#an-item-arrives-before-it-is-researched-and-its-stage-is-worked-out)
+- [Photos are files, kept without their metadata](#photos-are-files-kept-without-their-metadata)
 
 ### Storage and the database
 
@@ -858,3 +859,21 @@ readable; they are in its history in git, up to commit 7ecee20.
   the four stages still being worked on; sold and returned items are
   counted there and listed on the out-of-stock page, which already shows
   them.
+
+- <a id="photos-are-files-kept-without-their-metadata"></a>**Photos are files, kept without their metadata.**
+  Each item's photos are files in their own Docker volume beside the
+  database's, with a row each in `photos`, rather than in the database,
+  which would make every backup and restore carry them. An upload is never
+  kept as sent: Pillow turns it the right way up, shrinks it to 1600 pixels
+  on its long side and writes it again as a JPEG with no EXIF, XMP or
+  comments, so the location a phone records never reaches the disk. JPEG
+  and PNG only: an iPhone converts its HEIC photos when Safari uploads them,
+  and reading HEIC directly would take a second image library to keep
+  patched. Up to ten photos of 25 MB each per upload, chosen by Pierre; one
+  bad photo keeps none of them. nginx allows that larger body on the upload
+  address alone, every other request staying at 64k, and the page security
+  policy now allows images from PSells itself and nowhere else. Photos are
+  served behind the login like every page. A product with photos is
+  deleted only once its photos are, one by one, so deleting a product never
+  quietly deletes files. Pillow is pinned at 12.3.0 rather than 13.0.0,
+  which was two days old.

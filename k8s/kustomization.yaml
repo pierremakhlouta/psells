@@ -40,6 +40,7 @@ configMapGenerator:
       - app.conf=../nginx/snippets/app.conf
       - headers.conf=../nginx/snippets/headers.conf
       - icon.conf=../nginx/snippets/icon.conf
+      - photos.conf=../nginx/snippets/photos.conf
   - name: nginx-static
     files:
       - apple-touch-icon.png=../static/apple-touch-icon.png

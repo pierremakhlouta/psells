@@ -314,6 +314,7 @@ class _Forms(HTMLParser):
             self._form = {
                 "action": attributes.get("action", ""),
                 "method": attributes.get("method", "get").lower(),
+                "enctype": attributes.get("enctype", ""),
                 "inputs": [],
             }
         elif self._form is None:
