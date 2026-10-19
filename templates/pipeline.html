@@ -16,15 +16,17 @@
 <section class="dashboard" aria-label="Items at each stage">
   <dl>
     {% for stage, count in counts.items() %}
-    <div><dt>{{ stage }}</dt><dd class="num">{{ count }}</dd></div>
+    {#- A working stage's count opens its list below; Sold and Returned are
+        listed on Out of stock. -#}
+    <div><dt>{{ stage }}</dt><dd class="num"><a href="{{ '#' ~ anchors[stage] if stage in anchors else url_for('out_of_stock_page') }}">{{ count }}</a></dd></div>
     {% endfor %}
   </dl>
 </section>
 <p class="panel-link">Sold and returned items are under <a href="{{ url_for('out_of_stock_page') }}">Out of stock</a>.</p>
 
 {% for stage, items in stages %}
-<section aria-labelledby="stage-{{ loop.index }}">
-  <h2 id="stage-{{ loop.index }}">{{ stage }}</h2>
+<section id="{{ anchors[stage] }}" aria-labelledby="{{ anchors[stage] }}-heading">
+  <h2 id="{{ anchors[stage] }}-heading">{{ stage }}</h2>
   <table>
     <thead>
       <tr>

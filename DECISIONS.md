@@ -865,7 +865,11 @@ readable; they are in its history in git, up to commit 7ecee20.
   workflow have neither date; they wait "Unknown" and come first, being the
   oldest. A listed item waiting at least stale_listing_days, a figure in
   the ignored configuration file like the profit minimum, is flagged "Not
-  selling" in the pipeline and the inventory; with none set nothing is. What is not known yet reads "Not
+  selling" in the pipeline and the inventory; with none set nothing is. Each
+  item's Edit page links to a search for its name on the Canadian Amazon,
+  Best Buy and Walmart sites and on Facebook Marketplace, where the retail
+  and Marketplace prices are looked up; the name is quoted into each
+  address, so nothing in it can change the search. What is not known yet reads "Not
   yet" on the pages and in the terminal, and null in the API, never 0. The
   terminal application prints the Marketplace price, the listing details
   and whether the item is also on Instagram, and the API serves all three,

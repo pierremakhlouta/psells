@@ -145,7 +145,7 @@ and a test fails if `seed.sql` is edited by hand.
   with at least one unit available, with a search by name or category.
   **Out of stock** lists the rest, each with the reason it ran out; every
   product is on exactly one of the two.
-- **Pipeline**: how many items are at each stage (Received, Researched,
+- **Pipeline**: how many items are at each stage, each count opening its list (Received, Researched,
   Photographed, Listed, Sold, Returned), and the items still being worked
   on under their stage, the one waiting longest first, with its days at the
   stage, flagged when not worth listing, and, once listed for the days set
@@ -165,7 +165,9 @@ and a test fails if `seed.sql` is edited by hand.
   see them, download one or all of them as a zip, and delete one. A listed
   item's Edit page shows its Facebook listing, and its Instagram one once
   **Also on Instagram** is ticked, filled in from the templates in
-  **Settings** and ready to copy.
+  **Settings** and ready to copy. Every item's Edit page links to a search
+  for it on Amazon, Best Buy, Walmart and Facebook Marketplace, for the
+  research.
 - **Analytics**: headline figures, revenue and profit by month, categories
   and products, as charts drawn on the server, since no page runs a script.
 - **Settings**: the category and condition lists (add, rename, hide, or

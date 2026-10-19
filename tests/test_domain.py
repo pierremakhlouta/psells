@@ -2214,3 +2214,17 @@ def test_each_stage_puts_the_longest_waiting_first(db, partner_rate):
 def test_today_is_the_databases_date(db):
     assert psells.today(db) == db.execute(
         "SELECT CURRENT_DATE AS d").fetchone()["d"]
+
+
+# Research links -----------------------------------------------------------------
+
+def test_each_research_link_searches_the_items_name():
+    links = psells.research_links({"name": "Boots & Laces 9/10 #1"})
+
+    assert [site for site, _ in links] == [
+        "Amazon", "Best Buy", "Walmart", "Facebook Marketplace"]
+    assert links[0][1] == "https://www.amazon.ca/s?k=Boots+%26+Laces+9%2F10+%231"
+    # Quoted whole: nothing in the name adds a parameter or leaves the search.
+    for _, address in links:
+        assert address.endswith("Boots+%26+Laces+9%2F10+%231")
+        assert address.count("&") == 0 and address.count("#") == 0

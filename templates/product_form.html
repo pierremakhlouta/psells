@@ -99,6 +99,18 @@
   </div>
 </form>
 
+{% if product %}
+{#- research_links is psells.research_links: a search for the item's name on
+    each site, opened in a new tab. -#}
+<section id="research" aria-labelledby="research-heading">
+  <h2 id="research-heading">Research</h2>
+  <p>Search for {{ product.name }} on
+    {% for site, address in research_links -%}
+    <a href="{{ address }}" target="_blank" rel="noopener noreferrer">{{ site }}</a>{% if not loop.last %}, {% endif %}
+    {%- endfor %}.</p>
+</section>
+{% endif %}
+
 {% if product and listings %}
 {#- listings is psells.listings: each platform's text for this item, filled
     in from its template. Read-only boxes, so the text can be selected and

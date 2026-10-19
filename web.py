@@ -244,6 +244,7 @@ def pipeline_page(request: Request, connection: Connection):
 
     return templates.TemplateResponse(request, "pipeline.html", {
         "counts": psells.stage_counts(groups),
+        "anchors": {stage: stage.lower() for stage in WORKING_STAGES},
         "stages": [(stage, [(product, psells.listing_figures(product),
                              psells.waiting(product, on))
                             for product in groups[stage]])
@@ -399,6 +400,8 @@ def product_form(request, connection, values, problems, status_code=200,
          "choices": psells.form_choices(connection, product),
          "figures": None if product is None
          else psells.listing_figures(product),
+         "research_links": [] if product is None
+         else psells.research_links(product),
          "listings": {} if product is None
          else psells.listings(connection, product),
          "photos": [] if product is None

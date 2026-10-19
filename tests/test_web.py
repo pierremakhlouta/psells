@@ -2555,3 +2555,29 @@ def test_the_edit_page_says_when_the_item_arrived_and_was_listed(client, db):
     assert lead(2).startswith("Arrived before PSells recorded it, listed before "
                               "PSells recorded it.")
     assert lead(3).startswith("Arrived 2026-10-02. Sold 0")
+
+
+def test_the_edit_page_links_to_research_the_item(client, db):
+    add_product(db, 1, quantity_received=1, name="Trail Runner")
+
+    page = client.get("/products/1/edit").text
+
+    found = re.findall(r'<a href="([^"]+)" target="_blank" rel="noopener '
+                       r'noreferrer">([^<]+)</a>', page)
+    assert found == [(address, site) for site, address in psells.research_links(
+        psells.all_products(db)[0])]
+    assert "Search for Trail Runner on" in " ".join(page.split())
+
+
+def test_each_pipeline_count_opens_its_list(client, db):
+    add_product(db, 1, quantity_received=1)
+
+    page = client.get("/pipeline").text
+
+    links = re.findall(r'<dt>([^<]*)</dt><dd class="num"><a href="([^"]+)">', page)
+    assert links == [("Received", "#received"), ("Researched", "#researched"),
+                     ("Photographed", "#photographed"), ("Listed", "#listed"),
+                     ("Sold", "http://testserver/out-of-stock"),
+                     ("Returned", "http://testserver/out-of-stock")]
+    for anchor in ("received", "researched", "photographed", "listed"):
+        assert f'<section id="{anchor}"' in page

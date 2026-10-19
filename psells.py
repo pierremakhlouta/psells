@@ -3,6 +3,7 @@ import json
 import math
 import re
 import sys
+import urllib.parse
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
@@ -1422,6 +1423,24 @@ def save_listing_template(connection, platform, body):
         connection.execute(
             "UPDATE listing_templates SET body = %s WHERE platform = %s",
             (body, platform))
+
+
+# Where an item is researched: each site's search, with the item's name as
+# the search. The Canadian sites, where the business sells.
+RESEARCH_SEARCHES = (
+    ("Amazon", "https://www.amazon.ca/s?k="),
+    ("Best Buy", "https://www.bestbuy.ca/en-ca/search?search="),
+    ("Walmart", "https://www.walmart.ca/en/search?q="),
+    ("Facebook Marketplace", "https://www.facebook.com/marketplace/search/?query="),
+)
+
+
+def research_links(product):
+    """A search for the item's name on each site research uses, as
+    (site, address). The name is quoted, so nothing in it can add to the
+    address or leave the search."""
+    query = urllib.parse.quote_plus(product["name"])
+    return [(site, start + query) for site, start in RESEARCH_SEARCHES]
 
 
 MULTIPLE_QUANTITIES = "Multiple quantities available"
