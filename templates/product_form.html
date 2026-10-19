@@ -29,6 +29,11 @@
   listed.</p>
 {% endif %}
 
+{% if changed_meanwhile %}
+<p class="form-error" role="alert">Someone changed this item since you opened
+  it, so nothing was saved. This is the item as it is now: make your change
+  again and save.</p>
+{% endif %}
 {% if errors %}
 <p class="form-error" role="alert">
   {%- if product %}Nothing was saved.{% else %}The product was not added.{% endif %} Fix the fields marked below.</p>
@@ -45,6 +50,7 @@
     parse_money. required is a convenience only; the server checks everything. -#}
 <form class="product-form" action="{{ action }}" method="post">
   {{ form_token() }}
+  {% if product %}<input type="hidden" name="version" value="{{ values.version }}">{% endif %}
   {{ choice("category", "Category", choices.category, "Choose a category", required=true) }}
   {{ field("name", "Name", required=true) }}
   {{ field("quantity_received", "Quantity received", inputmode="numeric", required=true) }}

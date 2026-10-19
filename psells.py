@@ -1496,11 +1496,26 @@ def _intake_floor_problem(connection, product_id, quantity_received):
 
     return {}
 
+class ChangedMeanwhile(ValueError):
+    """A save made from a copy of a product that someone else has saved since.
+
+    Raised rather than saving, so the second of two people editing one item
+    does not silently undo the first's changes. Nothing is written.
+    """
+
+    def __init__(self):
+        super().__init__(CHANGED_MEANWHILE)
+
+
+CHANGED_MEANWHILE = ("Someone changed this item since you opened it, so "
+                     "nothing was saved.")
+
+
 def update_product(connection, product_id, category, name, quantity_received,
                    retail_discontinued, retail_price_cents, listed_price_cents,
                    condition, notes, partner_share_mode, partner_share_percent,
                    partner_share_amount_cents, marketplace_price_cents=_KEEP,
-                   details=_KEEP):
+                   details=_KEEP, expected_version=None):
     """Replace every field of one product with the values given.
 
     The whole of editing a product with none of the asking. edit is the same
@@ -1520,6 +1535,13 @@ def update_product(connection, product_id, category, name, quantity_received,
 
     Raises ProductNotFound for an id that does not exist, the same exception
     create_sale raises for one, because it is the same fact about the world.
+
+    expected_version is the version of the product the caller started from,
+    when it has one: the edit page's hidden field, or the product the
+    terminal printed. A product saved by someone else since has a higher
+    version, and the save raises ChangedMeanwhile instead. The version is
+    compared in the UPDATE itself, so no save can slip in between a check
+    and the write.
     """
     current = connection.execute(
         "SELECT category, condition, marketplace_price_cents, details "
@@ -1546,7 +1568,7 @@ def update_product(connection, product_id, category, name, quantity_received,
         raise ProductError(problems)
 
     with connection.transaction():
-        connection.execute(
+        updated = connection.execute(
             "UPDATE products SET "
             "category = %s, name = %s, quantity_received = %s, "
             "retail_price_cents = %s, listed_price_cents = %s, "
@@ -1560,15 +1582,19 @@ def update_product(connection, product_id, category, name, quantity_received,
             "listed_on = CASE WHEN listed_price_cents IS NULL "
             "AND %s::integer IS NOT NULL THEN CURRENT_DATE ELSE listed_on END, "
             "version = version + 1 "
-            "WHERE id = %s",
+            "WHERE id = %s AND (%s::integer IS NULL OR version = %s)",
             (category.strip(), name.strip(), quantity_received,
              retail_price_cents, listed_price_cents,
              1 if retail_discontinued else 0,
              partner_share_mode, partner_share_percent,
              partner_share_amount_cents, _optional_text(condition),
              (notes or "").strip(), marketplace_price_cents,
-             (details or "").strip(), listed_price_cents, product_id)
+             (details or "").strip(), listed_price_cents, product_id,
+             expected_version, expected_version)
         )
+
+        if updated.rowcount == 0 and current is not None:
+            raise ChangedMeanwhile()
 
 # The fields a product form sends, by the names it sends them under. Every value
 # arrives as text, and a field the person left empty arrives as "".
@@ -1722,6 +1748,10 @@ def product_form_text(product):
         "partner_share_percent": "" if percent is None else str(percent),
         "partner_share_amount": "" if amount is None else format_cents(
             amount, symbol=False),
+        # Not a field anyone types: the version the form was opened at, sent
+        # back with the save so update_product can tell whether someone
+        # saved the product in between.
+        "version": str(product["version"]),
     }
 
 
@@ -1730,9 +1760,16 @@ def update_product_from_text(connection, product_id, fields):
 
     As create_product_from_text, every problem at once: what could not be read,
     every rule the readable fields break, and the intake floor. Raises
-    ProductNotFound for an id that does not exist.
+    ProductNotFound for an id that does not exist, and ChangedMeanwhile when
+    the form's version is no longer the product's. A form without a version
+    is not checked; one whose version is not a whole number is treated as
+    out of date, since it did not come from the form PSells served.
     """
     values, problems = read_product_text(fields)
+
+    version_text = (fields.get("version") or "").strip()
+    expected_version = (None if version_text == "" else
+                        int(version_text) if version_text.isdigit() else -1)
 
     if problems:
         rule_values = {key: value for key, value in values.items()
@@ -1746,7 +1783,8 @@ def update_product_from_text(connection, product_id, fields):
             **problems,
         })
 
-    update_product(connection, product_id, **values)
+    update_product(connection, product_id, **values,
+                   expected_version=expected_version)
 
 
 # The fields a sale form sends. As with a product form, every value is text.
@@ -2629,14 +2667,20 @@ def edit(connection):
         if change == "yes":
             mode, percent, amount_cents = ask_partner_share(retail_discontinued)
 
+    # The version the product had when it was chosen: a save from a page in
+    # the meantime makes this one refused, not silently undone.
     try:
         update_product(
             connection, product["id"], category, name, quantity_received,
             retail_discontinued, retail_price_cents, listed_price_cents,
             condition, notes, mode, percent, amount_cents,
+            expected_version=product["version"],
         )
     except ProductError as refused:
         print(f"Not saved. {refused}")
+        return
+    except ChangedMeanwhile as refused:
+        print(f"{refused} Choose it again to see it as it is now.")
         return
 
     print("Product updated successfully.")

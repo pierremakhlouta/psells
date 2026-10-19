@@ -1949,3 +1949,58 @@ def test_each_item_is_at_the_stage_product_stage_gives(db, partner_rate):
 def test_an_empty_shop_has_every_stage_at_zero(db):
     assert psells.stage_counts(psells.pipeline(db)) == dict.fromkeys(
         psells.STAGES, 0)
+
+
+# Two people editing one item -------------------------------------------------------
+
+def test_a_save_from_an_older_version_is_refused_and_writes_nothing(db,
+                                                                    partner_rate):
+    add_product(db, 1, quantity_received=2, name="Boots")
+    psells.update_product(db, 1, **new_product(name="Boots, size 9"),
+                          expected_version=1)
+    assert view_row(db)["version"] == 2
+
+    with pytest.raises(psells.ChangedMeanwhile,
+                       match="Someone changed this item since you opened it"):
+        psells.update_product(db, 1, **new_product(name="Boots, black"),
+                              expected_version=1)
+
+    assert view_row(db)["name"] == "Boots, size 9"
+    assert view_row(db)["version"] == 2
+
+
+def test_a_save_without_a_version_is_not_checked(db, partner_rate):
+    add_product(db, 1, quantity_received=2)
+    psells.update_product(db, 1, **new_product(name="First"))
+
+    psells.update_product(db, 1, **new_product(name="Second"))
+
+    assert view_row(db)["name"] == "Second"
+
+
+def test_a_missing_product_is_not_found_whatever_its_version(db):
+    with pytest.raises(psells.ProductNotFound):
+        psells.update_product(db, 9, **new_product(), expected_version=1)
+
+
+def test_the_terminal_refuses_an_edit_someone_saved_over_meanwhile(
+        db, capsys, monkeypatch, partner_rate):
+    add_product(db, 1, quantity_received=2, name="Boots")
+    replies = iter(["Boots", "", "", "", "", "", "", "", "", "no"])
+
+    def reply(prompt=""):
+        answer = next(replies)
+        # While the terminal is asking, a page saves the same item.
+        if prompt.startswith("Name"):
+            psells.update_product(db, 1, **new_product(name="From the page"))
+        return answer
+
+    monkeypatch.setattr("builtins.input", reply)
+
+    psells.edit(db)
+
+    out = capsys.readouterr().out
+    assert ("Someone changed this item since you opened it, so nothing was "
+            "saved. Choose it again to see it as it is now.") in out
+    assert "Product updated successfully." not in out
+    assert view_row(db)["name"] == "From the page"

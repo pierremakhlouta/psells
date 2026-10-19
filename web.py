@@ -353,6 +353,7 @@ class ProductForm(BaseModel):
     partner_share_amount: str = ""
     marketplace_price: str = ""
     details: str = ""
+    version: str = ""
 
 
 BLANK_PRODUCT = ProductForm(partner_share_mode="default").model_dump()
@@ -366,7 +367,7 @@ PHOTO_NOTICES = {
 
 
 def product_form(request, connection, values, problems, status_code=200,
-                 product=None, photo_problem=None):
+                 product=None, photo_problem=None, changed_meanwhile=False):
     """The product form, for adding or for editing one product.
 
     Empty, filled from the stored product, or as it was typed, with a sentence
@@ -396,6 +397,7 @@ def product_form(request, connection, values, problems, status_code=200,
          "photos": [] if product is None
          else photos.product_photos(connection, product["id"]),
          "photo_problem": photo_problem,
+         "changed_meanwhile": changed_meanwhile,
          "photo_limits": {"count": photos.MAX_PHOTOS_PER_UPLOAD,
                           "megabytes": photos.MAX_PHOTO_MB},
          "photo_notice": PHOTO_NOTICES.get(
@@ -495,6 +497,13 @@ def edit_product_submit(request: Request, connection: Connection,
     except psells.ProductError as refused:
         return product_form(request, connection, fields, refused.problems,
                             status_code=422, product=product)
+    except psells.ChangedMeanwhile:
+        # The form again, as the product is now, with the newer version: a
+        # save from it is checked against what was just shown.
+        return product_form(request, connection,
+                            psells.product_form_text(product), {},
+                            status_code=409, product=product,
+                            changed_meanwhile=True)
 
     return RedirectResponse(
         request.url_for("inventory_page").include_query_params(

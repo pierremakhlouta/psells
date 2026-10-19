@@ -844,7 +844,12 @@ readable; they are in its history in git, up to commit 7ecee20.
   dates an item arrived and was first listed are stored, being facts nobody
   could work out later; products from before have no arrival date. Every
   save raises the product's version, so that a save made from a page opened
-  before someone else's can be refused. What is not known yet reads "Not
+  before someone else's is refused: the edit page carries the version it
+  was opened at, the terminal keeps the one it printed, and the UPDATE
+  itself compares it, so nothing can slip in between a check and the
+  write. Refused, the page shows the item as it now is, and the change is
+  made again from that; nothing is merged, since two people's edits of one
+  field cannot be merged by rule. What is not known yet reads "Not
   yet" on the pages and in the terminal, and null in the API, never 0. The
   terminal application does not ask for the Marketplace price or the
   listing details yet, so an edit made there keeps them as stored rather

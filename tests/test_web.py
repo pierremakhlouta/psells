@@ -892,7 +892,7 @@ def products_stored(db):
     return db.execute("SELECT COUNT(*) AS n FROM products").fetchone()["n"]
 
 
-def test_the_add_form_offers_every_field_the_reader_reads(client):
+def test_the_add_form_offers_every_field_the_reader_reads(client, db):
     """Three lists of the same names: the form, the model that receives it,
     and psells. A field missing from any one would be silently dropped."""
     form = add_form(client)
@@ -901,7 +901,12 @@ def test_the_add_form_offers_every_field_the_reader_reads(client):
     assert form["method"] == "post"
     assert form["action"].endswith("/products/new")
     assert offered == set(psells.PRODUCT_FORM_FIELDS)
-    assert set(web.ProductForm.model_fields) == set(psells.PRODUCT_FORM_FIELDS)
+    # And the version, which only the edit form carries, hidden.
+    assert set(web.ProductForm.model_fields) == (
+        set(psells.PRODUCT_FORM_FIELDS) | {"version"})
+    add_product(db, 1, quantity_received=1)
+    assert field_names(edit_form(client)) == (
+        set(psells.PRODUCT_FORM_FIELDS) | {"version"})
 
 
 def test_a_blank_form_starts_empty_on_the_default_share(client):
@@ -1108,7 +1113,7 @@ def test_the_edit_form_opens_filled_with_the_product(client, db):
         "listed_price": "90.00", "partner_share_mode": "custom_percent",
         "partner_share_percent": "33.333333", "partner_share_amount": "",
         "notes": "boxed", "marketplace_price": "75.50",
-        "details": "With its box",
+        "details": "With its box", "version": "1",
     }
 
 
@@ -2370,3 +2375,50 @@ def test_the_pipeline_page_flags_an_item_not_worth_listing(client, db,
 
     assert ["1", "Product 1 Not worth listing", "Shoes", "1", "Edit"] in rows
     assert ["2", "Product 2", "Shoes", "1", "Edit"] in rows
+
+
+# Two people editing one item ------------------------------------------------------
+
+def test_a_save_from_a_page_opened_before_anothers_save_is_refused(client, db):
+    add_product(db, 1, quantity_received=10, name="Boots")
+    stale = form_data(edit_form(client))
+    submit_edit_form(client, name="Boots, size 9")
+
+    stale["name"] = "Boots, black"
+    response = client.post("/products/1/edit", data=stale,
+                           follow_redirects=False)
+
+    assert response.status_code == 409
+    assert stored(db)["name"] == "Boots, size 9"
+    (sentence, _), *_ = paragraphs(response.text, "form-error")
+    assert sentence == ("Someone changed this item since you opened it, so "
+                        "nothing was saved. This is the item as it is now: "
+                        "make your change again and save.")
+    # The form now shows the other save, with its version, so the next save
+    # from it goes through.
+    fresh = form_data(product_form_in(response.text))
+    assert fresh["name"] == "Boots, size 9"
+    assert fresh["version"] == str(stored(db)["version"])
+    fresh["name"] = "Boots, black"
+    assert client.post("/products/1/edit", data=fresh,
+                       follow_redirects=False).status_code == 303
+    assert stored(db)["name"] == "Boots, black"
+
+
+@pytest.mark.parametrize("version", ["abc", "-1", "0"])
+def test_a_version_that_is_not_the_products_is_refused(client, db, version):
+    add_product(db, 1, quantity_received=10, name="Boots")
+
+    response = submit_edit_form(client, name="Other", version=version)
+
+    assert response.status_code == 409
+    assert stored(db)["name"] == "Boots"
+
+
+def test_a_refused_edit_keeps_its_version(client, db):
+    add_product(db, 1, quantity_received=10)
+
+    response = submit_edit_form(client, name="")
+
+    assert response.status_code == 422
+    assert field(product_form_in(response.text), "version")["value"] == "1"
