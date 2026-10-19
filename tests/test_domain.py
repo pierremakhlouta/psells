@@ -2114,3 +2114,103 @@ def test_the_terminal_says_nothing_of_details_an_item_does_not_have(capsys):
     assert "Marketplace Price: Not yet" in printed
     assert "Details" not in printed
     assert "On Instagram: No" in printed
+
+
+# Stage dates: how long an item has waited ----------------------------------------
+
+@pytest.mark.parametrize("content, expected", [
+    ("{}", None),
+    ('{"stale_listing_days": 1}', 1),
+    ('{"stale_listing_days": 30}', 30),
+])
+def test_the_not_selling_limit_is_read_from_the_config_file(
+        monkeypatch, tmp_path, content, expected):
+    config = tmp_path / "config.json"
+    config.write_text(content)
+    monkeypatch.setattr(psells, "CONFIG_FILE", str(config))
+
+    assert psells.stale_listing_days() == expected
+
+
+@pytest.mark.parametrize("value", ['"30"', "0", "-1", "1.5", "true"])
+def test_a_not_selling_limit_that_is_not_whole_days_is_refused(
+        monkeypatch, tmp_path, value):
+    config = tmp_path / "config.json"
+    config.write_text(f'{{"stale_listing_days": {value}}}')
+    monkeypatch.setattr(psells, "CONFIG_FILE", str(config))
+
+    with pytest.raises(ValueError, match="stale_listing_days"):
+        psells.stale_listing_days()
+
+
+ON = date(2026, 10, 19)
+
+
+def item(listed=True, arrived_on=date(2026, 9, 1), listed_on=date(2026, 9, 19)):
+    return {"listed_price_cents": 9000 if listed else None,
+            "arrived_on": arrived_on, "listed_on": listed_on}
+
+
+@pytest.mark.parametrize("product, days", [
+    (item(), 30),                                  # since it was listed
+    (item(listed=False), 48),                      # since it arrived
+    (item(listed_on=None), None),                  # listed before PSells recorded it
+    (item(listed=False, arrived_on=None), None),   # arrived before
+    (item(listed_on=ON), 0),
+])
+def test_an_item_waits_from_its_listing_or_its_arrival(stale_days, product,
+                                                       days):
+    assert psells.waiting(product, ON)["days"] == days
+
+
+@pytest.mark.parametrize("listed_on, flagged", [
+    (date(2026, 9, 19), True),    # 30 days: the limit itself
+    (date(2026, 9, 20), False),   # 29 days
+    (date(2026, 1, 1), True),
+])
+def test_a_listing_at_the_limit_or_past_it_is_not_selling(stale_days,
+                                                          listed_on, flagged):
+    assert psells.waiting(item(listed_on=listed_on), ON)["not_selling"] is flagged
+
+
+def test_an_item_not_listed_is_never_not_selling_and_reads_no_limit(monkeypatch):
+    def unread():
+        raise AssertionError("the limit was read for an item it cannot apply to")
+    monkeypatch.setattr(psells, "stale_listing_days", unread)
+
+    assert psells.waiting(item(listed=False, arrived_on=date(2025, 1, 1)),
+                          ON)["not_selling"] is False
+    assert psells.waiting(item(listed_on=None), ON)["not_selling"] is False
+
+
+def test_no_limit_flags_nothing(monkeypatch):
+    monkeypatch.setattr(psells, "stale_listing_days", lambda: None)
+
+    assert psells.waiting(item(listed_on=date(2020, 1, 1)), ON)["not_selling"] is False
+
+
+def test_each_stage_puts_the_longest_waiting_first(db, partner_rate):
+    unresearched = {"listed_price_cents": None, "retail_price_cents": None,
+                    "condition": None}
+    add_product(db, 1, quantity_received=1, arrived_on=date(2026, 10, 1),
+                **unresearched)
+    add_product(db, 2, quantity_received=1, arrived_on=date(2026, 9, 1),
+                **unresearched)
+    add_product(db, 3, quantity_received=1, arrived_on=None, **unresearched)
+    add_product(db, 4, quantity_received=1, arrived_on=date(2026, 9, 1),
+                **unresearched)
+    add_product(db, 5, quantity_received=1, listed_on=date(2026, 10, 10))
+    add_product(db, 6, quantity_received=1, listed_on=None)
+    add_product(db, 7, quantity_received=1, arrived_on=date(2026, 10, 18),
+                listed_on=date(2026, 9, 5))
+
+    groups = psells.pipeline(db)
+
+    assert [p["id"] for p in groups["Received"]] == [3, 2, 4, 1]
+    # A listed item waits from its listing, not its arrival.
+    assert [p["id"] for p in groups["Listed"]] == [6, 7, 5]
+
+
+def test_today_is_the_databases_date(db):
+    assert psells.today(db) == db.execute(
+        "SELECT CURRENT_DATE AS d").fetchone()["d"]

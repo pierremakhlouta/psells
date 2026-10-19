@@ -147,7 +147,9 @@ and a test fails if `seed.sql` is edited by hand.
   product is on exactly one of the two.
 - **Pipeline**: how many items are at each stage (Received, Researched,
   Photographed, Listed, Sold, Returned), and the items still being worked
-  on under their stage, oldest first, flagged when not worth listing.
+  on under their stage, the one waiting longest first, with its days at the
+  stage, flagged when not worth listing, and, once listed for the days set
+  as `stale_listing_days` in `data/config.json`, when not selling.
 - **Sales**, **Returns** and **Payments**: every record, newest first, with
   **Edit** and **Delete** to correct one entered wrongly. A sale keeps its
   frozen figures, and every correction is kept, as the record was, in the

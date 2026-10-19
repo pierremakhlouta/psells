@@ -629,6 +629,58 @@ def minimum_listing_profit_cents():
     return minimum
 
 
+def stale_listing_days():
+    """How many days listed makes an item "not selling", or None when the
+    config file sets none, so nothing is flagged. Pierre's figure, kept
+    beside the partner rate rather than in source."""
+    days = load_config().get("stale_listing_days")
+
+    if days is None:
+        return None
+
+    if not isinstance(days, int) or isinstance(days, bool) or days < 1:
+        raise ValueError(
+            f"stale_listing_days in {CONFIG_FILE} "
+            f"must be a whole number of days, 1 or more, found {days!r}"
+        )
+
+    return days
+
+
+def today(connection):
+    """The database's date, the one arrived_on and listed_on are stamped
+    with, so a count of days never mixes two clocks."""
+    return connection.execute("SELECT CURRENT_DATE AS d").fetchone()["d"]
+
+
+def waiting_since(product):
+    """The date an item's wait counts from: the day it was listed, for a
+    listed item, and the day it arrived otherwise. None when not recorded."""
+    if product["listed_price_cents"] is not None:
+        return product["listed_on"]
+    return product["arrived_on"]
+
+
+def waiting(product, on):
+    """How long an item has waited at its stage, as of the date on.
+
+    days counts from the day it was listed, for a listed item, and from the
+    day it arrived otherwise; None when that date was never recorded, as for
+    the products from before the workflow. not_selling is true for a listed
+    item waiting at least stale_listing_days, never for one whose days are
+    unknown or when no limit is set; the config file is read only once
+    there are days to compare.
+    """
+    since = waiting_since(product)
+    days = None if since is None else (on - since).days
+
+    listed = product["listed_price_cents"] is not None
+    limit = stale_listing_days() if listed and days is not None else None
+
+    return {"days": days,
+            "not_selling": limit is not None and days >= limit}
+
+
 def listing_figures(product):
     """What listing one unit of this item would leave, in cents.
 
@@ -757,8 +809,10 @@ def pipeline(connection):
     """Every product under the stage product_stage gives it, as
     {stage: [product, ...]} with every stage in STAGES order, empty or not.
 
-    Products keep id order within a stage, so the oldest comes first. Which
-    products have a photo is asked once, not once per product.
+    Within a stage the item waiting longest comes first: by the day it was
+    listed for a listed item, by the day it arrived otherwise, and an item
+    with no such date, from before the workflow, before any. Which products
+    have a photo is asked once, not once per product.
     """
     photographed = {row["product_id"] for row in connection.execute(
         "SELECT DISTINCT product_id FROM photos").fetchall()}
@@ -768,6 +822,15 @@ def pipeline(connection):
     for product in all_products(connection):
         groups[product_stage(product, product["id"] in photographed)].append(
             product)
+
+    # Oldest first by the date the item's wait counts from; an unknown date
+    # is from before the workflow, so older than any known one.
+    def oldest_first(product):
+        since = waiting_since(product)
+        return (since is not None, since or date.min, product["id"])
+
+    for products in groups.values():
+        products.sort(key=oldest_first)
 
     return groups
 

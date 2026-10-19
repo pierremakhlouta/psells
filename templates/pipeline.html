@@ -6,11 +6,13 @@
 <h1>Pipeline</h1>
 <p class="lead">Every item at the furthest stage it has reached: Received,
   Researched once its research is complete, Photographed with a photo, Listed
-  with a listed price, then Sold or Returned when none is left. Oldest first.</p>
+  with a listed price, then Sold or Returned when none is left. The item
+  waiting longest comes first: since it was listed, for a listed item, and
+  since it arrived otherwise.</p>
 
 {#- counts is stage_counts, every stage's number of products, and stages the
-    working stages' items with listing_figures each, from pipeline_page. This
-    file shows them and computes nothing. -#}
+    working stages' items with listing_figures and waiting each, from
+    pipeline_page. This file shows them and computes nothing. -#}
 <section class="dashboard" aria-label="Items at each stage">
   <dl>
     {% for stage, count in counts.items() %}
@@ -30,21 +32,23 @@
         <th>Name</th>
         <th>Category</th>
         <th class="num">Available</th>
+        <th class="num">Waiting</th>
         <th><span class="visually-hidden">Actions</span></th>
       </tr>
     </thead>
     <tbody>
-      {% for product, figures in items %}
+      {% for product, figures, waited in items %}
       <tr>
         <td class="num">{{ product.id }}</td>
-        <td>{{ product.name }}{% if figures.not_worth_listing %} <strong>Not worth listing</strong>{% endif %}</td>
+        <td>{{ product.name }}{% if figures.not_worth_listing %} <strong>Not worth listing</strong>{% endif %}{% if waited.not_selling %} <strong>Not selling</strong>{% endif %}</td>
         <td>{{ product.category }}</td>
         <td class="num">{{ product.quantity_available }}</td>
+        <td class="num">{% if waited.days is none %}Unknown{% elif waited.days == 1 %}1 day{% else %}{{ waited.days }} days{% endif %}</td>
         <td class="row-actions"><a href="{{ url_for('edit_product_page', product_id=product.id) }}">Edit</a></td>
       </tr>
       {% else %}
       <tr>
-        <td colspan="5" class="empty">No items at this stage.</td>
+        <td colspan="6" class="empty">No items at this stage.</td>
       </tr>
       {% endfor %}
     </tbody>

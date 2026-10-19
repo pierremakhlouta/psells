@@ -13,7 +13,7 @@ markup in the browser.
 
 import os
 import re
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 from jinja2 import nodes
@@ -2375,8 +2375,9 @@ def test_the_pipeline_page_flags_an_item_not_worth_listing(client, db,
 
     rows = table_rows(client.get("/pipeline").text)
 
-    assert ["1", "Product 1 Not worth listing", "Shoes", "1", "Edit"] in rows
-    assert ["2", "Product 2", "Shoes", "1", "Edit"] in rows
+    assert ["1", "Product 1 Not worth listing", "Shoes", "1", "0 days",
+            "Edit"] in rows
+    assert ["2", "Product 2", "Shoes", "1", "0 days", "Edit"] in rows
 
 
 # Two people editing one item ------------------------------------------------------
@@ -2502,3 +2503,55 @@ def test_also_on_instagram_is_ticked_or_not(client, db):
 
     assert response.status_code == 422
     assert "Also on Instagram is either ticked or not." in response.text
+
+
+# How long items have waited ----------------------------------------------------
+
+def test_the_pipeline_shows_how_long_each_item_has_waited(client, db):
+    on = psells.today(db)
+    add_product(db, 1, quantity_received=1, listed_price_cents=None,
+                retail_price_cents=None, condition=None,
+                arrived_on=on - timedelta(days=12))
+    add_product(db, 2, quantity_received=1, listed_price_cents=None,
+                retail_price_cents=None, condition=None,
+                arrived_on=on - timedelta(days=1))
+    add_product(db, 3, quantity_received=1, listed_on=None)
+    add_product(db, 4, quantity_received=1,
+                listed_on=on - timedelta(days=30))
+
+    rows = {row[0]: row for row in table_rows(client.get("/pipeline").text)}
+
+    assert rows["1"][4] == "12 days"
+    assert rows["2"][4] == "1 day"
+    assert rows["3"][4] == "Unknown"
+    assert rows["4"][1] == "Product 4 Not selling"
+    assert rows["3"][1] == "Product 3"
+
+
+def test_the_inventory_flags_a_listing_that_is_not_selling(client, db):
+    on = psells.today(db)
+    add_product(db, 1, quantity_received=1,
+                listed_on=on - timedelta(days=45))
+    add_product(db, 2, quantity_received=1,
+                listed_on=on - timedelta(days=29))
+
+    names = [row[NAME] for row in table_rows(client.get("/").text)]
+
+    assert names == ["Product 1 Not selling", "Product 2"]
+
+
+def test_the_edit_page_says_when_the_item_arrived_and_was_listed(client, db):
+    add_product(db, 1, quantity_received=1, arrived_on=date(2026, 9, 1),
+                listed_on=date(2026, 9, 19))
+    add_product(db, 2, quantity_received=1, arrived_on=None, listed_on=None)
+    add_product(db, 3, quantity_received=1, listed_price_cents=None,
+                arrived_on=date(2026, 10, 2))
+
+    def lead(product_id):
+        return " ".join(paragraphs(client.get(f"/products/{product_id}/edit").text,
+                                   "lead")[0][0].split())
+
+    assert lead(1).startswith("Arrived 2026-09-01, listed 2026-09-19. Sold 0")
+    assert lead(2).startswith("Arrived before PSells recorded it, listed before "
+                              "PSells recorded it.")
+    assert lead(3).startswith("Arrived 2026-10-02. Sold 0")

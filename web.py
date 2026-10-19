@@ -145,8 +145,9 @@ def inventory_page(request: Request, connection: Connection, q: str = "",
         None,
     ) if paid else None
 
+    on = psells.today(connection)
     inventory = [
-        (product, psells.listing_figures(product))
+        (product, psells.listing_figures(product), psells.waiting(product, on))
         for product in products
     ]
 
@@ -234,14 +235,17 @@ def pipeline_page(request: Request, connection: Connection):
     """How many items are at each stage, and the items still being worked on.
 
     The stages and counts are pipeline and stage_counts; each working item
-    comes with listing_figures, for its "Not worth listing" flag. Nothing is
-    worked out here.
+    comes with listing_figures, for its "Not worth listing" flag, and
+    waiting, for its days at the stage and its "Not selling" flag. Nothing
+    is worked out here.
     """
     groups = psells.pipeline(connection)
+    on = psells.today(connection)
 
     return templates.TemplateResponse(request, "pipeline.html", {
         "counts": psells.stage_counts(groups),
-        "stages": [(stage, [(product, psells.listing_figures(product))
+        "stages": [(stage, [(product, psells.listing_figures(product),
+                             psells.waiting(product, on))
                             for product in groups[stage]])
                    for stage in WORKING_STAGES],
     })

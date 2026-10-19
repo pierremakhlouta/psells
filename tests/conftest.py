@@ -149,6 +149,15 @@ def listing_minimum(monkeypatch):
 
 
 @pytest.fixture
+def stale_days(monkeypatch):
+    """Pin "not selling" at an invented 30 days listed, for partner_rate's
+    reasons."""
+    monkeypatch.setattr(psells, "stale_listing_days", lambda: 30)
+
+    return 30
+
+
+@pytest.fixture
 def photo_dir(monkeypatch, tmp_path):
     """Keep photos in a folder of this test's own, never in data/photos."""
     folder = tmp_path / "photos"
@@ -178,7 +187,7 @@ def answers(monkeypatch):
 
 
 @pytest.fixture
-def client(db, partner_rate, listing_minimum, photo_dir):
+def client(db, partner_rate, listing_minimum, stale_days, photo_dir):
     """A logged-in test client whose requests run against the test database.
 
     It calls the application directly rather than opening a socket, and swaps

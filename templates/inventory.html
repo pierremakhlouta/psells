@@ -61,7 +61,7 @@
 </form>
 
 {#- Every figure arrives worked out. This file formats and never computes: the
-    partner cut and the flag come from listing_figures in web.py, and the money filter is
+    partner cut and the flags come from listing_figures and waiting in web.py, and the money filter is
     psells.format_cents. A price not entered yet, and a cut that cannot be
     worked out without it, are None, which the filter would fail on, so they
     go through maybe_money. -#}
@@ -80,10 +80,10 @@
     </tr>
   </thead>
   <tbody>
-    {% for product, figures in inventory %}
+    {% for product, figures, waited in inventory %}
     <tr>
       <td class="num">{{ product.id }}</td>
-      <td>{{ product.name }}{% if figures.not_worth_listing %} <strong>Not worth listing</strong>{% endif %}</td>
+      <td>{{ product.name }}{% if figures.not_worth_listing %} <strong>Not worth listing</strong>{% endif %}{% if waited.not_selling %} <strong>Not selling</strong>{% endif %}</td>
       <td>{{ product.category }}</td>
       <td>{{ product.condition or "Not yet" }}</td>
       <td class="num">{{ product.quantity_available }}</td>

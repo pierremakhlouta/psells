@@ -1,4 +1,5 @@
 {
   "default_partner_share_percent": 30,
-  "minimum_listing_profit_cents": 1500
+  "minimum_listing_profit_cents": 1500,
+  "stale_listing_days": 30
 }

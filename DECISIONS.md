@@ -858,7 +858,14 @@ readable; they are in its history in git, up to commit 7ecee20.
   condition or the details when there are none. With more than one unit in
   stock, "Multiple quantities available" follows the price's line. The text
   sits in a read-only box, to be selected and copied, since no page runs a
-  script that could copy it. What is not known yet reads "Not
+  script that could copy it. How long an item has waited is worked out from its
+  two stored dates: since it was listed, for a listed item, and since it
+  arrived otherwise, counted by the database's date, the one the dates are
+  stamped with, so two clocks are never mixed. Items from before the
+  workflow have neither date; they wait "Unknown" and come first, being the
+  oldest. A listed item waiting at least stale_listing_days, a figure in
+  the ignored configuration file like the profit minimum, is flagged "Not
+  selling" in the pipeline and the inventory; with none set nothing is. What is not known yet reads "Not
   yet" on the pages and in the terminal, and null in the API, never 0. The
   terminal application prints the Marketplace price, the listing details
   and whether the item is also on Instagram, and the API serves all three,
