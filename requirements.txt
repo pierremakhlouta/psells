@@ -6,7 +6,7 @@
 #
 # Development and testing tools live in requirements-dev.txt, so a deployment
 # installs what it needs to run and nothing else.
-fastapi==0.142.4
+fastapi==0.143.3
 uvicorn==0.54.0
 
 # The template engine for the web pages. FastAPI does not install it, because
@@ -31,4 +31,4 @@ argon2-cffi==25.1.0
 # its long side and writes it as a JPEG with no metadata, in photos.py. JPEG
 # and PNG only, so no second image library for HEIC. 12.3.0 rather than 13.0.0,
 # which was two days old when this was pinned.
-pillow==12.3.0
+pillow==13.0.0
