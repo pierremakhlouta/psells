@@ -500,8 +500,9 @@ def test_an_empty_history_page_says_so_and_has_no_table(client, path):
 @pytest.mark.parametrize("path", HISTORY_PAGES)
 def test_every_page_links_to_the_history_pages_from_the_nav(client, db, path):
     add_product(db, 1, quantity_received=1)
-    label = {"/sales-history": "Sales", "/returns-history": "Returns",
-             "/payments-history": "Payments"}[path]
+    label = {"/sales-history": "Sales history",
+             "/returns-history": "Returns history",
+             "/payments-history": "Payment history"}[path]
 
     for page in ["/", "/out-of-stock", *HISTORY_PAGES, "/products/new",
                  "/products/1/edit", "/payments/new"]:
@@ -512,17 +513,17 @@ def test_every_page_links_to_the_history_pages_from_the_nav(client, db, path):
 
 
 def current_links(html):
-    return re.findall(r'<a href="[^"]*" aria-current="page">([^<]*)</a>', html)
+    return re.findall(r'<a href="[^"]*" aria-current="page"[^>]*>([^<]*)</a>', html)
 
 
 @pytest.mark.parametrize("path, label", [
-    ("/", "Inventory"), ("/pipeline", "Pipeline"),
+    ("/", "In stock"), ("/pipeline", "Pipeline"),
     ("/price-drops", "Price drops"),
     ("/out-of-stock", "Out of stock"),
-    ("/sales-history", "Sales"), ("/returns-history", "Returns"),
-    ("/payments-history", "Payments"), ("/analytics", "Analytics"),
+    ("/sales-history", "Sales history"), ("/returns-history", "Returns history"),
+    ("/payments-history", "Payment history"), ("/analytics", "Analytics"),
     ("/products/new", "Add product"), ("/payments/new", "Record payment"),
-    ("/settings", "Settings"),
+    ("/settings", "\u2699"),
 ])
 def test_the_menu_marks_the_page_being_shown(client, db, path, label):
     assert current_links(client.get(path).text) == [label]
@@ -2077,6 +2078,7 @@ def test_there_are_templates_to_check():
     assert "settings.html" in names
     assert "pipeline.html" in names
     assert "price_drops.html" in names
+    assert "home.html" in names
 
 
 def test_no_template_does_arithmetic():
@@ -2681,15 +2683,17 @@ def product_form_in_add(html):
 
 def test_the_price_drops_page_shows_what_price_drops_finds(client, db):
     add_product(db, 1, quantity_received=1, name="Old Boots")
-    add_product(db, 2, quantity_received=1, name="Tight", listed_price_cents=5500)
+    # $25.00 of room, no more than the invented least: left out.
+    add_product(db, 2, quantity_received=1, name="Tight", listed_price_cents=6500)
 
     page = client.get("/price-drops")
 
     assert page.status_code == 200
+    assert "<th class=\"num\">Break-even price</th>" in page.text
     assert table_rows(page.text) == [
-        ["1", "Old Boots", "Unknown", "$90.00", "$55.00", "$35.00", "Edit"]]
+        ["1", "Old Boots", "Unknown", "$90.00", "$40.00", "$50.00", "Edit"]]
     assert [psells.format_cents(d["room_cents"])
-            for d in psells.price_drops(db)] == ["$35.00"]
+            for d in psells.price_drops(db)] == ["$50.00"]
 
 
 def test_the_price_drops_page_says_when_there_is_nothing(client, db):
@@ -2776,3 +2780,127 @@ def test_the_saving_button_comes_first(client, db):
     buttons = re.findall(r'<button type="submit"[^>]*>([^<]*)</button>', form)
 
     assert buttons[:2] == ["Add product", "Generate listing"]
+
+
+# The menu --------------------------------------------------------------------------
+
+def menus(html):
+    """Each drop-down menu: its heading, whether it is marked, its links."""
+    found = []
+    for summary, links in re.findall(
+            r'<details class="menu" name="menu">\s*(<summary[^>]*>[^<]*</summary>)(.*?)</details>',
+            html, re.S):
+        marked = 'class="current"' in summary
+        heading = re.search(r">([^<]*)</summary>", summary).group(1)
+        found.append((heading, marked,
+                      re.findall(r'<a href="[^"]*"[^>]*>([^<]*)</a>', links)))
+    return found
+
+
+def test_the_menu_groups_the_pages_under_three_headings(client, db):
+    assert menus(client.get("/analytics").text) == [
+        ("Products", False, ["In stock", "Pipeline", "Price drops", "Out of stock"]),
+        ("Sales", False, ["Sales history", "Returns history"]),
+        ("Payments", False, ["Record payment", "Payment history"]),
+    ]
+
+
+@pytest.mark.parametrize("path, heading", [
+    ("/pipeline", "Products"), ("/returns-history", "Sales"),
+    ("/payments/new", "Payments"),
+])
+def test_a_menus_heading_is_marked_on_its_own_pages(client, db, path, heading):
+    marked = [h for h, is_marked, _ in menus(client.get(path).text) if is_marked]
+
+    assert marked == [heading]
+
+
+def test_add_product_is_a_button_and_settings_a_labelled_gear(client, db):
+    page = client.get("/analytics").text
+
+    assert '>Add product</a>' in page and 'class="button"' in page
+    assert ('class="gear" title="Settings" aria-label="Settings">\u2699</a>'
+            in page)
+
+
+def test_the_menu_stays_at_the_top_of_the_window(client, db):
+    style = re.search(r"<style>(.*?)</style>", client.get("/").text, re.S).group(1)
+    header = re.search(r"header \{(.*?)\}", style, re.S).group(1)
+
+    assert "position: sticky;" in header and "top: 0;" in header
+
+
+# Home ------------------------------------------------------------------------------
+
+def test_home_shows_what_needs_doing_and_this_month(client, db):
+    on = psells.today(db)
+    add_product(db, 1, quantity_received=1, **LIGHT, photos_required=True)
+    add_product(db, 2, quantity_received=1, marketplace_price_cents=8000,
+                listed=False, photos_required=True)
+    add_product(db, 3, quantity_received=4,
+                listed_on=on - timedelta(days=60))       # not selling
+    add_product(db, 4, quantity_received=1,
+                listed_on=on - timedelta(days=3))        # listed, selling
+    add_sale(db, 1, 3, 2, sale_price_cents=9000, partner_share_cents=4000,
+             date=str(on))
+    add_sale(db, 2, 3, 1, sale_price_cents=9000, partner_share_cents=4000,
+             date="2020-01-15")                            # not this month
+
+    page = client.get("/home").text
+    shown = figures(page)
+
+    assert (shown["In progress"], shown["Needs photos"], shown["Ready to list"]) == (
+        "1", "1", "0")
+    assert shown["Not selling"] == "1"
+    assert shown["Sales"] == "1" and shown["Units sold"] == "2"
+    assert (shown["Revenue"], shown["Profit"]) == ("$180.00", "$100.00")
+    assert shown["Balance owing"] == psells.format_cents(
+        psells.dashboard_totals(db)["balance_owing"])
+    assert f"{on.strftime('%B %Y')} so far" in page
+    # Each count opens the list it counts.
+    assert 'href="http://testserver/pipeline#needs-photos"' in page
+    assert 'href="http://testserver/price-drops"' in page
+
+
+def test_the_home_figures_are_home_summarys(client, db):
+    add_product(db, 1, quantity_received=1)
+
+    summary = psells.home_summary(db)
+    shown = figures(client.get("/home").text)
+
+    assert shown["Room for a price drop"] == str(summary["price_drops"])
+    assert shown["Profit"] == psells.format_cents(summary["month"]["profit_cents"])
+
+
+def test_the_psells_name_leads_home(client, db):
+    assert '<a class="brand" href="http://testserver/home">PSells</a>' in (
+        client.get("/analytics").text)
+
+
+def test_the_boxes_that_apply_to_one_choice_hide_until_it_is_made(client, db):
+    page = client.get("/products/new").text
+    style = re.search(r"<style>(.*?)</style>", page, re.S).group(1)
+
+    # Each box carries the class its rule hides.
+    for key, only in (("retail_price", "only-retail"),
+                      ("partner_share_percent", "only-percent"),
+                      ("partner_share_amount", "only-amount")):
+        assert re.search(rf'<div class="field {only}">\s*<label for="{key}">',
+                         page), key
+    # And the rules, by :has(), with no script.
+    assert ".product-form:has(#retail_discontinued:checked) .only-retail" in style
+    assert ('option[value="custom_percent"]:checked)) .only-percent' in style)
+    assert ('option[value="custom_amount"]:checked)) .only-amount' in style)
+    assert "<script" not in page
+
+
+def test_a_box_with_a_problem_is_never_hidden(client, db):
+    data = {**form_data(add_form(client)), **GOOD,
+            "partner_share_mode": "custom_percent", "partner_share_percent": "abc"}
+    data.pop("photos")
+
+    page = client.post("/products/new", data=data).text
+
+    assert re.search(r'<div class="field only-percent has-error">', page)
+    style = re.search(r"<style>(.*?)</style>", page, re.S).group(1)
+    assert ".only-percent:not(.has-error)" in style

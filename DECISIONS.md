@@ -975,11 +975,14 @@ readable; they are in its history in git, up to commit 7ecee20.
   its photos and listing are, rather than the inventory; nginx's larger
   upload limit covers the add form's address too. A Price drops page lists
   the listed items that have sat long enough to count as not selling, and
-  the older ones with no listing date, which are the oldest, wherever the
-  listed price is above the partner's payout plus the minimum profit; that
-  sum is shown as the lowest price, below which an item is not worth
-  listing, and the difference as its room, most room first. It shows and
-  never changes a price: a drop is made on the item's page, as any edit. The
+  the older ones with no listing date, which are the oldest. Each shows its
+  break-even price, the partner's cut, below which a sale loses money, and
+  its room, the listed price less that, most room first; only items with
+  more room than a figure Pierre sets in the configuration file
+  (price_drop_minimum_room_cents) are listed. It began with the minimum
+  profit added to the cut, and Pierre chose break-even with a room of his
+  own instead. It shows and never changes a price: a drop is made on the
+  item's page, as any edit. The
   add and edit forms have a Generate listing button beside the saving one:
   with no script on the page it cannot wait for the fields to fill, so it
   is always there, and pressing it shows the listing the typed text would
@@ -990,5 +993,15 @@ readable; they are in its history in git, up to commit 7ecee20.
   their share of it; profit so far beside revenue so far; and nothing for a
   category or product that has not sold. The views still carry sell-through
   and every product; only what the page reads changed, and the running
-  profit total is one more column of the monthly view.
+  profit total is one more column of the monthly view. With more pages
+  the menu was crowded, so it became three drop-down menus, Products, Sales
+  and Payments, made with HTML's own details element so they open with no
+  script, beside Analytics, an Add product button and a gear for Settings;
+  it is pinned to the top of the window. The PSells name and logging in
+  open a Home page of what needs doing and how the month stands, every
+  figure from psells.home_summary. On the product form a box that applies
+  to one choice only (the retail price, the partner percentage, the fixed
+  amount) is hidden until that choice is made, by CSS's :has(), again with
+  no script: a browser without :has() shows them all, and a box with a
+  problem is never hidden.
   *This replaces the stages of "An item arrives before it is researched".*

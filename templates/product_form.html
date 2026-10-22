@@ -67,7 +67,10 @@
     {% if errors.retail_discontinued %}<p class="error">{{ errors.retail_discontinued }}</p>{% endif %}
   </div>
 
-  {{ field("retail_price", "Retail price ($)", hint="Blank until researched, and if discontinued at retail.", inputmode="decimal") }}
+  {#- The only-* classes hide a box that does not apply to the choice above
+      it, with style alone (base.html); every box still posts, and psells
+      ignores what does not apply. -#}
+  {{ field("retail_price", "Retail price ($)", hint="Blank until researched.", inputmode="decimal", only="only-retail") }}
   {{ field("marketplace_price", "Marketplace price ($)", hint="What it sells for on Facebook Marketplace, on average.", inputmode="decimal") }}
 
   <div class="field{% if errors.partner_share_mode %} has-error{% endif %}">
@@ -83,8 +86,8 @@
     {% if errors.partner_share_mode %}<p class="error">{{ errors.partner_share_mode }}</p>{% endif %}
   </div>
 
-  {{ field("partner_share_percent", "Partner percentage (%)", hint="Only for a custom percentage.", inputmode="decimal") }}
-  {{ field("partner_share_amount", "Partner amount per unit ($)", hint="Only for a fixed amount.", inputmode="decimal") }}
+  {{ field("partner_share_percent", "Partner percentage (%)", inputmode="decimal", only="only-percent") }}
+  {{ field("partner_share_amount", "Partner amount per unit ($)", inputmode="decimal", only="only-amount") }}
   {{ field("listed_price", "Listed price ($)", hint="The price it will be posted at.", inputmode="decimal") }}
 
   <div class="field check wide{% if errors.on_instagram %} has-error{% endif %}">

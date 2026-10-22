@@ -158,6 +158,15 @@ def stale_days(monkeypatch):
 
 
 @pytest.fixture
+def drop_room(monkeypatch):
+    """Pin the least room shown on the price drops page at an invented
+    $25.00, for partner_rate's reasons."""
+    monkeypatch.setattr(psells, "price_drop_minimum_room_cents", lambda: 2500)
+
+    return 2500
+
+
+@pytest.fixture
 def photo_dir(monkeypatch, tmp_path):
     """Keep photos in a folder of this test's own, never in data/photos."""
     folder = tmp_path / "photos"
@@ -187,7 +196,7 @@ def answers(monkeypatch):
 
 
 @pytest.fixture
-def client(db, partner_rate, listing_minimum, stale_days, photo_dir):
+def client(db, partner_rate, listing_minimum, stale_days, drop_room, photo_dir):
     """A logged-in test client whose requests run against the test database.
 
     It calls the application directly rather than opening a socket, and swaps

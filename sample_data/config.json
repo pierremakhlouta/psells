@@ -1,5 +1,6 @@
 {
   "default_partner_share_percent": 30,
   "minimum_listing_profit_cents": 1500,
-  "stale_listing_days": 30
+  "stale_listing_days": 30,
+  "price_drop_minimum_room_cents": 2500
 }

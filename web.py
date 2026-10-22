@@ -280,6 +280,16 @@ def pipeline_page(request: Request, connection: Connection):
     })
 
 
+@router.get("/home", response_class=HTMLResponse)
+def home_page(request: Request, connection: Connection):
+    """What needs doing and how things stand, on one screen: home_summary's
+    figures, each linking to the page that lists them. The page logging in
+    lands on, and where the PSells name leads."""
+    return templates.TemplateResponse(request, "home.html", {
+        "summary": psells.home_summary(connection),
+    })
+
+
 @router.get("/price-drops", response_class=HTMLResponse)
 def price_drops_page(request: Request, connection: Connection):
     """The listed items that have sat long enough and have room to come down,
@@ -1342,9 +1352,9 @@ def login_form(request, username="", problem="", status_code=200):
 
 @public.get("/login", response_class=HTMLResponse)
 def login_page(request: Request, session: Session):
-    """The login form, or the inventory for someone already logged in."""
+    """The login form, or Home for someone already logged in."""
     if session is not None:
-        return RedirectResponse(request.url_for("inventory_page"),
+        return RedirectResponse(request.url_for("home_page"),
                                 status_code=303)
     return login_form(request)
 
@@ -1377,7 +1387,7 @@ def login_submit(request: Request, connection: Connection,
     auth.end_session(connection, request.cookies.get(SESSION_COOKIE))
     cookie_value, _ = auth.start_session(connection, user_id, auth.now())
 
-    response = RedirectResponse(request.url_for("inventory_page"),
+    response = RedirectResponse(request.url_for("home_page"),
                                 status_code=303)
     response.set_cookie(
         SESSION_COOKIE, cookie_value,

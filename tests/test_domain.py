@@ -2324,35 +2324,71 @@ def test_each_research_link_searches_the_items_name():
 # Price drops ---------------------------------------------------------------------
 
 def drops(db):
-    return [(d["product"]["id"], d["days"], d["lowest_cents"], d["room_cents"])
+    return [(d["product"]["id"], d["days"], d["break_even_cents"], d["room_cents"])
             for d in psells.price_drops(db)]
 
 
-def test_a_listed_item_sitting_long_shows_its_room_to_come_down(
-        db, partner_rate, listing_minimum, stale_days):
+@pytest.mark.parametrize("content, expected", [
+    ("{}", None),
+    ('{"price_drop_minimum_room_cents": 0}', 0),
+    ('{"price_drop_minimum_room_cents": 2000}', 2000),
+])
+def test_the_least_room_is_read_from_the_config_file(monkeypatch, tmp_path,
+                                                     content, expected):
+    config = tmp_path / "config.json"
+    config.write_text(content)
+    monkeypatch.setattr(psells, "CONFIG_FILE", str(config))
+
+    assert psells.price_drop_minimum_room_cents() == expected
+
+
+@pytest.mark.parametrize("value", ['"2000"', "20.5", "-1", "true"])
+def test_a_least_room_that_is_not_whole_cents_is_refused(monkeypatch, tmp_path,
+                                                         value):
+    config = tmp_path / "config.json"
+    config.write_text(f'{{"price_drop_minimum_room_cents": {value}}}')
+    monkeypatch.setattr(psells, "CONFIG_FILE", str(config))
+
+    with pytest.raises(ValueError, match="price_drop_minimum_room_cents"):
+        psells.price_drop_minimum_room_cents()
+
+
+def test_a_listed_item_sitting_long_shows_its_room_above_break_even(
+        db, partner_rate, drop_room, stale_days):
     on = psells.today(db)
-    # $100.00 retail: a $40.00 payout, plus the $15.00 minimum, is $55.00.
+    # $100.00 retail: the partner's $40.00 is break-even; $90.00 listed
+    # leaves $50.00 of room.
     add_product(db, 1, quantity_received=1)                     # from before
     add_product(db, 2, quantity_received=1, listed_on=on - timedelta(days=30))
     add_product(db, 3, quantity_received=1, listed_on=on - timedelta(days=29))
 
-    assert drops(db) == [(1, None, 5500, 3500), (2, 30, 5500, 3500)]
+    assert drops(db) == [(1, None, 4000, 5000), (2, 30, 4000, 5000)]
+
+
+@pytest.mark.parametrize("listed_price, shown", [
+    (6500, False),   # $25.00 of room: not more than the least, so left out
+    (6501, True),    # a cent more
+])
+def test_only_more_room_than_the_least_is_shown(db, partner_rate, drop_room,
+                                                stale_days, listed_price, shown):
+    add_product(db, 1, quantity_received=1, listed_price_cents=listed_price)
+
+    assert bool(drops(db)) is shown
 
 
 @pytest.mark.parametrize("overrides", [
-    {"listed_price_cents": 5500},                        # no room
     # Not listed, and undated, so only the tick keeps it out.
     {"listed": False, "listed_price_cents": 9000, "arrived_on": None},
     {"retail_price_cents": None, "listed": True},        # payout unknown
 ])
-def test_an_item_without_room_or_not_listed_is_left_out(
-        db, partner_rate, listing_minimum, stale_days, overrides):
+def test_an_item_not_listed_or_without_a_payout_is_left_out(
+        db, partner_rate, drop_room, stale_days, overrides):
     add_product(db, 1, quantity_received=1, **overrides)
 
     assert drops(db) == []
 
 
-def test_an_item_out_of_stock_is_left_out(db, partner_rate, listing_minimum,
+def test_an_item_out_of_stock_is_left_out(db, partner_rate, drop_room,
                                           stale_days):
     add_product(db, 1, quantity_received=1)
     add_sale(db, 1, 1, 1)
@@ -2360,25 +2396,36 @@ def test_an_item_out_of_stock_is_left_out(db, partner_rate, listing_minimum,
     assert drops(db) == []
 
 
-def test_the_most_room_comes_first(db, partner_rate, listing_minimum, stale_days):
-    add_product(db, 1, quantity_received=1, listed_price_cents=5501)
+def test_the_most_room_comes_first(db, partner_rate, drop_room, stale_days):
+    add_product(db, 1, quantity_received=1, listed_price_cents=6600)
     add_product(db, 2, quantity_received=1, listed_price_cents=9000)
     add_product(db, 3, quantity_received=1, listed_price_cents=7000)
 
     assert [(i, room) for i, _, _, room in drops(db)] == [
-        (2, 3500), (3, 1500), (1, 1)]
+        (2, 5000), (3, 3000), (1, 2600)]
 
 
-def test_without_a_minimum_the_lowest_price_is_the_payout(db, partner_rate,
-                                                          monkeypatch, stale_days):
-    monkeypatch.setattr(psells, "minimum_listing_profit_cents", lambda: None)
+def test_without_a_least_room_any_room_shows(db, partner_rate, monkeypatch,
+                                             stale_days):
+    monkeypatch.setattr(psells, "price_drop_minimum_room_cents", lambda: None)
+    add_product(db, 1, quantity_received=1, listed_price_cents=4001)
+    add_product(db, 2, quantity_received=1, listed_price_cents=4000)
+
+    assert drops(db) == [(1, None, 4000, 1)]
+
+
+def test_the_minimum_profit_plays_no_part(db, partner_rate, drop_room,
+                                          stale_days, monkeypatch):
+    def unread():
+        raise AssertionError("the minimum profit was read")
+    monkeypatch.setattr(psells, "minimum_listing_profit_cents", unread)
     add_product(db, 1, quantity_received=1)
 
     assert drops(db) == [(1, None, 4000, 5000)]
 
 
 def test_without_a_not_selling_limit_only_the_undated_count(
-        db, partner_rate, listing_minimum, monkeypatch):
+        db, partner_rate, drop_room, monkeypatch):
     monkeypatch.setattr(psells, "stale_listing_days", lambda: None)
     add_product(db, 1, quantity_received=1)
     add_product(db, 2, quantity_received=1,

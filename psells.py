@@ -682,22 +682,75 @@ def waiting(product, on):
             "not_selling": limit is not None and days >= limit}
 
 
+def home_summary(connection):
+    """What the Home page shows, every figure worked out here.
+
+    to_do: how many items are In progress, Need photos and are Ready to list,
+    from pipeline. not_selling: listed items in stock flagged by waiting.
+    price_drops: how many items price_drops finds. month: this calendar
+    month's sales so far (by the database's date), their count, units,
+    revenue and profit, each sale counted at the figures it froze.
+    balance_owing_cents: dashboard_totals' balance owed to the partner.
+    """
+    groups = pipeline(connection)
+    counts = stage_counts(groups)
+    on = today(connection)
+    month = connection.execute(
+        "SELECT count(*) AS sales, "
+        "COALESCE(sum(quantity), 0) AS units, "
+        "COALESCE(sum(quantity * sale_price_cents), 0) AS revenue_cents, "
+        "COALESCE(sum(quantity * (sale_price_cents - partner_share_cents)), 0) "
+        "AS profit_cents "
+        "FROM sales WHERE date_trunc('month', date) = date_trunc('month', %s::date)",
+        (on,)).fetchone()
+
+    return {
+        "to_do": {stage: counts[stage]
+                  for stage in ("In progress", "Needs photos", "Ready to list")},
+        "not_selling": sum(1 for product in groups["Listed"]
+                           if waiting(product, on)["not_selling"]),
+        "price_drops": len(price_drops(connection)),
+        "month": dict(month),
+        "month_name": on.strftime("%B %Y"),
+        "balance_owing_cents": dashboard_totals(connection)["balance_owing"],
+    }
+
+
+def price_drop_minimum_room_cents():
+    """The least room, in cents, worth showing on the price drops page, or
+    None when the config file sets none, so every item with any room shows.
+    Pierre's figure, kept beside the partner rate rather than in source."""
+    room = load_config().get("price_drop_minimum_room_cents")
+
+    if room is None:
+        return None
+
+    if not isinstance(room, int) or isinstance(room, bool) or room < 0:
+        raise ValueError(
+            f"price_drop_minimum_room_cents in {CONFIG_FILE} "
+            f"must be a whole number of cents, 0 or more, found {room!r}"
+        )
+
+    return room
+
+
 def price_drops(connection):
     """The listed items a price could come down on, most room first.
 
     An item counts once it is listed, in stock, and has waited at least
     stale_listing_days since it was listed, or has no listing date at all
     (the products from before the workflow, which are the oldest). Its
-    lowest price is the partner's payout plus minimum_listing_profit_cents
-    (nothing more when no minimum is set), the least it can sell for and
-    still be worth listing; its room is the listed price less that. An item
-    with no room, or whose payout is unknown, is left out.
+    break-even price is the partner's payout: sold at it, the item makes
+    nothing and loses nothing. Its room is the listed price less that, and
+    only an item with more room than price_drop_minimum_room_cents (any room
+    at all when none is set) is shown. An item whose payout is unknown is
+    left out.
 
-    Each entry is {"product", "days", "lowest_cents", "room_cents"}.
+    Each entry is {"product", "days", "break_even_cents", "room_cents"}.
     """
     on = today(connection)
     limit = stale_listing_days()
-    minimum = minimum_listing_profit_cents() or 0
+    least_room = price_drop_minimum_room_cents() or 0
     drops = []
 
     for product in in_stock_products(connection):
@@ -709,11 +762,10 @@ def price_drops(connection):
         payout = partner_share_for(product)
         if payout is None:
             continue
-        lowest = payout + minimum
-        room = product["listed_price_cents"] - lowest
-        if room > 0:
+        room = product["listed_price_cents"] - payout
+        if room > least_room:
             drops.append({"product": product, "days": days,
-                          "lowest_cents": lowest, "room_cents": room})
+                          "break_even_cents": payout, "room_cents": room})
 
     drops.sort(key=lambda drop: (-drop["room_cents"], drop["product"]["id"]))
     return drops

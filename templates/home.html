@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+
+{% block title %}Home · PSells{% endblock %}
+
+{#- summary is psells.home_summary: every figure worked out there, each
+    linking to the page that lists it. This file computes nothing. -#}
+{% block content %}
+<h1>Home</h1>
+
+<section class="dashboard" aria-label="To do">
+  <dl>
+    <div><dt><a href="{{ url_for('pipeline_page') }}#in-progress">In progress</a></dt><dd class="num">{{ summary.to_do["In progress"] }}</dd></div>
+    <div><dt><a href="{{ url_for('pipeline_page') }}#needs-photos">Needs photos</a></dt><dd class="num">{{ summary.to_do["Needs photos"] }}</dd></div>
+    <div><dt><a href="{{ url_for('pipeline_page') }}#ready-to-list">Ready to list</a></dt><dd class="num">{{ summary.to_do["Ready to list"] }}</dd></div>
+  </dl>
+  <dl>
+    <div><dt><a href="{{ url_for('pipeline_page') }}#listed">Not selling</a></dt><dd class="num">{{ summary.not_selling }}</dd></div>
+    <div><dt><a href="{{ url_for('price_drops_page') }}">Room for a price drop</a></dt><dd class="num">{{ summary.price_drops }}</dd></div>
+    <div><dt><a href="{{ url_for('payments_history_page') }}">Balance owing</a></dt><dd class="num">{{ summary.balance_owing_cents|money }}</dd></div>
+  </dl>
+</section>
+
+<h2>{{ summary.month_name }} so far</h2>
+<section class="dashboard" aria-label="This month so far">
+  <dl>
+    <div><dt><a href="{{ url_for('sales_history_page') }}">Sales</a></dt><dd class="num">{{ summary.month.sales }}</dd></div>
+    <div><dt>Units sold</dt><dd class="num">{{ summary.month.units }}</dd></div>
+  </dl>
+  <dl>
+    <div><dt>Revenue</dt><dd class="num">{{ summary.month.revenue_cents|money }}</dd></div>
+    <div><dt>Profit</dt><dd class="num">{{ summary.month.profit_cents|money }}</dd></div>
+  </dl>
+</section>
+{% endblock %}

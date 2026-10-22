@@ -6,9 +6,27 @@
 {% from "macros.html" import form_token with context -%}
 {#- A menu link, marked as the page being shown when its address is the
     request's. -#}
-{% macro nav_link(endpoint, label) -%}
+{% macro nav_link(endpoint, label, class="", title="") -%}
 {%- set href = url_for(endpoint) -%}
-<a href="{{ href }}"{% if request.url.path == href.path %} aria-current="page"{% endif %}>{{ label }}</a>
+<a href="{{ href }}"{% if request.url.path == href.path %} aria-current="page"{% endif %}{% if class %} class="{{ class }}"{% endif %}{% if title %} title="{{ title }}" aria-label="{{ title }}"{% endif %}>{{ label }}</a>
+{%- endmacro %}
+{#- A menu of links that opens on a tap or a click, with no script: <details>
+    does it. name puts every menu in one group, so opening one closes the
+    others. Its heading is marked when the page being shown is one of its
+    links. -#}
+{% macro nav_menu(label, links) -%}
+{%- set here = namespace(found=false) -%}
+{%- for endpoint, _ in links -%}
+{%- if request.url.path == url_for(endpoint).path %}{% set here.found = true %}{% endif -%}
+{%- endfor -%}
+<details class="menu" name="menu">
+  <summary{% if here.found %} class="current"{% endif %}>{{ label }}</summary>
+  <ul>
+    {% for endpoint, text in links %}
+    <li>{{ nav_link(endpoint, text) }}</li>
+    {% endfor %}
+  </ul>
+</details>
 {%- endmacro %}
 <!doctype html>
 <html lang="en">
@@ -24,7 +42,14 @@
       background: #f6f8fa;
     }
 
-    header { background: #24292f; }
+    /* Pinned to the top of the window, so the menu stays in reach however
+       far a page is scrolled. Above everything else on the page. */
+    header {
+      background: #24292f;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
 
     nav, main {
       max-width: 1200px;
@@ -62,6 +87,43 @@
       text-underline-offset: 0.4em;
     }
     nav .brand { font-weight: 600; margin-right: 1rem; }
+
+    /* A drop-down menu: its heading on the bar, its links in a panel below
+       while open. */
+    nav .menu { position: relative; color: #f6f8fa; }
+    nav .menu summary { cursor: pointer; list-style: none; }
+    nav .menu summary::-webkit-details-marker { display: none; }
+    nav .menu summary::after { content: " \25BE"; font-size: 0.8em; }
+    nav .menu summary:hover { text-decoration: underline; }
+    nav .menu summary.current {
+      font-weight: 600;
+      text-decoration: underline;
+      text-decoration-thickness: 2px;
+      text-underline-offset: 0.4em;
+    }
+    nav .menu ul {
+      position: absolute;
+      top: 1.8rem;
+      left: -0.75rem;
+      min-width: 11rem;
+      margin: 0;
+      padding: 0.4rem 0;
+      list-style: none;
+      background: #24292f;
+      border: 1px solid #57606a;
+      border-radius: 6px;
+      z-index: 11;
+    }
+    nav .menu li a { display: block; padding: 0.35rem 0.75rem; }
+
+    /* The one action used most, as a button on the bar. */
+    nav .button {
+      padding: 0.2rem 0.65rem;
+      border: 1px solid #f6f8fa;
+      border-radius: 6px;
+    }
+
+    nav .gear { font-size: 1.15rem; line-height: 1; }
 
     nav .logout { margin: 0 0 0 auto; }
 
@@ -219,6 +281,17 @@
 
     .field { display: flex; flex-direction: column; gap: 0.3rem; }
     .field.wide { grid-column: 1 / -1; }
+
+    /* A box that applies only to one choice is hidden until that choice is
+       made, by :has(), with no script: the retail price while Discontinued
+       is ticked, the percentage unless the share is a custom percentage,
+       the amount unless it is a fixed amount. A browser without :has()
+       shows them all, as before. A box with a problem is never hidden. */
+    .product-form:has(#retail_discontinued:checked) .only-retail:not(.has-error),
+    .product-form:not(:has(#partner_share_mode option[value="custom_percent"]:checked)) .only-percent:not(.has-error),
+    .product-form:not(:has(#partner_share_mode option[value="custom_amount"]:checked)) .only-amount:not(.has-error) {
+      display: none;
+    }
     .field label { font-weight: 600; }
     .field small { color: #656d76; }
     .field .error { margin: 0; color: #cf222e; }
@@ -309,21 +382,21 @@
 <body>
   <header>
     <nav>
-      <a class="brand" href="{{ url_for('inventory_page') }}">PSells</a>
+      <a class="brand" href="{{ url_for('home_page') }}">PSells</a>
       {#- The login page empties this block: nothing behind the login is
           linked from it. -#}
       {% block nav %}
-      {{ nav_link('inventory_page', 'Inventory') }}
-      {{ nav_link('pipeline_page', 'Pipeline') }}
-      {{ nav_link('price_drops_page', 'Price drops') }}
-      {{ nav_link('out_of_stock_page', 'Out of stock') }}
-      {{ nav_link('sales_history_page', 'Sales') }}
-      {{ nav_link('returns_history_page', 'Returns') }}
-      {{ nav_link('payments_history_page', 'Payments') }}
+      {{ nav_menu("Products", [("inventory_page", "In stock"),
+                               ("pipeline_page", "Pipeline"),
+                               ("price_drops_page", "Price drops"),
+                               ("out_of_stock_page", "Out of stock")]) }}
+      {{ nav_menu("Sales", [("sales_history_page", "Sales history"),
+                            ("returns_history_page", "Returns history")]) }}
+      {{ nav_menu("Payments", [("add_payment_page", "Record payment"),
+                               ("payments_history_page", "Payment history")]) }}
       {{ nav_link('analytics_page', 'Analytics') }}
-      {{ nav_link('add_product_page', 'Add product') }}
-      {{ nav_link('add_payment_page', 'Record payment') }}
-      {{ nav_link('settings_page', 'Settings') }}
+      {{ nav_link('add_product_page', 'Add product', class="button") }}
+      {{ nav_link('settings_page', '⚙', class="gear", title="Settings") }}
       {#- A form, not a link: logging out is a POST. -#}
       <form class="logout" action="{{ url_for('logout') }}" method="post">
         {{ form_token() }}

@@ -142,13 +142,13 @@ def test_the_login_page_links_to_nothing_behind_the_login(anonymous):
     assert "/logout" not in page.text
 
 
-def test_logging_in_sets_the_cookie_and_opens_the_inventory(anonymous, db):
+def test_logging_in_sets_the_cookie_and_opens_home(anonymous, db):
     add_user(db)
 
     response = log_in_through_the_page(anonymous)
 
     assert response.status_code == 303
-    assert response.headers["location"] == "https://testserver/"
+    assert response.headers["location"] == "https://testserver/home"
     assert anonymous.get("/", follow_redirects=False).status_code == 200
     assert sessions(db) == 1
 
@@ -212,7 +212,7 @@ def test_someone_logged_in_is_sent_past_the_login_page(anonymous, db):
     response = anonymous.get("/login", follow_redirects=False)
 
     assert response.status_code == 303
-    assert response.headers["location"] == "https://testserver/"
+    assert response.headers["location"] == "https://testserver/home"
 
 
 def test_logging_in_ends_the_session_the_browser_had(anonymous, db):

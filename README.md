@@ -140,6 +140,13 @@ and a test fails if `seed.sql` is edited by hand.
 
 ## Using it
 
+The menu stays at the top of the window. **PSells** opens **Home**: what needs
+doing (items in progress, needing photos, ready to list), what needs a look
+(listings not selling, items with room for a price drop), the balance owed to
+the partner and the month so far. **Products**, **Sales** and **Payments**
+open their pages from drop-down menus, **Add product** is a button, and the
+gear is **Settings**.
+
 **The web pages**, behind a login:
 
 - **Inventory**, the home page: the nine dashboard figures and the products
@@ -147,10 +154,10 @@ and a test fails if `seed.sql` is edited by hand.
   **Out of stock** lists the rest, each with the reason it ran out; every
   product is on exactly one of the two.
 - **Price drops**: listed items that have sat at least `stale_listing_days`,
-  or since before PSells recorded listing dates, whose price has room to
-  come down, each with the lowest price that keeps the minimum profit
-  (the partner's payout plus `minimum_listing_profit_cents`), most room
-  first.
+  or since before PSells recorded listing dates, each with its break-even
+  price (the partner's cut) and the room between that and its listed price,
+  most room first; items with no more room than
+  `price_drop_minimum_room_cents` in `data/config.json` are left out.
 - **Pipeline**: how many items are at each stage, each count opening its list (In
   progress, Needs photos, Ready to list, Listed, Sold, Returned), and the
   items still being worked on under their stage with what each still needs, the one waiting longest first, with its days at the
