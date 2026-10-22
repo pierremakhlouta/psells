@@ -128,6 +128,7 @@ readable; they are in its history in git, up to commit 7ecee20.
 
 - [A runbook procedure is tried before it is written down](#a-runbook-procedure-is-tried-before-it-is-written-down)
 - [Decisions keep their order, with an index by area](#decisions-keep-their-order-with-an-index-by-area)
+- [PSells is kept, not grown: maintenance from 22 October 2026](#psells-is-kept-not-grown-maintenance-from-22-october-2026)
 
 ## The decisions, in the order they were made
 
@@ -616,7 +617,9 @@ readable; they are in its history in git, up to commit 7ecee20.
   in the same package under `nginx-<commit>`, so nothing new had to be made
   public or granted. The server runs it by digest as it runs the app, and both
   nginx exceptions are gone. The zlib exception stood for one deploy, while
-  this was built. The agent keeps its exception: PSells does not build it.
+  this was built. The agent kept its exception, since PSells does not build
+  it, until Alloy v1.21.1 shipped the fixes on 21 October 2026 and the
+  exception was deleted: no image is scanned with one now.
 
 - <a id="kubernetes-runs-on-the-mac-with-kind-and-the"></a>**Kubernetes runs on the Mac, with kind, and the sample records only.**
   Nothing is ever paid for, so not EKS; kind is a real cluster in Docker
@@ -936,3 +939,16 @@ readable; they are in its history in git, up to commit 7ecee20.
   (photo-limit.conf), since it takes no variable, and a test holds each to
   what the app accepts. The nightly reset deletes the photos visitors
   uploaded, so a stranger's photo never outlives the night.
+
+- <a id="psells-is-kept-not-grown-maintenance-from-22-october-2026"></a>**PSells is kept, not grown: maintenance from 22 October 2026.**
+  After Phase 15 Pierre wanted to come back only to add or change something,
+  or when something breaks. So nothing is left on a schedule for him: the
+  monitoring agent moved to Alloy v1.21.1, which passes the scan with no
+  exception, so no exception can expire; Dependabot runs monthly and proposes
+  patch releases only, a new minor or major version being a change made on
+  purpose, while the weekly scans still fail and email on any flaw with a
+  fix; and the demo ends with AWS's free plan, about 27 March 2027, the
+  morning backup notifying him from 1 March with the shutdown in the
+  runbook. What remains to call him back is listed in the runbook, "When
+  something calls you back". The choices Claude made while building Phase 15
+  without stopping to ask were listed for him and accepted.

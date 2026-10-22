@@ -146,6 +146,11 @@ while IFS= read -r line; do
     log "certificate  $line"
 done < <("$SCRIPT_DIR/check-certificates.sh")
 
+# The demo's end, in March 2027; nothing outside that month.
+while IFS= read -r line; do
+    log "demo  $line"
+done < <("$SCRIPT_DIR/demo-end-reminder.sh")
+
 # Every copy above is on the Mac's own disk. offsite-backup.sh puts the dump
 # and the configuration, encrypted, into iCloud Drive, and proves the copy
 # decrypts; see it for how. A failure there is logged as one, after the line

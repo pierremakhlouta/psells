@@ -194,7 +194,7 @@ jobs:
     # Dependabot watches compose.aws.yaml, so test_container.py fails if this
     # line and that file ever differ.
     env:
-      ALLOY_IMAGE: grafana/alloy:v1.20.1@sha256:2aa2099af76c0098d4af7a4d6e48f86cb66dc1a000222ad927a1c67c6542d13f
+      ALLOY_IMAGE: grafana/alloy:v1.21.1@sha256:4039c971193053a84e53dd9ed3e7d4561c069256b024631cd3498a353ed7ece8
 
     steps:
       - name: Pull the image
@@ -211,29 +211,13 @@ jobs:
       - name: Show the list
         run: cat grype-all.txt
 
-      # For monitoring/grype-exceptions.yaml: the one image with an exception,
-      # because it is not PSells' to rebuild.
-      - name: Check out the repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-
-      - name: Fail once the exceptions have expired
-        run: |
-          expires=$(sed -n 's/^# expires: //p' monitoring/grype-exceptions.yaml)
-          echo "Exceptions expire on $expires"
-          test "$(date -u +%F)" '<' "$expires"
-
-      # The OpenSSL exception rests on this: the agent never loads libssl.
-      - name: Fail if the agent links OpenSSL
-        run: |
-          libraries=$(docker run --rm --entrypoint ldd "$ALLOY_IMAGE" /bin/alloy)
-          echo "$libraries"
-          ! grep -q libssl <<< "$libraries"
-
+      # No exceptions: the agent is held to the same rule as PSells' own
+      # images. A flaw with a fix fails this until Alloy ships the fix and
+      # the pin moves, here and in compose.aws.yaml together.
       - name: Fail on a high or critical vulnerability that has a fix
         uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439  # v7.4.2
         with:
           image: ${{ env.ALLOY_IMAGE }}
-          config: monitoring/grype-exceptions.yaml
           only-fixed: true
           severity-cutoff: high
           fail-build: true

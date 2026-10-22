@@ -959,3 +959,42 @@ def test_a_photos_copy_that_failed_is_made_again_the_next_morning(photo_backup):
     assert result.returncode == 0, result.stderr
     assert photo_backup.kept() == ["photos-2026-10-20_090000.tar"]
     assert photo_backup.copies() == ["photos-2026-10-20_090000.tar.age"]
+
+
+# The demo's end ----------------------------------------------------------------
+
+REMINDER = os.path.join(psells.PROJECT_DIR, "demo-end-reminder.sh")
+
+
+@pytest.mark.parametrize("today, reminded", [
+    ("2027-02-28", False), ("2027-03-01", True), ("2027-03-27", True),
+    ("2027-03-28", False), ("2026-10-22", False),
+])
+def test_the_demos_end_is_announced_through_march_2027(tmp_path, today, reminded):
+    project = tmp_path / "psells"
+    project.mkdir()
+    shutil.copy(REMINDER, project / "demo-end-reminder.sh")
+    shown = tmp_path / "shown"
+    stand_in(project / "notify.sh", f'echo "$1|$2" >> "{shown}"\n')
+
+    result = subprocess.run(["bash", str(project / "demo-end-reminder.sh")],
+                            capture_output=True, text=True,
+                            env=dict(os.environ, PSELLS_TODAY=today))
+
+    assert result.returncode == 0, result.stderr
+    if reminded:
+        assert result.stdout == ("AWS's free plan closes about 2027-03-27. "
+                                 "Follow RUNBOOK.md, End the demonstration.\n")
+        assert shown.read_text().startswith("PSells demo ends soon|")
+    else:
+        assert result.stdout == ""
+        assert not shown.exists()
+
+
+def test_the_backup_logs_the_demos_end():
+    with open(BACKUP_SCRIPT) as file:
+        text = file.read()
+
+    assert 'done < <("$SCRIPT_DIR/demo-end-reminder.sh")' in text
+    assert 'log "demo  $line"' in text
+    assert os.access(REMINDER, os.X_OK)

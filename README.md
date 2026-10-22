@@ -13,9 +13,9 @@ containers, HTTPS, CI that ships to AWS, monitoring against service level
 objectives, Kubernetes, and an analytics warehouse.
 
 The real business runs on a Mac. A copy holding invented records only runs on
-AWS at `https://psells.lakeshorefreight.me`: log in as `demo`, password
-`psells-demo-visitor`, and change anything you like; it puts itself back
-every night.
+AWS at `https://psells.lakeshorefreight.me` until about 27 March 2027,
+when AWS's free plan ends: log in as `demo`, password `psells-demo-visitor`,
+and change anything you like; it puts itself back every night.
 
 ## What it covers
 
@@ -316,10 +316,12 @@ image, and the Kubernetes cluster.
   Mac is refused (an iPhone converts its own when uploading).
 - **Monitoring covers the demo only.** The Mac has its notifications, and the
   application's own errors are not in Grafana.
-- **The monitoring agent's scan has a dated exception** for an OpenSSL flaw
-  it never loads, until 30 November 2026.
-- **The demo is temporary**: AWS's free plan ends in March 2027; the
-  Terraform rebuilds it.
+- **The demo is temporary**: it ends with AWS's free plan, about 27 March
+  2027 (RUNBOOK.md, "End the demonstration"); the Terraform rebuilds it on a
+  paid account.
+- **In maintenance since 22 October 2026**: Dependabot proposes patch
+  releases monthly; a new minor or major version is a change made on
+  purpose.
 - **The cluster runs the images it was pinned to**, moved by hand, so it can
   run older code than `main`; a pod being replaced can drop a request.
 - **No intake date**, so no inventory ageing, and the sample business cannot

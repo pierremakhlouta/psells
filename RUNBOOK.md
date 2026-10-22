@@ -302,25 +302,52 @@ needs sudo: without it, it says "No entries".
   Parameter Store, then deploy; the deploy writes `.env` and the roles again.
 - **The login**: `set_password.py`, above.
 
-### Weekly
+### When something calls you back
 
-- **Dependabot** opens pull requests that raise a pinned version; the checks
-  run on them. Merge one whose checks pass and whose version is newer than
-  the pin (it has proposed an older nginx before; do not merge that).
-- **The scan exception** for the monitoring agent's OpenSSL expires on the
-  date in `monitoring/grype-exceptions.yaml`; from then the Image workflow
-  fails until a fixed agent image is pinned or the exception renewed with its
-  reason.
-- **AWS**: the free plan's credits, and that the code still matches what
-  runs:
+PSells has been in maintenance since 22 October 2026: nothing needs doing on
+a schedule. These are the only things that ask for attention, each by
+itself:
 
-  ```
-  aws freetier get-account-plan-state --region us-east-1 --profile psells --query 'accountPlanRemainingCredits.amount'
-  (cd infra/aws && AWS_PROFILE=psells terraform plan)
-  ```
+- **A notification on the Mac**: see "A PSells notification appears" below.
+  It covers the backup, the login start, the hourly analytics, a certificate
+  a month before it ends, and the demo's end in March 2027.
+- **An email from a failed GitHub check.** The weekly scans in security.yml
+  and image.yml fail when a published flaw with a fix reaches a pinned
+  package or image, Alloy included. Move that pin to the fixed version (by
+  digest for an image, checked with `docker buildx imagetools inspect`) and
+  push; the deploy follows when every check passes.
+- **Dependabot's monthly pull requests**: patch releases only. Merge one
+  whose checks pass. A minor or major version (a new Python, nginx's next
+  stable line) is a change made on purpose, on a branch, not a pull request.
 
-  Sign in first with `aws login --profile psells --remote` as the IAM user,
-  never root.
+### End the demonstration
+
+Before AWS's free plan closes the account, about 27 March 2027; the morning
+backup reminds you from 1 March. In this order, so nothing fails or emails
+afterwards. Stop the deploys, so a push no longer tries to reach the server:
+
+```
+gh workflow disable deploy.yml
+```
+
+Remove the outside checks, the service level objectives and the alert, so
+Grafana does not report a server that is meant to be gone:
+
+```
+cd infra/grafana && AWS_PROFILE=psells GRAFANA_AUTH=$(security find-generic-password -s psells-grafana-terraform -w) GRAFANA_SM_ACCESS_TOKEN=$(security find-generic-password -s psells-grafana-sm -w) terraform destroy
+```
+
+Remove the server and everything with it, signed in first with
+`aws login --profile psells --remote`:
+
+```
+cd infra/aws && AWS_PROFILE=psells terraform destroy
+```
+
+Then delete the `psells` record at the registrar (Namecheap), so the name no
+longer points at an address AWS will give to someone else. The code stays,
+so the same Terraform and `deploy/aws/` rebuild it on a paid account
+("The demonstration server", under "Rebuilding from nothing"). Not tried.
 
 ## Setting things up
 
@@ -503,6 +530,8 @@ fail, saying why, and the backup when a certificate nears its end:
   from the morning backup's check, which the backup itself never fails on. The
   notification names the certificate and its renewal; see "The certificates"
   above.
+- **"PSells demo ends soon"**: each morning from 1 to 27 March 2027. Follow
+  "End the demonstration" above; it stops by itself after the 27th.
 - **"PSells analytics refresh failed"**: shown once, on the first failure
   after a run that worked, not every hour. See "The analytics page says the
   warehouse is more than two hours old" below.

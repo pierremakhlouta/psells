@@ -1232,11 +1232,6 @@ def test_dependabot_watches_the_nginx_image_psells_builds_on():
         u for u in updates if u.get("directory") == "/nginx"][0].items()
 
 
-# Each image job's exceptions file. The app's and nginx's images, which PSells
-# builds, have none: only the agent's, which it does not.
-GRYPE_EXCEPTIONS = {"alloy": "monitoring/grype-exceptions.yaml"}
-
-
 def scan_steps(job):
     return [step for step in job["steps"]
             if step.get("uses", "").startswith("anchore/scan-action@")]
@@ -1247,60 +1242,28 @@ def image_jobs():
                                  "image.yml"))["jobs"]
 
 
-@pytest.mark.parametrize("job", sorted(GRYPE_EXCEPTIONS))
-def test_only_each_jobs_failing_scan_reads_its_own_exceptions(job):
-    jobs = image_jobs()
-    listing, failing = scan_steps(jobs[job])
-
-    assert failing["with"]["config"] == GRYPE_EXCEPTIONS[job]
-    assert failing["with"]["fail-build"] is True
-    # The listing still shows everything, and the app's image skips nothing.
-    assert "config" not in listing["with"]
-    for step in scan_steps(jobs["app"]):
-        assert "config" not in step["with"]
+def test_no_scan_skips_anything():
+    # The agent's OpenSSL exception went with Alloy v1.21.1 (22 October
+    # 2026). Every image is held to the same rule now: a high or critical
+    # flaw with a fix fails the build.
+    for name, job in image_jobs().items():
+        for step in scan_steps(job):
+            assert "config" not in step["with"], name
     # The scan action reads a .grype.yaml it finds unless given a file.
     assert not glob.glob(os.path.join(PROJECT_DIR, ".grype*"))
-    # The job checks its own file's date, no other.
-    expiry = [step["run"] for step in jobs[job]["steps"]
-              if step.get("name") == "Fail once the exceptions have expired"]
-    assert len(expiry) == 1 and GRYPE_EXCEPTIONS[job] in expiry[0]
+    assert not os.path.exists(os.path.join(PROJECT_DIR, "monitoring",
+                                           "grype-exceptions.yaml"))
 
 
-@pytest.mark.parametrize("job", sorted(GRYPE_EXCEPTIONS))
-def test_each_exception_names_one_flaw_in_one_version_of_one_package(job):
-    with open(os.path.join(PROJECT_DIR, GRYPE_EXCEPTIONS[job])) as file:
-        config = yaml.safe_load(file)
-
-    assert set(config) == {"ignore"}
-    assert config["ignore"]
-    for rule in config["ignore"]:
-        assert set(rule) == {"vulnerability", "package"}, rule
-        assert set(rule["package"]) == {"name", "version", "type"}, rule
-
-
-@pytest.mark.parametrize("job", sorted(GRYPE_EXCEPTIONS))
-def test_the_exceptions_have_not_expired(job):
-    # Each job checks the same line, so it fails on the same day.
-    with open(os.path.join(PROJECT_DIR, GRYPE_EXCEPTIONS[job])) as file:
-        expires = re.findall(r"^# expires: (\d{4}-\d\d-\d\d)$", file.read(), re.M)
-
-    assert len(expires) == 1
-    assert datetime.date.today() < datetime.date.fromisoformat(expires[0]), (
-        f"{GRYPE_EXCEPTIONS[job]} has expired: check for a fixed image, and "
-        "remove or renew each exception")
-
-
-def test_the_agent_is_scanned_as_the_server_runs_it_and_checked_for_openssl():
+def test_the_agent_is_scanned_as_the_server_runs_it():
     job = image_jobs()["alloy"]
-    names = [step.get("name") for step in job["steps"]]
+    listing, failing = scan_steps(job)
 
     assert job["env"]["ALLOY_IMAGE"] == alloy()["image"]
-    # The OpenSSL exception rests on the agent never loading libssl, checked
-    # before the failing scan.
-    assert names.index("Fail if the agent links OpenSSL") < names.index(
-        "Fail on a high or critical vulnerability that has a fix")
-    check = job["steps"][names.index("Fail if the agent links OpenSSL")]["run"]
-    assert "ldd" in check and "! grep -q libssl" in check
+    assert failing["with"]["fail-build"] is True
+    assert failing["with"]["only-fixed"] is True
+    assert failing["with"]["severity-cutoff"] == "high"
+    assert listing["with"]["fail-build"] is False
     assert "packages" not in job.get("permissions", {})
 
 
@@ -1449,6 +1412,20 @@ def test_dependabot_watches_every_kind_of_pin():
                       for update in yaml.safe_load(config)["updates"]}
 
     assert ecosystems == {"pip", "github-actions", "docker", "docker-compose"}
+
+
+def test_dependabot_proposes_patch_releases_once_a_month():
+    # Maintenance since 22 October 2026: a minor or major version is changed
+    # on purpose; the weekly scans still fail on any flaw with a fix.
+    with open(os.path.join(PROJECT_DIR, ".github", "dependabot.yml")) as config:
+        updates = yaml.safe_load(config)["updates"]
+
+    for update in updates:
+        assert update["schedule"] == {"interval": "monthly"}, update
+        assert update["ignore"] == [{
+            "dependency-name": "*",
+            "update-types": ["version-update:semver-major",
+                             "version-update:semver-minor"]}], update
 
 
 # The monitoring agent ----------------------------------------------------------

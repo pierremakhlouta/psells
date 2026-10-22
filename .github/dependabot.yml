@@ -5,11 +5,17 @@
 # image to a version and digest. Pins make a build
 # repeatable and say nothing when a newer release fixes a bug or a
 # vulnerability. pip-audit, in security.yml, catches known vulnerabilities; this
-# catches age. Once a week Dependabot checks for newer versions and opens a pull
-# request raising the pin, and the workflows run against that branch like
+# catches age. Once a month Dependabot checks for newer versions and opens a
+# pull request raising the pin, and the workflows run against that branch like
 # any other push, so a bump that breaks something arrives already red.
 #
-# Grouped, so a week's updates arrive as one pull request per ecosystem rather
+# Patch releases only, since 22 October 2026, when PSells went into
+# maintenance: a new minor or major version (Python 3.15, nginx's mainline
+# 1.31, a FastAPI 0.x minor) is a change to make on purpose, not a pull
+# request to merge. A security fix that needs one still arrives: the weekly
+# scans in security.yml and image.yml fail on any flaw with a fix and email.
+#
+# Grouped, so a month's updates arrive as one pull request per ecosystem rather
 # than one per package. Its pull requests, and any commit made by merging one,
 # appear on the repository under the name dependabot[bot]; that was decided
 # knowingly at the start of Phase 03b.
@@ -19,7 +25,10 @@ updates:
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
-      interval: "weekly"
+      interval: "monthly"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
     groups:
       python:
         patterns: ["*"]
@@ -27,7 +36,10 @@ updates:
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "weekly"
+      interval: "monthly"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
     groups:
       actions:
         patterns: ["*"]
@@ -39,7 +51,10 @@ updates:
   - package-ecosystem: "docker"
     directory: "/"
     schedule:
-      interval: "weekly"
+      interval: "monthly"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
     groups:
       images:
         patterns: ["*"]
@@ -48,7 +63,10 @@ updates:
   - package-ecosystem: "docker"
     directory: "/nginx"
     schedule:
-      interval: "weekly"
+      interval: "monthly"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
     groups:
       nginx:
         patterns: ["*"]
@@ -58,7 +76,10 @@ updates:
   - package-ecosystem: "docker"
     directory: "/analytics"
     schedule:
-      interval: "weekly"
+      interval: "monthly"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
     groups:
       analytics:
         patterns: ["*"]
@@ -66,7 +87,10 @@ updates:
   - package-ecosystem: "docker-compose"
     directory: "/"
     schedule:
-      interval: "weekly"
+      interval: "monthly"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
     groups:
       compose:
         patterns: ["*"]
