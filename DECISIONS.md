@@ -914,8 +914,12 @@ readable; they are in its history in git, up to commit 7ecee20.
   policy now allows images from PSells itself and nowhere else. Photos are
   served behind the login like every page. A product with photos is
   deleted only once its photos are, one by one, so deleting a product never
-  quietly deletes files. Pillow is pinned at 12.3.0 rather than 13.0.0,
-  which was two days old. The daily backup archives the photos after the database:
+  quietly deletes files. Pillow was pinned at 12.3.0 rather than 13.0.0,
+  then two days old; within a week some thirty flaws were published against
+  12.3.0, several reachable from opening an uploaded file, and it moved to
+  13.0.0 at once. Since then only Pillow's JPEG and PNG readers ever see an
+  upload, so a flaw in one of the dozens of other formats it reads cannot be
+  reached from the page. The daily backup archives the photos after the database:
   every photo the database records must be in the archive, and a new
   archive is kept, and encrypted into iCloud, only when the photos changed,
   since a stored photo never changes; otherwise thirty identical copies of

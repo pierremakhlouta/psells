@@ -92,8 +92,8 @@ def test_a_transparent_png_is_kept_as_a_jpeg_on_white():
 @pytest.mark.parametrize("label, data, sentence", [
     ("a.gif", None, "a.gif is not a JPEG or PNG photo. Export it as JPEG"),
     ("a.heic", b"\x00\x00\x00\x18ftypheic" + b"\x00" * 64,
-     "a.heic could not be read as a photo."),
-    ("a.jpg", b"", "a.jpg could not be read as a photo."),
+     "a.heic is not a JPEG or PNG photo. Export it as JPEG"),
+    ("a.jpg", b"", "a.jpg is not a JPEG or PNG photo."),
     ("cut.jpg", "cut", "cut.jpg could not be read as a photo."),
 ])
 def test_what_is_not_a_jpeg_or_png_photo_is_refused(label, data, sentence):
@@ -106,6 +106,25 @@ def test_what_is_not_a_jpeg_or_png_photo_is_refused(label, data, sentence):
 
     with pytest.raises(photos.PhotoError, match=sentence.replace(".", r"\.")):
         photos.prepare(data, label)
+
+
+def test_only_the_jpeg_and_png_readers_ever_see_an_upload(monkeypatch):
+    # Pillow would otherwise try every format it has on the bytes, and a flaw
+    # in any of those readers would be reachable from the upload.
+    asked = []
+    real_open = Image.open
+
+    def spying(fp, mode="r", formats=None):
+        asked.append(formats)
+        return real_open(fp, mode, formats)
+
+    monkeypatch.setattr(Image, "open", spying)
+
+    photos.prepare(jpeg(), "a.jpg")
+    with pytest.raises(photos.PhotoError):
+        photos.prepare(b"GIF89a" + b"\x00" * 32, "a.gif")
+
+    assert asked == [("JPEG", "PNG"), ("JPEG", "PNG")]
 
 
 def test_a_photo_over_25_mb_is_refused(monkeypatch):
@@ -343,7 +362,8 @@ def test_an_upload_without_the_form_token_is_refused(client, db, photo_dir):
 
 @pytest.mark.parametrize("named, sentence", [
     ((), "Choose at least one photo."),
-    ((("a.jpg", b"not a photo"),), "a.jpg could not be read as a photo."),
+    ((("a.jpg", b"not a photo"),),
+     "a.jpg is not a JPEG or PNG photo. Export it as JPEG and upload it again."),
 ])
 def test_a_refused_upload_says_why_and_keeps_nothing(client, db, named,
                                                      sentence):

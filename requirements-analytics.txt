@@ -8,7 +8,7 @@
 # Tables in memory: typing, reshaping, the date dimension. numpy is pinned too,
 # though only pandas uses it, because it is most of the image.
 pandas==3.0.6
-numpy==2.5.3
+numpy==2.5.4
 
 # The same driver and version as requirements.txt, which psells.connect needs;
 # a test holds the two equal. It also loads the warehouse, with COPY, so pandas

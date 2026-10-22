@@ -58,9 +58,12 @@ def prepare(data, label):
         raise PhotoError(f"{label} is over {MAX_PHOTO_MB} MB.")
 
     try:
+        # Only the JPEG and PNG readers ever see an upload. Pillow otherwise
+        # tries every format it knows on the bytes, and a flaw in any one of
+        # them (GIF, TIFF, XBM, PDF...) would be reachable from this page.
         with warnings.catch_warnings():
             warnings.simplefilter("error", Image.DecompressionBombWarning)
-            image = Image.open(io.BytesIO(data))
+            image = Image.open(io.BytesIO(data), formats=FORMATS)
 
         with image:
             if image.format not in FORMATS:
@@ -98,10 +101,14 @@ def prepare(data, label):
     except (Image.DecompressionBombError,
             Image.DecompressionBombWarning) as error:
         raise PhotoError(f"{label} has too many pixels.") from error
+    # Not recognised as JPEG or PNG: some other format, a HEIC from a Mac,
+    # or not an image at all.
+    except UnidentifiedImageError as error:
+        raise PhotoError(f"{label} is not a JPEG or PNG photo. "
+                         "Export it as JPEG and upload it again.") from error
     # What Pillow raises for a file that is not an image, is cut short or is
     # malformed inside: one sentence for all of them.
-    except (UnidentifiedImageError, OSError, SyntaxError,
-            ValueError) as error:
+    except (OSError, SyntaxError, ValueError) as error:
         raise PhotoError(f"{label} could not be read as a photo.") from error
 
 
