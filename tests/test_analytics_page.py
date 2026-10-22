@@ -24,6 +24,7 @@ def built(db, monkeypatch):
     add_product(db, 2, 4, category="Bags", name="Invented tote")
     add_product(db, 3, 10, category="Bags", name="Invented satchel")
     add_product(db, 4, 8, category="Hats", name="Invented cap")
+    add_product(db, 5, 3, category="Watches", name="Invented watch")  # never sold
     add_sale(db, 1, 1, 3, sale_price_cents=9000, partner_share_cents=3600,
              date="2026-07-10")
     add_sale(db, 2, 2, 1, sale_price_cents=30000, partner_share_cents=5000,
@@ -54,23 +55,33 @@ def test_the_headline_figures_are_the_kpis_view_formatted(client, built):
     for figure in (psells.format_cents(kpis["revenue_cents"]),
                    psells.format_cents(kpis["profit_cents"]),
                    psells.format_ratio(kpis["margin"]),
-                   psells.format_ratio(kpis["sell_through"]),
                    psells.format_cents(kpis["balance_owing_cents"]),
-                   f"{kpis['sold']} of {kpis['received']}",
                    f"{kpis['products_in_stock']} of {kpis['products']}"):
         assert figure in html, figure
+    # What is sold and what is left to sell; what came in is not shown.
+    assert f'<dt>Units sold</dt><dd class="num">{kpis["sold"]}</dd>' in html
+    assert (f'<dt>Units in stock</dt><dd class="num">{kpis["available"]}</dd>'
+            in html)
+    assert "Sell-through" not in html and "Received" not in html
     assert "built 8 October 2026, 14:05 UTC" in html
 
 
 def test_one_bar_per_month_and_series_and_one_per_category(client, built):
     _, html = page(client)
     months = built.execute("SELECT * FROM sales_by_month").fetchall()
-    categories = built.execute("SELECT * FROM category_performance").fetchall()
+    categories = warehouse.category_performance(built)
 
-    # July, August with nothing, September.
+    # July, August with nothing, September; a bar of profit per category that
+    # sold, and none for the watches.
     assert len(months) == 3
-    assert html.count('<rect class="profit"') == len(months)
-    assert html.count('<rect class="revenue"') == len(months) + len(categories)
+    assert len(categories) == 3
+    assert html.count('<rect class="revenue"') == len(months)
+    assert html.count('<rect class="profit"') == len(months) + len(categories)
+    assert "Watches" not in html
+    # Each category's bar is its profit, as the view gives it.
+    for category in categories:
+        assert (f"<title>{category['category']}: profit "
+                f"{psells.format_cents(category['profit_cents'])}</title>") in html
     # Each bar's exact figure is its tooltip.
     for month in months:
         label = month["month"].strftime("%b %Y")
@@ -82,28 +93,40 @@ def test_one_bar_per_month_and_series_and_one_per_category(client, built):
 def test_every_category_row_is_its_view_row_formatted(client, built):
     _, html = page(client)
 
-    for category in built.execute("SELECT * FROM category_performance").fetchall():
-        row = (f"<td>{category['category']}</td>")
-        assert row in html
+    shown = [row[0] for row in __import__("helpers").table_rows(
+        html[html.index("Categories by profit"):html.index("Most profitable")])]
+    # The most profit first: Bags, Shoes, Hats.
+    assert shown == ["Bags", "Shoes", "Hats"]
+    for category in warehouse.category_performance(built):
         for figure in (psells.format_cents(category["revenue_cents"]),
+                       psells.format_cents(category["profit_cents"]),
                        psells.format_ratio(category["margin"]),
-                       psells.format_ratio(category["sell_through"]),
-                       psells.format_ratio(category["revenue_share"])):
+                       psells.format_ratio(category["profit_share"])):
             assert figure in html, (category["category"], figure)
 
 
 def test_the_product_tables_follow_the_views_order(client, built):
     _, html = page(client)
-    top = html[html.index("Most profitable products"):html.index("Lowest sell-through")]
-    lowest = html[html.index("Lowest sell-through"):]
+    top = html[html.index("Most profitable products"):]
 
-    # Profit: tote 25000, runner 16200, cap 6000, satchel nothing.
-    names = ["Invented tote", "Invented runner", "Invented cap", "Invented satchel"]
+    # Profit: tote 25000, runner 16200, cap 6000; the satchel and the watch
+    # never sold, so they are not there.
+    names = ["Invented tote", "Invented runner", "Invented cap"]
     assert [n for n in sorted(names, key=top.index)] == names
-    # Sell-through: satchel 0 of 10, then cap and tote tie at a quarter, the
-    # cap with more stock; then the runner, 3 of 4.
-    order = ["Invented satchel", "Invented cap", "Invented tote", "Invented runner"]
-    assert [n for n in sorted(order, key=lowest.index)] == order
+    assert "Invented satchel" not in html and "Invented watch" not in html
+    assert "Lowest sell-through" not in html
+
+
+def test_profit_so_far_is_a_line_beside_revenue_so_far(client, built):
+    _, html = page(client)
+    months = warehouse.sales_by_month(built)
+
+    assert html.index("Revenue so far") < html.index("Profit so far")
+    for month in months:
+        label = month["month"].strftime("%b %Y")
+        assert (f"<title>{label}: "
+                f"{psells.format_cents(month['cumulative_profit_cents'])} "
+                "profit so far</title>") in html
 
 
 def test_the_page_runs_no_script_and_needs_no_style_attribute(client, built):

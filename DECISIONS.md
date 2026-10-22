@@ -984,5 +984,11 @@ readable; they are in its history in git, up to commit 7ecee20.
   with no script on the page it cannot wait for the fields to fill, so it
   is always there, and pressing it shows the listing the typed text would
   make, or what is still missing, saving nothing. The saving button comes
-  first, so Enter in a field still saves.
+  first, so Enter in a field still saves. The analytics page shows
+  what Pierre steers by: units sold and units in stock rather than how many
+  came in, so no sell-through; categories ranked and drawn by profit, with
+  their share of it; profit so far beside revenue so far; and nothing for a
+  category or product that has not sold. The views still carry sell-through
+  and every product; only what the page reads changed, and the running
+  profit total is one more column of the monthly view.
   *This replaces the stages of "An item arrives before it is researched".*

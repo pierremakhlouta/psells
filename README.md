@@ -177,8 +177,11 @@ and a test fails if `seed.sql` is edited by hand.
   **Settings** and ready to copy. Every item's Edit page links to a search
   for it on Amazon, Best Buy, Walmart and Facebook Marketplace, for the
   research.
-- **Analytics**: headline figures, revenue and profit by month, categories
-  and products, as charts drawn on the server, since no page runs a script.
+- **Analytics**: headline figures (revenue, profit, margin, units sold and
+  units in stock), revenue and profit by month, revenue and profit so far,
+  categories by profit and the most profitable products, leaving out any
+  category or product that has not sold; charts drawn on the server, since
+  no page runs a script.
 - **Settings**: the category and condition lists (add, rename, hide, or
   delete one no product has) and the Facebook and Instagram listing
   templates.

@@ -47,6 +47,8 @@ SELECT month,
        profit_cents::numeric / NULLIF(revenue_cents, 0) AS margin,
        (sum(revenue_cents) OVER (ORDER BY month))::bigint
                                                        AS cumulative_revenue_cents,
+       (sum(profit_cents) OVER (ORDER BY month))::bigint
+                                                       AS cumulative_profit_cents,
        revenue_cents - lag(revenue_cents) OVER (ORDER BY month)
                                                        AS revenue_change_cents
 FROM monthly;
@@ -111,7 +113,9 @@ SELECT category,
        profit_cents::numeric / NULLIF(revenue_cents, 0) AS margin,
        sold::numeric / NULLIF(received, 0)              AS sell_through,
        COALESCE(revenue_cents, 0)::numeric
-           / NULLIF(sum(COALESCE(revenue_cents, 0)) OVER (), 0) AS revenue_share
+           / NULLIF(sum(COALESCE(revenue_cents, 0)) OVER (), 0) AS revenue_share,
+       COALESCE(profit_cents, 0)::numeric
+           / NULLIF(sum(COALESCE(profit_cents, 0)) OVER (), 0)  AS profit_share
 FROM stock LEFT JOIN money USING (category);
 
 

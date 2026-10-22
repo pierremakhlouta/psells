@@ -59,24 +59,17 @@ def sales_by_month(connection):
 
 
 def category_performance(connection):
-    """Every category, the highest revenue first; ties by name."""
+    """Every category that has sold anything, the most profit first; ties by
+    name. A category with no sales is left out of the page altogether."""
     return connection.execute(
-        "SELECT * FROM category_performance "
-        "ORDER BY revenue_cents DESC, category").fetchall()
+        "SELECT * FROM category_performance WHERE sold > 0 "
+        "ORDER BY profit_cents DESC, category").fetchall()
 
 
 def top_by_profit(connection, limit=10):
     """The products that made the most profit, by the view's own rank; ties
-    by id, so the order is the same every time."""
+    by id, so the order is the same every time. Only products that have
+    sold, so a short list is never padded with ones that made nothing."""
     return connection.execute(
-        "SELECT * FROM product_performance "
+        "SELECT * FROM product_performance WHERE sold > 0 "
         "ORDER BY rank_by_profit, product_id LIMIT %s", (limit,)).fetchall()
-
-
-def lowest_sell_through(connection, limit=10):
-    """The products that sold the smallest share of what came in; among
-    equal shares, the most stock first, since more of it is waiting."""
-    return connection.execute(
-        "SELECT * FROM product_performance "
-        "ORDER BY sell_through NULLS LAST, received DESC, product_id LIMIT %s",
-        (limit,)).fetchall()

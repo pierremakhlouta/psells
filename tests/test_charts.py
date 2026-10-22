@@ -113,12 +113,17 @@ def built(db):
     add_product(db, 2, 4, category="Bags")
     add_product(db, 3, 10, category="Bags")
     add_product(db, 4, 8, category="Hats")
+    add_product(db, 5, 3, category="Watches")  # never sold
+    # The most revenue of all and almost no profit: last by profit.
+    add_product(db, 6, 2, category="Glasses")
     add_sale(db, 1, 1, 3, sale_price_cents=9000, partner_share_cents=3600,
              date="2026-07-10")
     add_sale(db, 2, 2, 1, sale_price_cents=30000, partner_share_cents=5000,
              date="2026-08-20")
     add_sale(db, 3, 4, 2, sale_price_cents=4000, partner_share_cents=1000,
              date="2026-08-21")
+    add_sale(db, 4, 6, 1, sale_price_cents=40000, partner_share_cents=39500,
+             date="2026-08-22")
     data = etl.extract(db)
     etl.load(db, etl.transform(data), data["totals"],
              datetime(2026, 10, 8, tzinfo=timezone.utc))
@@ -130,8 +135,13 @@ def test_the_readers_return_the_views_rows_in_their_order(built):
     months = warehouse.sales_by_month(built)
     assert [m["month"].month for m in months] == [7, 8]
     categories = warehouse.category_performance(built)
-    # Bags 30000, Shoes 27000, Hats 8000.
-    assert [c["category"] for c in categories] == ["Bags", "Shoes", "Hats"]
+    # By profit: Bags 25000, Shoes 16200, Hats 6000, Glasses 500, though
+    # Glasses took the most revenue; Watches, with no sales, left out though
+    # the view has it.
+    assert [c["category"] for c in categories] == [
+        "Bags", "Shoes", "Hats", "Glasses"]
+    assert "Watches" in [row["category"] for row in built.execute(
+        "SELECT category FROM category_performance")]
 
 
 def test_top_by_profit_follows_the_views_rank_and_stops_at_the_limit(built):
@@ -143,13 +153,17 @@ def test_top_by_profit_follows_the_views_rank_and_stops_at_the_limit(built):
     assert [p["rank_by_profit"] for p in top] == [1, 2]
 
 
-def test_lowest_sell_through_puts_the_most_waiting_stock_first_among_equals(built):
-    lowest = warehouse.lowest_sell_through(built, limit=3)
+def test_a_product_that_never_sold_is_never_among_the_most_profitable(built):
+    # Four products made something or nothing; 3 and 5 never sold.
+    assert [p["product_id"] for p in warehouse.top_by_profit(built)] == [
+        2, 1, 4, 6]
 
-    # Product 3 sold none of 10; products 2 (1 of 4) and 4 (2 of 8) tie at a
-    # quarter, and 4 has more stock waiting.
-    assert [p["product_id"] for p in lowest] == [3, 4, 2]
-    assert lowest[0]["sell_through"] == 0
+
+def test_profit_so_far_adds_up_month_by_month(built):
+    months = warehouse.sales_by_month(built)
+
+    # July 27000 - 10800; August 30000 - 5000, 8000 - 2000 and 40000 - 39500.
+    assert [m["cumulative_profit_cents"] for m in months] == [16200, 47700]
 
 
 def test_no_warehouse_set_up_is_a_sentence_not_an_error(monkeypatch):
@@ -180,4 +194,4 @@ def test_the_readers_only_read_and_work_nothing_out():
     for word in ("INSERT ", "UPDATE ", "DELETE ", "CREATE ", "DROP ", "TRUNCATE ",
                  "SUM(", "COUNT(", "AVG(", "ROUND(", "NULLIF("):
         assert word not in source, word
-    assert source.count("SELECT * FROM ") == 5
+    assert source.count("SELECT * FROM ") == 4

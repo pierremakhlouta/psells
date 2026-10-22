@@ -213,7 +213,6 @@ def analytics_page(request: Request):
         months = warehouse.sales_by_month(connection)
         categories = warehouse.category_performance(connection)
         top = warehouse.top_by_profit(connection)
-        lowest = warehouse.lowest_sell_through(connection)
     except psycopg.Error:
         return unavailable("The analytics warehouse could not be read. It may "
                            "not have been built yet.", 503)
@@ -230,12 +229,13 @@ def analytics_page(request: Request):
                      [month["profit_cents"] for month in months]]),
         "cumulative": charts.line_chart(
             labels, [month["cumulative_revenue_cents"] for month in months]),
+        "cumulative_profit": charts.line_chart(
+            labels, [month["cumulative_profit_cents"] for month in months]),
         "categories": categories,
         "category_bars": charts.horizontal_bars(
             [category["category"] for category in categories],
-            [category["revenue_cents"] for category in categories]),
+            [category["profit_cents"] for category in categories]),
         "top": top,
-        "lowest": lowest,
     })
 
 
