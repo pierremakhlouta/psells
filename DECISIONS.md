@@ -724,6 +724,13 @@ readable; they are in its history in git, up to commit 7ecee20.
   morning it is made and compared byte for byte with the original before it
   takes its name, and in a password manager, so a lost Mac loses nothing.
   A copy that fails the comparison is never kept, and the backup reports it.
+  macOS lets a job launchd starts write, read and remove a named file in
+  iCloud Drive but not list the folder, so the clean-up that searched it for
+  month-old copies failed every scheduled run from 13 October 2026, after
+  the copy itself was made, while runs by hand from the Terminal passed. Old
+  copies are now removed by exact name with the copy on the Mac they match,
+  which needs no new permission; giving bash Full Disk Access was turned
+  down, since every bash script would get it.
 
 - <a id="the-mac-says-when-a-job-fails"></a>**The Mac says when a job fails.** Nothing watches the Mac, so a backup that stopped working
   would be found only on the day it was needed. Each background job shows a

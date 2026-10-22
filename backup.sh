@@ -165,9 +165,22 @@ log "photos ok  $PHOTOS"
 # is how people remove things they meant to keep. The .db pattern retires the
 # SQLite copies from before PostgreSQL as they age; the verified archive of the
 # last SQLite database is in its own folder and is not touched.
-OLD_DUMPS="$(find "$BACKUP_DIR" -name 'psells-*.dump' -mtime +"$KEEP_DAYS" -print -delete | wc -l | tr -d ' ')"
+OLD_DUMP_LIST="$(find "$BACKUP_DIR" -name 'psells-*.dump' -mtime +"$KEEP_DAYS" -print -delete)"
+OLD_DUMPS="$(printf '%s' "$OLD_DUMP_LIST" | grep -c . || true)"
 OLD_DBS="$(find "$BACKUP_DIR" -name 'psells-*.db' -mtime +"$KEEP_DAYS" -print -delete | wc -l | tr -d ' ')"
 OLD_CONFIGS="$(find "$BACKUP_DIR" -name 'config-*.json' -mtime +"$KEEP_DAYS" -print -delete | wc -l | tr -d ' ')"
+
+# Each dump's iCloud copy goes with it, by name: the scheduled job may not
+# list that folder (see offsite-backup.sh).
+if [ "$OLD_DUMPS" -gt 0 ]; then
+    COPIES=()
+    while IFS= read -r dump; do
+        name="$(basename "$dump" .dump)"
+        COPIES+=("$name.tar.age")
+    done <<< "$OLD_DUMP_LIST"
+    REMOVED="$("$SCRIPT_DIR/offsite-backup.sh" --remove "${COPIES[@]}" 2>&1)" \
+        || fail "the off-Mac clean-up: $REMOVED"
+fi
 
 if [ "$OLD_DUMPS" -gt 0 ] || [ "$OLD_DBS" -gt 0 ] || [ "$OLD_CONFIGS" -gt 0 ]; then
     log "cleanup: removed files older than $KEEP_DAYS days, $OLD_DUMPS dump, $OLD_DBS old SQLite, $OLD_CONFIGS config"

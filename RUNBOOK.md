@@ -139,7 +139,9 @@ say ok. A backup by hand, before a risky change:
 
 Each backup is also encrypted and copied to iCloud Drive's `PSells-Backups`
 folder, kept 30 days, and proved by decrypting it with the Keychain's key; the
-log's second line for the day says `offsite ok`. The private key is also in
+log's second line for the day says `offsite ok`. Old copies there are removed
+by name with the copy on the Mac they match; the scheduled job may not list
+that folder, so nothing searches it. The private key is also in
 your password manager, as "PSells backup key (age)". The demonstration's
 backups go to S3 and hold invented records only.
 
@@ -486,8 +488,15 @@ The Mac's three background jobs show a notification, with a sound, when they
 fail, saying why, and the backup when a certificate nears its end:
 
 - **"PSells backup failed"**: the local backup or its off-Mac copy. The log
-  is `~/PSells-Backups/backup.log`. Fix the reason, then `./backup.sh` by hand
-  and check its last lines say ok and offsite ok.
+  is `~/PSells-Backups/backup.log`. Fix the reason, then run the job as launchd
+  runs it, not `./backup.sh` from the Terminal, which has permissions the job
+  does not (iCloud Drive's, for one):
+
+  ```
+  launchctl kickstart gui/$(id -u)/local.psells.backup && sleep 60 && tail -4 ~/PSells-Backups/backup.log
+  ```
+
+  The last lines should say ok, offsite ok and photos ok.
 - **"PSells did not start"**: the login job. See "The site does not answer on
   the Mac" below.
 - **"PSells certificate expires soon"**, **"expired"** or **"unreadable"**:

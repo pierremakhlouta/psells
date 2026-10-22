@@ -408,12 +408,110 @@ def test_without_a_recipient_it_refuses_and_writes_nothing(tmp_path):
     assert not offsite.exists() or list(offsite.iterdir()) == []
 
 
-def test_only_its_own_month_old_copies_are_removed(tmp_path):
+@pytest.fixture
+def unlistable():
+    """Make a folder as macOS shows iCloud Drive to a job launchd starts: a
+    file named in it can be written, read and removed, but the folder cannot
+    be listed. Every scheduled backup failed on that from 13 October 2026.
+    Listable again after the test whatever happens, or pytest cannot remove
+    it."""
+    made = []
+
+    def make(folder):
+        folder.mkdir(exist_ok=True)
+        folder.chmod(0o333)
+        made.append(folder)
+
+    yield make
+    for folder in made:
+        folder.chmod(0o755)
+
+
+def test_the_copy_is_made_in_a_folder_it_may_not_list(tmp_path, unlistable):
+    unlistable(tmp_path / "icloud")
+    result, _, _, offsite = run_offsite(tmp_path, old_copy=False)
+
+    assert result.returncode == 0, result.stderr
+    offsite.chmod(0o755)
+    assert sorted(p.name for p in offsite.iterdir()) == [
+        "psells-2026-10-09_090000.tar.age"]
+
+
+def test_making_a_copy_removes_nothing(tmp_path):
     result, _, _, offsite = run_offsite(tmp_path, old_copy=True)
 
     assert result.returncode == 0, result.stderr
     assert sorted(p.name for p in offsite.iterdir()) == [
+        "notes.txt", "psells-2026-08-01_090000.tar.age",
+        "psells-2026-10-09_090000.tar.age"]
+
+
+def run_remove(tmp_path, *names):
+    project = tmp_path / "psells"
+    project.mkdir(exist_ok=True)
+    shutil.copy(OFFSITE_SCRIPT, project / "offsite-backup.sh")
+    return subprocess.run(
+        ["bash", str(project / "offsite-backup.sh"), "--remove", *names],
+        capture_output=True, text=True,
+        env=dict(os.environ, PSELLS_OFFSITE_DIR=str(tmp_path / "icloud")))
+
+
+def test_old_copies_are_removed_by_name_without_listing_the_folder(tmp_path,
+                                                                    unlistable):
+    offsite = tmp_path / "icloud"
+    offsite.mkdir()
+    for name in ("psells-2026-08-01_090000.tar.age", "photos-2026-08-02_090000.tar.age",
+                 "psells-2026-10-09_090000.tar.age", "notes.txt"):
+        (offsite / name).write_bytes(b"x")
+    unlistable(offsite)
+
+    result = run_remove(tmp_path, "psells-2026-08-01_090000.tar.age",
+                        "photos-2026-08-02_090000.tar.age",
+                        "psells-2026-07-01_090000.tar.age")
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "removed 3 old copies\n"
+    offsite.chmod(0o755)
+    assert sorted(p.name for p in offsite.iterdir()) == [
         "notes.txt", "psells-2026-10-09_090000.tar.age"]
+
+
+@pytest.mark.parametrize("name", ["notes.txt", "../psells-1.tar.age",
+                                  "psells-1.tar.age/x", "psells-*.tar.age",
+                                  "other-2026-08-01.tar.age"])
+def test_only_its_own_copies_can_be_removed(tmp_path, name):
+    offsite = tmp_path / "icloud"
+    offsite.mkdir()
+    (offsite / "notes.txt").write_bytes(b"x")
+
+    result = run_remove(tmp_path, "psells-2026-08-01_090000.tar.age", name)
+
+    assert result.returncode == 1
+    assert "not an off-Mac copy's name" in result.stderr
+    assert sorted(p.name for p in offsite.iterdir()) == ["notes.txt"]
+
+
+def test_no_script_lists_the_icloud_folder():
+    for script in (OFFSITE_SCRIPT, BACKUP_SCRIPT, PHOTOS_SCRIPT):
+        with open(script) as file:
+            text = file.read()
+        code = "\n".join(line for line in text.splitlines()
+                         if not line.lstrip().startswith("#"))
+        for listing in ('find "$OFFSITE_DIR"', 'ls "$OFFSITE_DIR"',
+                        '"$OFFSITE_DIR"/*', "$OFFSITE_DIR/*"):
+            assert listing not in code, (script, listing)
+
+
+def test_the_backup_removes_each_old_dumps_copy_by_name():
+    with open(BACKUP_SCRIPT) as file:
+        text = file.read()
+
+    assert ("OLD_DUMP_LIST=\"$(find \"$BACKUP_DIR\" -name 'psells-*.dump' "
+            "-mtime +\"$KEEP_DAYS\" -print -delete)\"") in text
+    assert 'COPIES+=("$name.tar.age")' in text
+    assert ('REMOVED="$("$SCRIPT_DIR/offsite-backup.sh" --remove "${COPIES[@]}" 2>&1)"'
+            in text)
+    assert '|| fail "the off-Mac clean-up: $REMOVED"' in text
 
 
 def test_the_backup_sends_the_copy_only_after_the_dump_is_proved():
@@ -772,7 +870,8 @@ def test_a_file_without_a_row_is_counted_and_kept(photo_backup):
     assert "2 photos, 1 without a row" in result.stdout
 
 
-def test_old_archives_go_but_the_newest_is_kept_however_old(photo_backup):
+def test_old_archives_go_but_the_newest_is_kept_however_old(photo_backup,
+                                                            unlistable):
     photo_backup.photo("a.jpg")
     photo_backup.run("2026-08-01_090000")
     for old in (photo_backup.archives / "photos-2026-08-01_090000.tar",
@@ -784,9 +883,12 @@ def test_old_archives_go_but_the_newest_is_kept_however_old(photo_backup):
     assert photo_backup.kept() == ["photos-2026-08-01_090000.tar"]
 
     # Changed: a new newest, and the old one, past 30 days, goes, here and in
-    # iCloud.
+    # iCloud, which the job may not list.
     photo_backup.photo("b.jpg")
-    assert photo_backup.run("2026-10-20_090000").returncode == 0
+    unlistable(photo_backup.offsite)
+    result = photo_backup.run("2026-10-20_090000")
+    assert result.returncode == 0, result.stderr
+    photo_backup.offsite.chmod(0o755)
     assert photo_backup.kept() == ["photos-2026-10-20_090000.tar"]
     assert photo_backup.copies() == ["photos-2026-10-20_090000.tar.age"]
 

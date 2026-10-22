@@ -87,7 +87,18 @@ mv "$PARTIAL" "$TARGET"
 OFFSITE="$("$SCRIPT_DIR/offsite-backup.sh" --photos "photos-$STAMP.tar" 2>&1)" \
     || { rm -f "$TARGET"; die "the off-Mac copy: $OFFSITE"; }
 
-find "$PHOTO_BACKUP_DIR" -maxdepth 1 -name 'photos-*.tar' -mtime +"$KEEP_DAYS" \
-    ! -name "photos-$STAMP.tar" -delete
+# Old archives go with their iCloud copies, by name, since the scheduled
+# job may not list that folder (see offsite-backup.sh). The one just made is
+# the newest, and never old.
+OLD="$(find "$PHOTO_BACKUP_DIR" -maxdepth 1 -name 'photos-*.tar' -mtime +"$KEEP_DAYS" \
+    ! -name "photos-$STAMP.tar" -print -delete)"
+if [ -n "$OLD" ]; then
+    COPIES=()
+    while IFS= read -r archive; do
+        COPIES+=("$(basename "$archive").age")
+    done <<< "$OLD"
+    REMOVED="$("$SCRIPT_DIR/offsite-backup.sh" --remove "${COPIES[@]}" 2>&1)" \
+        || die "the off-Mac clean-up: $REMOVED"
+fi
 
 echo "photos-$STAMP.tar  $COUNT photos, $SPARE without a row; offsite $OFFSITE"
