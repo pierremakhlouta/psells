@@ -162,7 +162,9 @@ and a test fails if `seed.sql` is edited by hand.
   `corrections` log.
 - **Add product** (only the category, name and quantity at first, with
   photos if they are ready; the research and the listed price can follow
-  with **Edit**, and the new item's own page opens once it is added), **Record
+  with **Edit**, and the new item's own page opens once it is added;
+  **Generate listing**, on Add and Edit, shows the listing what is typed
+  would make, before saving), **Record
   payment**, and **Sell**, **Return** and **Edit**
   from each product's row. **Edit** shows the partner payout and the profit
   at the Marketplace price, and an item whose profit is under the minimum in

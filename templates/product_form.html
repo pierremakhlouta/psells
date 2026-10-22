@@ -120,9 +120,35 @@
   {% endif %}
 
   <div class="actions">
+    {#- The saving button first, so Enter in a field saves, as before. -#}
     <button type="submit">{% if product %}Save changes{% else %}Add product{% endif %}</button>
+    <button type="submit" name="generate" value="yes">Generate listing</button>
     <a href="{{ url_for('inventory_page') }}">Cancel</a>
   </div>
+
+  {% if preview %}
+  {#- preview is listing_preview's answer for what is typed above. Nothing is
+      saved until the form is. -#}
+  <section id="generated" class="field wide" aria-labelledby="generated-heading">
+    <h2 id="generated-heading">Generated listing</h2>
+    {% if preview.missing %}
+    <p class="form-error" role="alert">Still needs {{ preview.missing_text }} before a listing can be made.</p>
+    {% elif preview.problems %}
+    <p class="form-error" role="alert">Fix the fields marked above first.</p>
+    {% else %}
+    <p class="lead">From what is typed above; not saved until you press {% if product %}Save changes{% else %}Add product{% endif %}.{% if not product %} Choose the photos last: the page has reloaded.{% endif %}</p>
+    {% for platform, text in preview.listings.items() %}
+    {% set label = "Facebook" if platform == "facebook" else "Instagram" %}
+    <label for="generated-{{ platform }}">{{ label }}</label>
+    {% if text %}
+    <textarea id="generated-{{ platform }}" rows="12" readonly>{{ text }}</textarea>
+    {% else %}
+    <p>No {{ label }} template yet. Write one in <a href="{{ url_for('settings_page') }}">Settings</a>.</p>
+    {% endif %}
+    {% endfor %}
+    {% endif %}
+  </section>
+  {% endif %}
 </form>
 
 {% if product %}

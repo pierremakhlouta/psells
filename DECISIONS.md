@@ -979,5 +979,10 @@ readable; they are in its history in git, up to commit 7ecee20.
   listed price is above the partner's payout plus the minimum profit; that
   sum is shown as the lowest price, below which an item is not worth
   listing, and the difference as its room, most room first. It shows and
-  never changes a price: a drop is made on the item's page, as any edit.
+  never changes a price: a drop is made on the item's page, as any edit. The
+  add and edit forms have a Generate listing button beside the saving one:
+  with no script on the page it cannot wait for the fields to fill, so it
+  is always there, and pressing it shows the listing the typed text would
+  make, or what is still missing, saving nothing. The saving button comes
+  first, so Enter in a field still saves.
   *This replaces the stages of "An item arrives before it is researched".*

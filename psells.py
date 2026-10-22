@@ -1952,6 +1952,30 @@ def read_product_text(fields):
     return values, problems
 
 
+def listing_preview(connection, fields, gone=0):
+    """The listings a product form's text would make, without saving it.
+
+    For the form's Generate listing button. Returns {"problems", "missing",
+    "listings"}: the fields that could not be read, as read_product_text
+    words them; else the information still missing, as missing_information
+    names it; else each platform's listing, as listings makes it for a saved
+    item, Instagram only if ticked. gone is the units already sold or
+    returned, for an item being edited, so "Multiple quantities available"
+    counts what is left.
+    """
+    values, problems = read_product_text(fields)
+    if problems:
+        return {"problems": problems, "missing": [], "listings": {}}
+
+    product = {**values,
+               "quantity_available": values["quantity_received"] - gone}
+    missing = missing_information(product)
+    if missing:
+        return {"problems": {}, "missing": missing, "listings": {}}
+    return {"problems": {}, "missing": [],
+            "listings": listings(connection, product)}
+
+
 def create_product_from_text(connection, fields):
     """Add a product from a form's text and return its new id.
 

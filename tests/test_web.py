@@ -2696,3 +2696,83 @@ def test_the_price_drops_page_says_when_there_is_nothing(client, db):
     rows = table_rows(client.get("/price-drops").text)
 
     assert rows == [["Nothing has sat long enough with room to come down."]]
+
+
+# Generate listing -----------------------------------------------------------------
+
+def generated_boxes(html):
+    return {platform: text for platform, text in re.findall(
+        r'<textarea id="generated-(\w+)" rows="12" readonly>(.*?)</textarea>',
+        html, re.S)}
+
+
+def test_generate_on_the_add_page_makes_the_listing_and_saves_nothing(client, db):
+    set_templates(db, "{name}\nPrice: {price}", "IG {name}")
+    data = {**form_data(add_form(client)), **GOOD, "marketplace_price": "80.00",
+            "on_instagram": "yes", "generate": "yes"}
+    data.pop("photos")
+
+    response = client.post("/products/new", data=data)
+
+    assert response.status_code == 200
+    assert generated_boxes(response.text) == {
+        "facebook": "Jordan 1 Chicago\nPrice: $90.00\nMultiple quantities available",
+        # No price line in this template: the note ends the listing.
+        "instagram": "IG Jordan 1 Chicago\n\nMultiple quantities available"}
+    assert products_stored(db) == 0
+    # Everything typed is still in the form, ready to add.
+    form = product_form_in_add(response.text)
+    assert field(form, "name")["value"] == "Jordan 1 Chicago"
+    assert field(form, "marketplace_price")["value"] == "80.00"
+
+
+def test_generate_says_what_is_still_missing(client, db):
+    data = {**form_data(add_form(client)), "category": "Shoes", "name": "Boots",
+            "quantity_received": "1", "generate": "yes"}
+    data.pop("photos")
+
+    response = client.post("/products/new", data=data)
+
+    assert response.status_code == 200
+    assert paragraphs(response.text, "form-error")[0][0] == (
+        "Still needs condition, retail price, Marketplace price, listed price "
+        "before a listing can be made.")
+    assert generated_boxes(response.text) == {}
+    assert products_stored(db) == 0
+
+
+def test_generate_marks_a_field_it_cannot_read(client, db):
+    data = {**form_data(add_form(client)), **GOOD, "listed_price": "9O",
+            "generate": "yes"}
+    data.pop("photos")
+
+    response = client.post("/products/new", data=data)
+
+    assert field(product_form_in_add(response.text),
+                 "listed_price")["aria-invalid"] == "true"
+    assert "Fix the fields marked above first." in response.text
+    assert products_stored(db) == 0
+
+
+def test_generate_on_the_edit_page_uses_what_is_typed_not_what_is_saved(client, db):
+    set_templates(db, "{name} {price}")
+    add_product(db, 1, quantity_received=3, name="Boots", marketplace_price_cents=8000)
+    add_sale(db, 1, 1, 2)  # one left: no "Multiple quantities"
+
+    data = form_data(edit_form(client))
+    data.update(name="Boots, size 9", listed_price="85.00", generate="yes")
+    response = client.post("/products/1/edit", data=data)
+
+    assert response.status_code == 200
+    assert generated_boxes(response.text) == {"facebook": "Boots, size 9 $85.00"}
+    assert stored(db)["name"] == "Boots"
+    assert stored(db)["version"] == 1
+
+
+def test_the_saving_button_comes_first(client, db):
+    # Enter in a field presses the first: it must save, not generate.
+    page = client.get("/products/new").text
+    form = page[page.index('<form class="product-form"'):]
+    buttons = re.findall(r'<button type="submit"[^>]*>([^<]*)</button>', form)
+
+    assert buttons[:2] == ["Add product", "Generate listing"]

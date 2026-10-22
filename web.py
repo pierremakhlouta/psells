@@ -412,7 +412,8 @@ PHOTO_NOTICES = {
 
 
 def product_form(request, connection, values, problems, status_code=200,
-                 product=None, photo_problem=None, changed_meanwhile=False):
+                 product=None, photo_problem=None, changed_meanwhile=False,
+                 preview=None):
     """The product form, for adding or for editing one product.
 
     Empty, filled from the stored product, or as it was typed, with a sentence
@@ -420,7 +421,9 @@ def product_form(request, connection, values, problems, status_code=200,
     showing and a refusal, so there is one copy of the form.
 
     When editing, figures is listing_figures for the product as stored, not as
-    typed: the payout and profit shown are the ones saved. The page also
+    typed: the payout and profit shown are the ones saved. preview is
+    listing_preview's answer when Generate listing was pressed: the listing
+    the typed text would make, nothing saved. The page also
     carries the product's photos, with the upload form and photo_problem, the
     sentence for an upload refused, and a notice chosen by a fixed word in
     the address after a photo change.
@@ -447,6 +450,7 @@ def product_form(request, connection, values, problems, status_code=200,
          else photos.product_photos(connection, product["id"]),
          "photo_problem": photo_problem,
          "changed_meanwhile": changed_meanwhile,
+         "preview": preview,
          "added": product is not None
          and request.query_params.get("added") == "yes",
          "photo_limits": {"count": photos.MAX_PHOTOS_PER_UPLOAD,
@@ -489,6 +493,8 @@ def add_product_submit(request: Request, connection: Connection,
     a browser never refills a file input.
     """
     fields = form.model_dump()
+    if sent.get("generate") == "yes":
+        return generated(request, connection, fields)
     uploads = chosen_photos(sent)
 
     try:
@@ -508,6 +514,17 @@ def add_product_submit(request: Request, connection: Connection,
         .include_query_params(added="yes"),
         status_code=303,
     )
+
+
+def generated(request, connection, fields, product=None):
+    """The form again, as typed, with the listing it would make: Generate
+    listing saves nothing, so the page is the form, with a 200."""
+    gone = 0 if product is None else (product["quantity_sold"]
+                                      + product["quantity_returned"])
+    preview = psells.listing_preview(connection, fields, gone)
+    preview["missing_text"] = ", ".join(preview["missing"])
+    return product_form(request, connection, fields, preview["problems"],
+                        product=product, preview=preview)
 
 
 def chosen_photos(sent):
@@ -553,7 +570,8 @@ def edit_product_page(request: Request, connection: Connection,
 @router.post("/products/{product_id:int}/edit", response_class=HTMLResponse)
 def edit_product_submit(request: Request, connection: Connection,
                         product_id: int,
-                        form: Annotated[ProductForm, Form()]):
+                        form: Annotated[ProductForm, Form()],
+                        sent: Annotated[FormData, Depends(parsed_form)]):
     """Save every field, or show the form again with every problem.
 
     A field that arrives empty was emptied on purpose, because the form opened
@@ -568,6 +586,8 @@ def edit_product_submit(request: Request, connection: Connection,
         return not_found(request, product_id)
 
     fields = form.model_dump()
+    if sent.get("generate") == "yes":
+        return generated(request, connection, fields, product)
 
     try:
         psells.update_product_from_text(connection, product_id, fields)
