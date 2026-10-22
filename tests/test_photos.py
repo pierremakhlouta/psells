@@ -254,13 +254,16 @@ def test_a_product_with_photos_is_deleted_only_once_they_are(db, photo_dir):
     psells.delete_product(db, 1)
 
 
-def test_a_photo_makes_an_item_photographed(db, partner_rate, photo_dir):
-    add_product(db, 1, quantity_received=1, listed_price_cents=None)
-    assert [p["id"] for p in psells.pipeline(db)["Photographed"]] == []
+def test_a_photo_moves_a_new_item_from_needs_photos_to_ready(db, partner_rate,
+                                                           photo_dir):
+    add_product(db, 1, quantity_received=1, marketplace_price_cents=8000,
+                photos_required=True, listed=False)
+    assert [p["id"] for p in psells.pipeline(db)["Needs photos"]] == [1]
 
     photos.add_photos(db, 1, [("a.jpg", jpeg())])
 
-    assert [p["id"] for p in psells.pipeline(db)["Photographed"]] == [1]
+    assert [p["id"] for p in psells.pipeline(db)["Needs photos"]] == []
+    assert [p["id"] for p in psells.pipeline(db)["Ready to list"]] == [1]
 
 
 # The pages ----------------------------------------------------------------------

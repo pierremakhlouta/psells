@@ -165,7 +165,8 @@ def test_the_next_row_of_each_kind_gets_the_id_after_the_seed(seeded):
 def test_every_stage_has_items_and_both_flags_show(seeded):
     groups = psells.pipeline(seeded)
     on = psells.today(seeded)
-    working = [p for stage in ("Received", "Researched", "Photographed", "Listed")
+    working = [p for stage in ("In progress", "Needs photos", "Ready to list",
+                               "Listed")
                for p in groups[stage]]
 
     assert all(groups[stage] for stage in psells.STAGES), psells.stage_counts(groups)
@@ -175,6 +176,10 @@ def test_every_stage_has_items_and_both_flags_show(seeded):
         "Enamel Camp Mug Speckled"]
     assert [p["name"] for p in working
             if psells.waiting(p, on)["not_selling"]] == ["Fleece Vest Grey"]
+    assert {stage: [p["name"] for p in groups[stage]] for stage in (
+        "Needs photos", "Ready to list")} == {
+        "Needs photos": ["Enamel Camp Mug Speckled"],
+        "Ready to list": ["Waxed Crossbody Bag Brown"]}
     # And one on Instagram, so both listing boxes show.
     assert [p["name"] for p in groups["Listed"] if p["on_instagram"]] == [
         "Compact Earbuds White"]

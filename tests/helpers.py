@@ -50,7 +50,12 @@ def _insert_with_id(connection, table, values):
 
 
 def add_product(connection, product_id, quantity_received, **overrides):
-    """Insert one product, so a test only has to state what it cares about."""
+    """Insert one product, so a test only has to state what it cares about.
+
+    Made as migration 0004 left the products it found: counted as
+    photographed, and listed when it has a listed price. A test of an item
+    added since says so with photos_required=True and listed=False.
+    """
     values = {
         "id": product_id,
         "category": "Shoes",
@@ -66,6 +71,8 @@ def add_product(connection, product_id, quantity_received, **overrides):
         "notes": "",
     }
     values.update(overrides)
+    values.setdefault("photos_required", False)
+    values.setdefault("listed", values["listed_price_cents"] is not None)
 
     _insert_with_id(connection, "products", values)
 

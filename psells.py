@@ -655,9 +655,9 @@ def today(connection):
 
 
 def waiting_since(product):
-    """The date an item's wait counts from: the day it was listed, for a
+    """The date an item's wait counts from: the day Listed was ticked, for a
     listed item, and the day it arrived otherwise. None when not recorded."""
-    if product["listed_price_cents"] is not None:
+    if product["listed"]:
         return product["listed_on"]
     return product["arrived_on"]
 
@@ -675,8 +675,8 @@ def waiting(product, on):
     since = waiting_since(product)
     days = None if since is None else (on - since).days
 
-    listed = product["listed_price_cents"] is not None
-    limit = stale_listing_days() if listed and days is not None else None
+    limit = (stale_listing_days() if product["listed"] and days is not None
+             else None)
 
     return {"days": days,
             "not_selling": limit is not None and days >= limit}
@@ -770,40 +770,59 @@ class ProductNotFound(SaleError):
 
 
 # The stages an item passes through, in order. Worked out from what the item
-# has, never stored or set by hand; see product_stage.
-STAGES = ("Received", "Researched", "Photographed", "Listed", "Sold", "Returned")
+# has and the Listed tick, never stored; see product_stage.
+STAGES = ("In progress", "Needs photos", "Ready to list", "Listed", "Sold",
+          "Returned")
 
 
-def research_complete(product):
-    """Whether an item has been researched: its condition, a retail price (or
-    discontinued at retail), the average Marketplace price, and a payout that
-    can be worked out. Notes and details never count."""
-    return (product["condition"] is not None
-            and (product["retail_price_cents"] is not None
-                 or product["retail_discontinued"])
-            and product["marketplace_price_cents"] is not None
-            and partner_share_for(product) is not None)
+def missing_information(product):
+    """What an item still needs before it can be listed, as the labels its
+    form uses, in the form's order; [] when nothing is missing.
+
+    The category, name and quantity are always there. The rest: a condition,
+    a retail price (or discontinued at retail), a partner cut that can be
+    worked out, the average Marketplace price and the listed price. Notes,
+    details and Instagram never count. A missing retail price is said once,
+    not again as the cut it leaves unknown.
+    """
+    missing = []
+    if product["condition"] is None:
+        missing.append("condition")
+    if product["retail_price_cents"] is None and not product["retail_discontinued"]:
+        missing.append("retail price")
+    elif partner_share_for(product) is None:
+        missing.append("partner cut")
+    if product["marketplace_price_cents"] is None:
+        missing.append("Marketplace price")
+    if product["listed_price_cents"] is None:
+        missing.append("listed price")
+    return missing
+
+
+def needs_photos(product, has_photo):
+    """Whether an item still has to be photographed: it was added after
+    photos became part of listing (photos_required) and has none yet. The
+    products from before count as photographed."""
+    return bool(product["photos_required"]) and not has_photo
 
 
 def product_stage(product, has_photo):
-    """The furthest stage an item has reached.
+    """The stage an item is at.
 
     product is a products_view row. With nothing left in stock it is Sold if
-    any unit sold, else Returned to the partner. With stock, a listed price
-    means Listed, a photo Photographed, finished research Researched, and
-    anything less Received. The furthest wins, so a product listed before
-    the workflow existed is Listed without research or photos, and a new one
-    passes through every stage, since its listed price comes last.
+    any unit sold, else Returned to the partner. With stock: Listed once
+    Listed is ticked; otherwise In progress while any information is missing,
+    Needs photos once only its photos are, and Ready to list with everything.
     """
     if product["quantity_available"] <= 0:
         return "Sold" if product["quantity_sold"] > 0 else "Returned"
-    if product["listed_price_cents"] is not None:
+    if product["listed"]:
         return "Listed"
-    if has_photo:
-        return "Photographed"
-    if research_complete(product):
-        return "Researched"
-    return "Received"
+    if missing_information(product):
+        return "In progress"
+    if needs_photos(product, has_photo):
+        return "Needs photos"
+    return "Ready to list"
 
 
 def pipeline(connection):
@@ -1599,9 +1618,8 @@ def create_product(connection, category, name, quantity_received,
             "listed_price_cents, retail_discontinued, partner_share_mode, "
             "partner_share_percent, partner_share_amount_cents, "
             "condition, notes, marketplace_price_cents, details, "
-            "on_instagram, listed_on) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
-            "CASE WHEN %s::integer IS NULL THEN NULL ELSE CURRENT_DATE END) "
+            "on_instagram) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
             "RETURNING id",
             (category.strip(), name.strip(), quantity_received,
              retail_price_cents, listed_price_cents,
@@ -1609,7 +1627,7 @@ def create_product(connection, category, name, quantity_received,
              partner_share_mode, partner_share_percent,
              partner_share_amount_cents, _optional_text(condition),
              (notes or "").strip(), marketplace_price_cents,
-             (details or "").strip(), bool(on_instagram), listed_price_cents)
+             (details or "").strip(), bool(on_instagram))
         ).fetchone()["id"]
 
 
@@ -1655,11 +1673,44 @@ CHANGED_MEANWHILE = ("Someone changed this item since you opened it, so "
                      "nothing was saved.")
 
 
+def _listed_tick_problem(connection, product_id, current, listed, proposed):
+    """Why Listed cannot be as asked, as {"listed": sentence}, or {}.
+
+    A listed item needs its listed price, always. Ticking Listed on an item
+    not listed yet needs everything else too: no information missing, and
+    its photos in when it needs them. An item already listed, as every
+    product from before this was, is never refused for what it lacks.
+    """
+    if current is None or not listed:
+        return {}
+    if current["listed"]:
+        if proposed["listed_price_cents"] is None:
+            return {"listed": "A listed item needs its listed price. Untick "
+                              "Listed to take it down first."}
+        return {}
+    has_photo = connection.execute(
+        "SELECT 1 FROM photos WHERE product_id = %s LIMIT 1",
+        (product_id,)).fetchone() is not None
+    lacking = missing_information(proposed)
+    if needs_photos(current, has_photo):
+        lacking.append("photos")
+    if lacking:
+        return {"listed": "Tick Listed once the item has everything: it still "
+                          "needs " + _and_list(lacking) + "."}
+    return {}
+
+
+def _and_list(words):
+    return words[0] if len(words) == 1 else (
+        ", ".join(words[:-1]) + " and " + words[-1])
+
+
 def update_product(connection, product_id, category, name, quantity_received,
                    retail_discontinued, retail_price_cents, listed_price_cents,
                    condition, notes, partner_share_mode, partner_share_percent,
                    partner_share_amount_cents, marketplace_price_cents=_KEEP,
-                   details=_KEEP, on_instagram=_KEEP, expected_version=None):
+                   details=_KEEP, on_instagram=_KEEP, listed=_KEEP,
+                   expected_version=None):
     """Replace every field of one product with the values given.
 
     The whole of editing a product with none of the asking. edit is the same
@@ -1689,7 +1740,8 @@ def update_product(connection, product_id, category, name, quantity_received,
     """
     current = connection.execute(
         "SELECT category, condition, marketplace_price_cents, details, "
-        "on_instagram FROM products WHERE id = %s", (product_id,)
+        "on_instagram, listed, photos_required FROM products WHERE id = %s",
+        (product_id,)
     ).fetchone()
     if current is not None:
         if marketplace_price_cents is _KEEP:
@@ -1698,8 +1750,20 @@ def update_product(connection, product_id, category, name, quantity_received,
             details = current["details"]
         if on_instagram is _KEEP:
             on_instagram = current["on_instagram"]
+        if listed is _KEEP:
+            listed = current["listed"]
     problems = {
         **_intake_floor_problem(connection, product_id, quantity_received),
+        **_listed_tick_problem(connection, product_id, current, listed, {
+            "condition": _optional_text(condition),
+            "retail_price_cents": retail_price_cents,
+            "retail_discontinued": retail_discontinued,
+            "marketplace_price_cents": marketplace_price_cents,
+            "listed_price_cents": listed_price_cents,
+            "partner_share_mode": partner_share_mode,
+            "partner_share_percent": partner_share_percent,
+            "partner_share_amount_cents": partner_share_amount_cents,
+        }),
         **_listed_problems(connection, category, condition, current),
         **_marketplace_problem(marketplace_price_cents),
         **_every_product_problem(
@@ -1722,11 +1786,13 @@ def update_product(connection, product_id, category, name, quantity_received,
             "partner_share_percent = %s, partner_share_amount_cents = %s, "
             "condition = %s, notes = %s, "
             "marketplace_price_cents = %s, details = %s, on_instagram = %s, "
-            # Dated when an unlisted product gets its first listed price; a
+            # Dated the day Listed is ticked and emptied when it is unticked,
+            # so a listing taken down and posted again counts afresh; a
             # product listed before the workflow keeps its unknown date. The
             # right side of SET reads the row as it was.
-            "listed_on = CASE WHEN listed_price_cents IS NULL "
-            "AND %s::integer IS NOT NULL THEN CURRENT_DATE ELSE listed_on END, "
+            "listed_on = CASE WHEN %s AND NOT listed THEN CURRENT_DATE "
+            "WHEN NOT %s THEN NULL ELSE listed_on END, "
+            "listed = %s, "
             "version = version + 1 "
             "WHERE id = %s AND (%s::integer IS NULL OR version = %s)",
             (category.strip(), name.strip(), quantity_received,
@@ -1735,7 +1801,8 @@ def update_product(connection, product_id, category, name, quantity_received,
              partner_share_mode, partner_share_percent,
              partner_share_amount_cents, _optional_text(condition),
              (notes or "").strip(), marketplace_price_cents,
-             (details or "").strip(), bool(on_instagram), listed_price_cents,
+             (details or "").strip(), bool(on_instagram), bool(listed),
+             bool(listed), bool(listed),
              product_id, expected_version, expected_version)
         )
 
@@ -1748,7 +1815,7 @@ PRODUCT_FORM_FIELDS = (
     "category", "name", "quantity_received", "retail_discontinued",
     "retail_price", "listed_price", "condition", "notes",
     "partner_share_mode", "partner_share_percent", "partner_share_amount",
-    "marketplace_price", "details", "on_instagram",
+    "marketplace_price", "details", "on_instagram", "listed",
 )
 
 MONEY_TEXT_PROBLEM = "Please enter an amount in dollars, for example 12.50."
@@ -1802,6 +1869,9 @@ def read_product_text(fields):
 
     if text["on_instagram"] not in ("", "yes"):
         problems["on_instagram"] = "Also on Instagram is either ticked or not."
+
+    if text["listed"] not in ("", "yes"):
+        problems["listed"] = "Listed is either ticked or not."
     # Blank until researched, as are the condition and the Marketplace price;
     # blank until listed, the listed price.
     retail_price_cents = (0 if retail_discontinued
@@ -1836,6 +1906,7 @@ def read_product_text(fields):
         "marketplace_price_cents": money("marketplace_price", required=False),
         "details": text["details"],
         "on_instagram": text["on_instagram"] == "yes",
+        "listed": text["listed"] == "yes",
         "partner_share_mode": mode,
         "partner_share_percent": percent,
         "partner_share_amount_cents": amount_cents,
@@ -1850,8 +1921,15 @@ def create_product_from_text(connection, fields):
     Every problem is reported at once: what could not be read, and every rule
     the readable fields break, in one ProductError. Nothing is stored unless
     there are none.
+
+    A new item is never listed: it has no photos yet, and Listed is ticked
+    on its page once they are in. The add form does not offer the tick, and
+    a post that sends it anyway is refused.
     """
     values, problems = read_product_text(fields)
+    if values.pop("listed"):
+        problems["listed"] = ("A new item is not listed yet. Tick Listed on "
+                              "its page once it has everything and its photos.")
 
     if problems:
         rule_values = {key: value for key, value in values.items()
@@ -1896,6 +1974,7 @@ def product_form_text(product):
         "marketplace_price": money(product["marketplace_price_cents"]),
         "details": product["details"],
         "on_instagram": "yes" if product["on_instagram"] else "",
+        "listed": "yes" if product["listed"] else "",
         "partner_share_mode": product["partner_share_mode"],
         "partner_share_percent": "" if percent is None else str(percent),
         "partner_share_amount": "" if amount is None else format_cents(
@@ -1927,7 +2006,7 @@ def update_product_from_text(connection, product_id, fields):
         rule_values = {key: value for key, value in values.items()
                        if key not in ("notes", "details",
                                       "marketplace_price_cents",
-                                      "on_instagram")}
+                                      "on_instagram", "listed")}
         raise ProductError({
             **_intake_floor_problem(connection, product_id,
                                     values["quantity_received"]),

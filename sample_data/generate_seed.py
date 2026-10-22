@@ -26,8 +26,8 @@ discontinued at retail, glasses for a search to find, and one product out of
 stock for each reason.
 
 Then seven items at every stage of the workflow, after all of those so
-nothing above them changes: received, researched (one not worth listing),
-photographed, and listed (one on Instagram, one not selling). Their dates are
+nothing above them changes: in progress, needing photos (not worth listing),
+ready to list, and listed (one on Instagram, one not selling). Their dates are
 written as days before the day the seed is loaded, so after every nightly
 reset of the demo they have waited the same number of days. The older
 products have no arrival or listing date, like the real ones from before the
@@ -186,15 +186,16 @@ def workflow_items():
         return made
 
     return [
-        # Received: nothing known yet but what it is and how many.
+        # In progress: two with nothing known yet but what they are and how
+        # many, and one researched but not priced.
         (item("Cups", "Insulated Camp Mug Olive", 3, None, None, None, None), 2, None, 0),
         (item("Hats", "Corduroy Bucket Hat Rust", 1, None, None, None, None), 6, None, 0),
-        # Researched, and one of them not worth listing: a $40.00 retail price
-        # pays the partner $12.00, leaving $13.00 at a $25.00 Marketplace price.
         (item("Wallets", "Slim Card Holder Tan", 2, 4500, None, "Brand new", 3500), 9, None, 0),
-        (item("Cups", "Enamel Camp Mug Speckled", 2, 4000, None, "Open box", 2500), 11, None, 0),
-        # Photographed.
-        (item("Bags", "Waxed Crossbody Bag Brown", 1, 12000, None, "Like new", 9000,
+        # Needs photos, and not worth listing: a $40.00 retail price pays the
+        # partner $12.00, leaving $13.00 at a $25.00 Marketplace price.
+        (item("Cups", "Enamel Camp Mug Speckled", 2, 4000, 2500, "Open box", 2500), 11, None, 0),
+        # Ready to list: everything, photos included.
+        (item("Bags", "Waxed Crossbody Bag Brown", 1, 12000, 8500, "Like new", 9000,
               details="Adjustable strap"), 14, None, 2),
         # Listed: one recently, and on Instagram too; one long enough to be
         # flagged as not selling.
@@ -307,6 +308,8 @@ def build():
     for item, arrived, listed_days, photo_count in workflow_items():
         item["arrived_on"] = DaysAgo(arrived)
         item["listed_on"] = None if listed_days is None else DaysAgo(listed_days)
+        item["listed"] = listed_days is not None
+        item["photos_required"] = True
         products.append(item)
         for _ in range(photo_count):
             photos.append((len(products), f"sample-{len(photos) + 1}.jpg"))
@@ -357,7 +360,8 @@ PRODUCT_COLUMNS = ("id", "category", "name", "quantity_received",
                    "retail_discontinued", "partner_share_mode",
                    "partner_share_percent", "partner_share_amount_cents",
                    "condition", "notes", "marketplace_price_cents", "details",
-                   "on_instagram", "arrived_on", "listed_on")
+                   "on_instagram", "arrived_on", "listed_on", "listed",
+                   "photos_required")
 
 
 def render(products, sales, returns, payments, photos):
@@ -376,8 +380,11 @@ def render(products, sales, returns, payments, photos):
     # The columns named, so a product from before the workflow gets no
     # arrival date rather than the column's default of the day it is loaded.
     for number, p in enumerate(products, start=1):
+        # The older products as migration 0004 left real ones: listed, and
+        # counted as photographed.
         row = {"id": number, "marketplace_price_cents": None, "details": "",
-               "on_instagram": False, "arrived_on": None, "listed_on": None, **p}
+               "on_instagram": False, "arrived_on": None, "listed_on": None,
+               "listed": True, "photos_required": False, **p}
         lines.append(f"INSERT INTO products ({', '.join(PRODUCT_COLUMNS)}) "
                      "OVERRIDING SYSTEM VALUE VALUES ("
                      + ", ".join(sql(row[column]) for column in PRODUCT_COLUMNS)

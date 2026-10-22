@@ -227,7 +227,18 @@ def analytics_page(request: Request):
 # The stages whose items are still being worked on, listed item by item on the
 # pipeline page. Sold and Returned are only counted there: their items are on
 # the out-of-stock page already.
-WORKING_STAGES = ("Received", "Researched", "Photographed", "Listed")
+WORKING_STAGES = ("In progress", "Needs photos", "Ready to list", "Listed")
+
+
+def still_needs(stage, product):
+    """What the pipeline says an item still needs: the information missing
+    while it is in progress, its photos while it needs them, and nothing once
+    it is ready or listed."""
+    if stage == "In progress":
+        return ", ".join(psells.missing_information(product))
+    if stage == "Needs photos":
+        return "photos"
+    return ""
 
 
 @router.get("/pipeline", response_class=HTMLResponse)
@@ -244,9 +255,11 @@ def pipeline_page(request: Request, connection: Connection):
 
     return templates.TemplateResponse(request, "pipeline.html", {
         "counts": psells.stage_counts(groups),
-        "anchors": {stage: stage.lower() for stage in WORKING_STAGES},
+        "anchors": {stage: stage.lower().replace(" ", "-")
+                    for stage in WORKING_STAGES},
         "stages": [(stage, [(product, psells.listing_figures(product),
-                             psells.waiting(product, on))
+                             psells.waiting(product, on),
+                             still_needs(stage, product))
                             for product in groups[stage]])
                    for stage in WORKING_STAGES],
     })
@@ -359,6 +372,7 @@ class ProductForm(BaseModel):
     marketplace_price: str = ""
     details: str = ""
     on_instagram: str = ""
+    listed: str = ""
     version: str = ""
 
 

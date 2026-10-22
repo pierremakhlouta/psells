@@ -772,5 +772,6 @@ def test_a_product_carries_its_research_and_listing_fields(client, db):
 
     assert (first["marketplace_price_cents"], first["details"],
             first["on_instagram"]) == (6550, "With its box", True)
+    assert (first["listed"], second["listed"]) == (True, False)
     assert (second["marketplace_price_cents"], second["details"],
             second["on_instagram"]) == (None, "", False)

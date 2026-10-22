@@ -173,6 +173,7 @@ class Product(BaseModel):
                     "researched.")
     details: str = Field(description="What a listing says beyond its template.")
     on_instagram: bool = Field(description="Also posted on Instagram.")
+    listed: bool = Field(description="Ticked when the item is posted.")
     retail_discontinued: bool = Field(
         description=(
             "Discontinued at retail. The product is still held, still listed "

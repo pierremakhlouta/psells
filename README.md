@@ -146,9 +146,9 @@ and a test fails if `seed.sql` is edited by hand.
   with at least one unit available, with a search by name or category.
   **Out of stock** lists the rest, each with the reason it ran out; every
   product is on exactly one of the two.
-- **Pipeline**: how many items are at each stage, each count opening its list (Received, Researched,
-  Photographed, Listed, Sold, Returned), and the items still being worked
-  on under their stage, the one waiting longest first, with its days at the
+- **Pipeline**: how many items are at each stage, each count opening its list (In
+  progress, Needs photos, Ready to list, Listed, Sold, Returned), and the
+  items still being worked on under their stage with what each still needs, the one waiting longest first, with its days at the
   stage, flagged when not worth listing, and, once listed for the days set
   as `stale_listing_days` in `data/config.json`, when not selling.
 - **Sales**, **Returns** and **Payments**: every record, newest first, with

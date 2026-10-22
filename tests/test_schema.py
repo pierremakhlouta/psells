@@ -590,6 +590,7 @@ MIGRATIONS = [
     ("0001_authentication.sql", "-- Authentication ---"),
     ("0002_corrections.sql", "-- Corrections ---"),
     ("0003_workflow.sql", "-- Workflow ---"),
+    ("0004_listing.sql", "-- Listing ---"),
 ]
 
 
@@ -718,6 +719,37 @@ def test_the_workflow_migration_maps_the_records_it_finds(db):
         "Brand new", "Brand new", "Like new", "Like new", "Used"]
     assert [(row["name"], row["hidden"]) for row in categories] == [
         ("Hats", False), ("Kites", True), ("Mugs", True)]
+
+
+def test_the_listing_migration_counts_existing_products_as_photographed(db):
+    # Products as they stood before 0004: one with a listed price, dated by
+    # 0003, one listed before the workflow, and one not priced yet.
+    schema = read("schema.sql")
+    db.execute("CREATE SCHEMA old")
+    db.execute("SET LOCAL search_path TO old")
+    db.execute(schema.split(MIGRATIONS[3][1])[0])
+    db.execute("INSERT INTO categories (name) VALUES (%s)",
+               (GOOD_PRODUCT["category"],))
+    dated = insert_product(db, listed_price_cents=9000, listed_on="2026-10-19")
+    undated = insert_product(db, listed_price_cents=9000)
+    unpriced = insert_product(db, listed_price_cents=None)
+
+    db.execute(read("migrations", "0004_listing.sql"))
+    found = {row["id"]: row for row in db.execute(
+        "SELECT id, listed, listed_on, photos_required FROM products")}
+    added = insert_product(db, listed_price_cents=None)
+    added_row = db.execute("SELECT listed, photos_required FROM products "
+                           "WHERE id = %s", (added,)).fetchone()
+    db.execute("SET LOCAL search_path TO public")
+
+    # Every product there is counted as photographed; those with a listed
+    # price are listed, their dates kept.
+    assert [(found[i]["listed"], str(found[i]["listed_on"]),
+             found[i]["photos_required"]) for i in (dated, undated, unpriced)] == [
+        (True, "2026-10-19", False), (True, "None", False),
+        (False, "None", False)]
+    # And a product added after it needs its photos.
+    assert (added_row["listed"], added_row["photos_required"]) == (False, True)
 
 
 @pytest.mark.parametrize("name", [name for name, _ in MIGRATIONS])

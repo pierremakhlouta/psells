@@ -7,7 +7,7 @@
 {% block content %}
 {% if product %}
 <h1>Edit product {{ product.id }}</h1>
-<p class="lead">Arrived {{ product.arrived_on or "before PSells recorded it" }}{% if product.listed_price_cents is not none %}, listed {{ product.listed_on or "before PSells recorded it" }}{% endif %}.
+<p class="lead">Arrived {{ product.arrived_on or "before PSells recorded it" }}{% if product.listed %}, listed {{ product.listed_on or "before PSells recorded it" }}{% endif %}.
   Sold {{ product.quantity_sold }}, returned {{ product.quantity_returned }}.
   Quantity received cannot go below the units that have left.
   Changing the partner share affects later sales only.</p>
@@ -82,7 +82,7 @@
 
   {{ field("partner_share_percent", "Partner percentage (%)", hint="Only for a custom percentage.", inputmode="decimal") }}
   {{ field("partner_share_amount", "Partner amount per unit ($)", hint="Only for a fixed amount.", inputmode="decimal") }}
-  {{ field("listed_price", "Listed price ($)", hint="Blank until it is listed.", inputmode="decimal") }}
+  {{ field("listed_price", "Listed price ($)", hint="The price it will be posted at.", inputmode="decimal") }}
 
   <div class="field check wide{% if errors.on_instagram %} has-error{% endif %}">
     <input type="checkbox" id="on_instagram" name="on_instagram" value="yes"
@@ -90,6 +90,19 @@
     <label for="on_instagram">Also on Instagram</label>
     {% if errors.on_instagram %}<p class="error">{{ errors.on_instagram }}</p>{% endif %}
   </div>
+  {% if not product and errors.listed %}
+  {#- The add form has no tick; this is a post that sent one anyway. -#}
+  <p class="error wide">{{ errors.listed }}</p>
+  {% endif %}
+  {% if product %}
+  {#- Edit only: a new item has no photos yet, so it is listed from here. -#}
+  <div class="field check wide{% if errors.listed %} has-error{% endif %}">
+    <input type="checkbox" id="listed" name="listed" value="yes"
+           {%- if values.listed == "yes" %} checked{% endif %}>
+    <label for="listed">Listed (posted on Marketplace)</label>
+    {% if errors.listed %}<p class="error">{{ errors.listed }}</p>{% endif %}
+  </div>
+  {% endif %}
   {{ field("details", "Details for the listing", hint="What a listing says beyond the template: accessories, marks, sizes.", wide=true) }}
   {{ field("notes", "Notes", hint="For yourselves; never in a listing.", wide=true) }}
 

@@ -129,6 +129,7 @@ readable; they are in its history in git, up to commit 7ecee20.
 - [A runbook procedure is tried before it is written down](#a-runbook-procedure-is-tried-before-it-is-written-down)
 - [Decisions keep their order, with an index by area](#decisions-keep-their-order-with-an-index-by-area)
 - [PSells is kept, not grown: maintenance from 22 October 2026](#psells-is-kept-not-grown-maintenance-from-22-october-2026)
+- [An item is listed when Pierre says so](#an-item-is-listed-when-pierre-says-so)
 
 ## The decisions, in the order they were made
 
@@ -901,6 +902,7 @@ readable; they are in its history in git, up to commit 7ecee20.
   the four stages still being worked on; sold and returned items are
   counted there and listed on the out-of-stock page, which already shows
   them.
+  *Later replaced, in part: [An item is listed when Pierre says so](#an-item-is-listed-when-pierre-says-so).*
 
 - <a id="photos-are-files-kept-without-their-metadata"></a>**Photos are files, kept without their metadata.**
   Each item's photos are files in their own Docker volume beside the
@@ -952,3 +954,20 @@ readable; they are in its history in git, up to commit 7ecee20.
   runbook. What remains to call him back is listed in the runbook, "When
   something calls you back". The choices Claude made while building Phase 15
   without stopping to ask were listed for him and accepted.
+
+- <a id="an-item-is-listed-when-pierre-says-so"></a>**An item is listed when Pierre says so.**
+  Using PSells, Pierre wanted the pipeline to say what he has to do next:
+  every item missing information together, every item waiting only for its
+  photos together, then those ready to post. So the stages became In
+  progress, Needs photos, Ready to list and Listed, and an item is Listed
+  when he ticks Listed on its page, not when it gets a listed price, which is
+  now part of what it needs before it is ready. The listing date is the
+  tick's, so "Not selling" counts from the day it was posted, and unticking
+  clears it, so an item taken down and posted again counts afresh. Listed is
+  ticked only once nothing is missing and the photos are in; the database
+  holds that a listed item has a price. Old stock is not asked for photos:
+  migration 0004 counted every existing product as photographed and ticked
+  every one with a listed price, so only items added from then on need
+  photos. The stages are still worked out, never stored; what is stored are
+  the two facts they rest on, the tick and whether photos are required.
+  *This replaces the stages of "An item arrives before it is researched".*

@@ -122,7 +122,9 @@ One row per product.
 | `details`                   | text    | what a listing says beyond its template; may be empty |
 | `on_instagram`              | boolean | also posted on Instagram                 |
 | `arrived_on`                | date    | when it arrived; today by default, empty for products from before |
-| `listed_on`                 | date    | when a listed price was first entered    |
+| `listed_on`                 | date    | when Listed was ticked; emptied when it is unticked |
+| `listed`                    | boolean | ticked when the item is posted; needs a listed price |
+| `photos_required`           | boolean | whether it needs a photo before it is ready to list; false for every product from before 0004 |
 | `version`                   | integer | raised by every save; a save made from an older version is refused |
 
 **ID allocation.** Every table's id comes from a sequence, which never hands out
@@ -454,12 +456,18 @@ new one gets it from the end of `schema.sql`.
 
 ## The workflow
 
-Items move through stages: Received, Researched, Photographed, Listed, then
-Sold or Returned once no stock is left. The stage is computed by
-`product_stage`, never stored, the furthest reached winning: a listed price
-means Listed, a photo Photographed, and the research is complete once the
-condition, retail price (or retail-discontinued), Marketplace price and
-partner payout are all known. A sale is refused while the payout is unknown,
+Items move through stages: In progress, Needs photos, Ready to list, Listed,
+then Sold or Returned once no stock is left. The stage is computed by
+`product_stage`, never stored: Listed once `listed` is ticked; otherwise In
+progress while `missing_information` names anything (the condition, the
+retail price or retail-discontinued, a partner payout that can be worked
+out, the Marketplace price, the listed price), Needs photos while only a
+photo is missing for an item with `photos_required`, and Ready to list with
+everything. Listed is ticked only on an item that lacks nothing, and a
+listed item keeps its listed price (the `listed_rules` constraint holds
+that, and that `listed_on` is set only while listed). Migration 0004 ticked
+every product that had a listed price and counted every product then
+existing as photographed. A sale is refused while the payout is unknown,
 which happens when a percentage share has no retail price to apply to.
 
 An item is added with its category, name and quantity alone; the condition,

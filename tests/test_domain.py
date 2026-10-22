@@ -581,12 +581,15 @@ def test_create_product_stores_every_field_and_returns_the_id(db):
         "partner_share_amount_cents": None,
         "condition": "Brand new",
         "notes": "boxed",
-        # Arrived today, and listed today since it came with a listed price.
+        # Arrived today. Not listed: a new item is listed from its page once
+        # it has its photos, which it needs.
         "marketplace_price_cents": None,
         "details": "",
         "on_instagram": False,
         "arrived_on": today,
-        "listed_on": today,
+        "listed_on": None,
+        "listed": False,
+        "photos_required": True,
         "version": 1,
     }
 
@@ -793,10 +796,11 @@ def test_update_product_replaces_every_field(db):
         "partner_share_mode": "custom_percent", "partner_share_percent": 30.0,
         "partner_share_amount_cents": None, "condition": "Used",
         "notes": "new",
-        # Its listed price came with it, undated, as before the workflow,
-        # and an edit does not date it; the save counts.
+        # Listed from before the workflow, undated; an edit keeps both, and
+        # the save counts.
         "marketplace_price_cents": None, "details": "", "on_instagram": False,
-        "arrived_on": today, "listed_on": None, "version": 2,
+        "arrived_on": today, "listed_on": None, "listed": True,
+        "photos_required": False, "version": 2,
     }
 
 
@@ -1521,17 +1525,85 @@ def test_an_item_without_a_payout_cannot_be_sold(db, partner_rate):
     assert db.execute("SELECT count(*) AS n FROM sales").fetchone()["n"] == 0
 
 
-def test_the_first_listed_price_dates_the_listing_and_a_later_one_does_not(db):
-    add_product(db, 1, quantity_received=2, listed_price_cents=None)
-    today = db.execute("SELECT CURRENT_DATE AS d").fetchone()["d"]
+NEW_ITEM = {"photos_required": True, "listed": False}
+
+
+def test_ticking_listed_dates_the_listing_and_unticking_clears_it(db,
+                                                                  partner_rate):
+    add_product(db, 1, quantity_received=2, marketplace_price_cents=8000,
+                **NEW_ITEM)
+    db.execute("INSERT INTO photos (product_id, file_name) VALUES (1, 'a.jpg')")
+    today = psells.today(db)
     assert view_row(db)["listed_on"] is None
 
-    psells.update_product(db, 1, **new_product(listed_price_cents=9000))
-    assert view_row(db)["listed_on"] == today
+    psells.update_product(db, 1, **new_product(listed=True))
+    assert (view_row(db)["listed"], view_row(db)["listed_on"]) == (True, today)
 
+    # Saved again while listed: the date stays.
     db.execute("UPDATE products SET listed_on = '2026-01-01'")
     psells.update_product(db, 1, **new_product(listed_price_cents=8000))
     assert view_row(db)["listed_on"] == date(2026, 1, 1)
+
+    # Taken down: back to Ready to list, the date gone; posted again, today.
+    psells.update_product(db, 1, **new_product(listed=False))
+    assert (view_row(db)["listed"], view_row(db)["listed_on"]) == (False, None)
+    psells.update_product(db, 1, **new_product(listed=True))
+    assert view_row(db)["listed_on"] == today
+
+
+def test_listed_is_ticked_only_once_nothing_is_missing(db, partner_rate):
+    add_product(db, 1, quantity_received=2, listed_price_cents=None,
+                marketplace_price_cents=None, **NEW_ITEM)
+
+    with pytest.raises(psells.ProductError) as refused:
+        psells.update_product(db, 1, **new_product(listed_price_cents=None,
+                                                   listed=True))
+
+    assert refused.value.problems["listed"] == (
+        "Tick Listed once the item has everything: it still needs "
+        "Marketplace price, listed price and photos.")
+    assert view_row(db)["listed"] is False
+
+
+def test_listed_waits_for_the_photos_of_an_item_that_needs_them(db, partner_rate):
+    add_product(db, 1, quantity_received=2, marketplace_price_cents=8000,
+                **NEW_ITEM)
+
+    with pytest.raises(psells.ProductError, match="it still needs photos"):
+        psells.update_product(db, 1, **new_product(listed=True))
+
+    db.execute("INSERT INTO photos (product_id, file_name) VALUES (1, 'a.jpg')")
+    psells.update_product(db, 1, **new_product(listed=True))
+    assert view_row(db)["listed"] is True
+
+
+def test_a_listed_item_keeps_its_listed_price(db, partner_rate):
+    add_product(db, 1, quantity_received=2)  # listed, from before
+
+    with pytest.raises(psells.ProductError) as refused:
+        psells.update_product(db, 1, **new_product(listed_price_cents=None))
+
+    assert refused.value.problems["listed"].startswith(
+        "A listed item needs its listed price.")
+
+
+def test_an_item_listed_before_is_never_refused_for_what_it_lacks(db,
+                                                                  partner_rate):
+    # The products from before have no Marketplace price, and are listed.
+    add_product(db, 1, quantity_received=2)
+
+    psells.update_product(db, 1, **new_product(name="Renamed"))
+
+    assert (view_row(db)["name"], view_row(db)["listed"]) == ("Renamed", True)
+
+
+def test_the_database_refuses_a_listing_without_a_price_or_a_stray_date(db):
+    add_product(db, 1, quantity_received=2, listed_price_cents=None, **NEW_ITEM)
+
+    for change in ("listed = true", "listed_on = CURRENT_DATE"):
+        with pytest.raises(psycopg.errors.CheckViolation):
+            with db.transaction():
+                db.execute(f"UPDATE products SET {change}")
 
 
 def test_every_save_raises_the_version(db):
@@ -1544,26 +1616,31 @@ def test_every_save_raises_the_version(db):
 
 
 @pytest.mark.parametrize("fields, has_photo, stage", [
+    # Anything missing: In progress, photos or not.
     ({"condition": None, "retail_price_cents": None, "listed_price_cents": None},
-     False, "Received"),
-    # Researched needs the Marketplace price as well as the rest.
-    ({"listed_price_cents": None}, False, "Received"),
-    ({"listed_price_cents": None, "marketplace_price_cents": 8000}, False,
-     "Researched"),
+     False, "In progress"),
     ({"listed_price_cents": None, "marketplace_price_cents": 8000}, True,
-     "Photographed"),
-    # A photo moves an item on even before its research is complete.
-    ({"listed_price_cents": None}, True, "Photographed"),
-    # A listed price means Listed, research and photos or not: the products
-    # from before the workflow.
-    ({}, False, "Listed"),
-    # Listed outranks a photo: a listed item has photos too.
-    ({}, True, "Listed"),
+     "In progress"),
+    ({}, True, "In progress"),  # no Marketplace price
+    # Everything but its photos.
+    ({"marketplace_price_cents": 8000}, False, "Needs photos"),
+    # Everything.
+    ({"marketplace_price_cents": 8000}, True, "Ready to list"),
+    # Listed is the tick, whatever else.
+    ({"listed": True}, False, "Listed"),
 ])
-def test_the_stage_is_the_furthest_reached(db, partner_rate, fields, has_photo, stage):
-    add_product(db, 1, quantity_received=2, **fields)
+def test_the_stage_follows_the_information_the_photos_and_the_tick(
+        db, partner_rate, fields, has_photo, stage):
+    add_product(db, 1, quantity_received=2, **{**NEW_ITEM, **fields})
 
     assert psells.product_stage(view_row(db), has_photo) == stage
+
+
+def test_an_item_from_before_needs_no_photos(db, partner_rate):
+    add_product(db, 1, quantity_received=2, marketplace_price_cents=8000,
+                listed=False, photos_required=False)
+
+    assert psells.product_stage(view_row(db), False) == "Ready to list"
 
 
 def test_an_item_with_nothing_left_is_sold_or_returned(db, partner_rate):
@@ -1576,16 +1653,29 @@ def test_an_item_with_nothing_left_is_sold_or_returned(db, partner_rate):
     assert psells.product_stage(view_row(db, 2), False) == "Returned"
 
 
-def test_research_needs_a_payout_that_can_be_worked_out(db, partner_rate):
-    # Discontinued at retail, with its fixed payout: researched without a
-    # retail price.
-    add_product(db, 1, quantity_received=1, retail_price_cents=0,
-                retail_discontinued=1, partner_share_mode="custom_amount",
-                partner_share_amount_cents=900, listed_price_cents=None,
-                marketplace_price_cents=12000)
+@pytest.mark.parametrize("fields, missing", [
+    ({}, []),
+    ({"condition": None}, ["condition"]),
+    # A missing retail price is said once, not again as the unknown cut.
+    ({"retail_price_cents": None}, ["retail price"]),
+    ({"partner_share_mode": "custom_amount",
+      "partner_share_amount_cents": None}, ["partner cut"]),
+    ({"marketplace_price_cents": None, "listed_price_cents": None},
+     ["Marketplace price", "listed price"]),
+    # Discontinued at retail, with its fixed payout, lacks nothing.
+    ({"retail_price_cents": 0, "retail_discontinued": 1,
+      "partner_share_mode": "custom_amount", "partner_share_amount_cents": 900},
+     []),
+])
+def test_missing_information_names_what_an_item_still_needs(partner_rate,
+                                                            fields, missing):
+    product = {"condition": "Brand new", "retail_price_cents": 10000,
+               "retail_discontinued": 0, "partner_share_mode": "default",
+               "partner_share_percent": None, "partner_share_amount_cents": None,
+               "marketplace_price_cents": 8000, "listed_price_cents": 9000}
+    product.update(fields)
 
-    assert psells.research_complete(view_row(db))
-    assert psells.product_stage(view_row(db), False) == "Researched"
+    assert psells.missing_information(product) == missing
 
 
 # Settings: the lists and the templates ----------------------------------------------
@@ -1715,7 +1805,7 @@ def test_an_item_arrives_with_only_its_category_name_and_quantity(db):
     assert (row["condition"], row["retail_price_cents"],
             row["listed_price_cents"], row["marketplace_price_cents"],
             row["details"]) == (None, None, None, None, "")
-    assert psells.product_stage(row, False) == "Received"
+    assert psells.product_stage(row, False) == "In progress"
 
 
 def test_research_typed_into_the_form_is_stored(db, partner_rate):
@@ -1724,7 +1814,8 @@ def test_research_typed_into_the_form_is_stored(db, partner_rate):
 
     row = view_row(db, product_id)
     assert (row["marketplace_price_cents"], row["details"]) == (8550, "With box")
-    assert psells.product_stage(row, False) == "Researched"
+    # No listed price yet: still in progress.
+    assert psells.product_stage(row, False) == "In progress"
 
 
 def test_a_negative_marketplace_price_is_refused(db):
@@ -1749,7 +1840,7 @@ def test_an_edit_that_does_not_name_the_research_keeps_it(db):
 
 def test_an_edit_can_empty_the_research_it_names(db):
     add_product(db, 1, quantity_received=2, marketplace_price_cents=7000,
-                details="With box")
+                details="With box", listed=False)
 
     psells.update_product(db, 1, **new_product(**LIGHT),
                           marketplace_price_cents=None, details="")
@@ -1905,21 +1996,21 @@ def test_a_fixed_payout_counts_without_a_retail_price(partner_rate,
 # The pipeline: every item under its stage ------------------------------------------
 
 def a_shop_at_every_stage(db):
-    """One product per stage, plus a second Received one, added newest
-    first so id order is not insertion order."""
+    """One product per stage, plus a second In progress one, added newest
+    first so id order is not insertion order. Product 3 has the photos."""
     unresearched = {"listed_price_cents": None, "retail_price_cents": None,
-                    "condition": None}
+                    "condition": None, **NEW_ITEM}
+    ready = {"marketplace_price_cents": 6000, **NEW_ITEM}
     add_product(db, 7, quantity_received=1, **unresearched)
     add_product(db, 6, quantity_received=1)
     add_return(db, 1, 6, 1)
     add_product(db, 5, quantity_received=1)
     add_sale(db, 1, 5, 1)
     add_product(db, 4, quantity_received=2)
-    add_product(db, 3, quantity_received=1, listed_price_cents=None)
+    add_product(db, 3, quantity_received=1, **ready)
     db.execute("INSERT INTO photos (product_id, file_name) VALUES "
                "(3, 'a.jpg'), (3, 'b.jpg')")
-    add_product(db, 2, quantity_received=1, listed_price_cents=None,
-                marketplace_price_cents=6000)
+    add_product(db, 2, quantity_received=1, **ready)
     add_product(db, 1, quantity_received=1, **unresearched)
 
 
@@ -1930,11 +2021,11 @@ def test_the_pipeline_puts_every_item_under_its_stage(db, partner_rate):
 
     assert {stage: [product["id"] for product in products]
             for stage, products in groups.items()} == {
-        "Received": [1, 7], "Researched": [2], "Photographed": [3],
+        "In progress": [1, 7], "Needs photos": [2], "Ready to list": [3],
         "Listed": [4], "Sold": [5], "Returned": [6]}
     assert list(groups) == list(psells.STAGES)
     assert psells.stage_counts(groups) == {
-        "Received": 2, "Researched": 1, "Photographed": 1, "Listed": 1,
+        "In progress": 2, "Needs photos": 1, "Ready to list": 1, "Listed": 1,
         "Sold": 1, "Returned": 1}
 
 
@@ -2147,8 +2238,8 @@ ON = date(2026, 10, 19)
 
 
 def item(listed=True, arrived_on=date(2026, 9, 1), listed_on=date(2026, 9, 19)):
-    return {"listed_price_cents": 9000 if listed else None,
-            "arrived_on": arrived_on, "listed_on": listed_on}
+    return {"listed_price_cents": 9000, "listed": listed,
+            "arrived_on": arrived_on, "listed_on": listed_on if listed else None}
 
 
 @pytest.mark.parametrize("product, days", [
@@ -2206,7 +2297,7 @@ def test_each_stage_puts_the_longest_waiting_first(db, partner_rate):
 
     groups = psells.pipeline(db)
 
-    assert [p["id"] for p in groups["Received"]] == [3, 2, 4, 1]
+    assert [p["id"] for p in groups["In progress"]] == [3, 2, 4, 1]
     # A listed item waits from its listing, not its arrival.
     assert [p["id"] for p in groups["Listed"]] == [6, 7, 5]
 

@@ -900,7 +900,9 @@ def test_the_add_form_offers_every_field_the_reader_reads(client, db):
 
     assert form["method"] == "post"
     assert form["action"].endswith("/products/new")
-    assert offered == set(psells.PRODUCT_FORM_FIELDS)
+    # Every field but Listed: a new item is listed from its page, once it
+    # has its photos.
+    assert offered == set(psells.PRODUCT_FORM_FIELDS) - {"listed"}
     # And the version, which only the edit form carries, hidden.
     assert set(web.ProductForm.model_fields) == (
         set(psells.PRODUCT_FORM_FIELDS) | {"version"})
@@ -1113,7 +1115,7 @@ def test_the_edit_form_opens_filled_with_the_product(client, db):
         "listed_price": "90.00", "partner_share_mode": "custom_percent",
         "partner_share_percent": "33.333333", "partner_share_amount": "",
         "notes": "boxed", "marketplace_price": "75.50",
-        "details": "With its box", "version": "1",
+        "details": "With its box", "version": "1", "listed": "yes",
     }
 
 
@@ -2339,8 +2341,8 @@ def test_the_pipeline_page_counts_every_stage_as_pipeline_does(client, db):
     assert figures(page.text) == {
         stage: str(count) for stage, count
         in psells.stage_counts(psells.pipeline(db)).items()}
-    assert figures(page.text) == {"Received": "2", "Researched": "0",
-                                  "Photographed": "0", "Listed": "1",
+    assert figures(page.text) == {"In progress": "2", "Needs photos": "0",
+                                  "Ready to list": "0", "Listed": "1",
                                   "Sold": "1", "Returned": "0"}
 
 
@@ -2354,13 +2356,16 @@ def test_the_pipeline_page_lists_the_working_stages_item_by_item(client, db):
     page = client.get("/pipeline").text
 
     assert re.findall(r'<h2 id="[^"]*">([^<]*)</h2>', page) == [
-        "Received", "Researched", "Photographed", "Listed"]
-    assert [row[:4] for row in table_rows(page)] == [
-        ["1", "Product 1", "Shoes", "1"],
-        ["2", "Product 2", "Shoes", "1"],
+        "In progress", "Needs photos", "Ready to list", "Listed"]
+    assert [row[:4] + row[5:6] for row in table_rows(page)] == [
+        ["1", "Product 1", "Shoes", "1",
+         "condition, retail price, Marketplace price, listed price"],
+        ["2", "Product 2", "Shoes", "1",
+         "condition, retail price, Marketplace price, listed price"],
         ["No items at this stage."],
         ["No items at this stage."],
-        ["3", "Product 3", "Shoes", "2"],
+        # Listed from before: nothing asked of it.
+        ["3", "Product 3", "Shoes", "2", ""],
     ]
     assert "Product 4" not in page
     assert 'href="http://testserver/products/1/edit"' in page
@@ -2368,16 +2373,16 @@ def test_the_pipeline_page_lists_the_working_stages_item_by_item(client, db):
 
 def test_the_pipeline_page_flags_an_item_not_worth_listing(client, db,
                                                            listing_minimum):
-    add_product(db, 1, quantity_received=1, listed_price_cents=None,
-                marketplace_price_cents=5499)
-    add_product(db, 2, quantity_received=1, listed_price_cents=None,
-                marketplace_price_cents=5500)
+    add_product(db, 1, quantity_received=1, marketplace_price_cents=5499,
+                listed=False, photos_required=True)
+    add_product(db, 2, quantity_received=1, marketplace_price_cents=5500,
+                listed=False, photos_required=True)
 
     rows = table_rows(client.get("/pipeline").text)
 
     assert ["1", "Product 1 Not worth listing", "Shoes", "1", "0 days",
-            "Edit"] in rows
-    assert ["2", "Product 2", "Shoes", "1", "0 days", "Edit"] in rows
+            "photos", "Edit"] in rows
+    assert ["2", "Product 2", "Shoes", "1", "0 days", "photos", "Edit"] in rows
 
 
 # Two people editing one item ------------------------------------------------------
@@ -2575,9 +2580,40 @@ def test_each_pipeline_count_opens_its_list(client, db):
     page = client.get("/pipeline").text
 
     links = re.findall(r'<dt>([^<]*)</dt><dd class="num"><a href="([^"]+)">', page)
-    assert links == [("Received", "#received"), ("Researched", "#researched"),
-                     ("Photographed", "#photographed"), ("Listed", "#listed"),
+    assert links == [("In progress", "#in-progress"),
+                     ("Needs photos", "#needs-photos"),
+                     ("Ready to list", "#ready-to-list"), ("Listed", "#listed"),
                      ("Sold", "http://testserver/out-of-stock"),
                      ("Returned", "http://testserver/out-of-stock")]
-    for anchor in ("received", "researched", "photographed", "listed"):
+    for anchor in ("in-progress", "needs-photos", "ready-to-list", "listed"):
         assert f'<section id="{anchor}"' in page
+
+
+# The Listed tick -----------------------------------------------------------------
+
+def test_listed_is_ticked_from_the_items_page_once_it_is_ready(client, db):
+    add_product(db, 1, quantity_received=1, marketplace_price_cents=8000,
+                listed=False, photos_required=True)
+
+    refused = submit_edit_form(client, listed="yes")
+
+    assert refused.status_code == 422
+    assert "Tick Listed once the item has everything: it still needs photos." in (
+        " ".join(refused.text.split()))
+    assert stored(db)["listed"] is False
+
+    db.execute("INSERT INTO photos (product_id, file_name) VALUES (1, 'a.jpg')")
+    assert submit_edit_form(client, listed="yes").status_code == 303
+    assert (stored(db)["listed"], stored(db)["listed_on"]) == (
+        True, psells.today(db))
+    assert ("listed " + str(psells.today(db))) in client.get(
+        "/products/1/edit").text
+
+
+def test_a_new_item_cannot_be_added_already_listed(client, db):
+    response = submit_add_form(client, category="Shoes", name="Boots",
+                               quantity_received="1", listed="yes")
+
+    assert response.status_code == 422
+    assert "A new item is not listed yet." in response.text
+    assert db.execute("SELECT count(*) AS n FROM products").fetchone()["n"] == 0
