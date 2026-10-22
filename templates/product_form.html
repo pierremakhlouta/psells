@@ -30,6 +30,9 @@
   listed.</p>
 {% endif %}
 
+{% if added %}
+<p class="notice" role="status">Added {{ product.name }}, id {{ product.id }}.</p>
+{% endif %}
 {% if changed_meanwhile %}
 <p class="form-error" role="alert">Someone changed this item since you opened
   it, so nothing was saved. This is the item as it is now: make your change
@@ -49,7 +52,7 @@
     cannot add the product twice. Money fields are plain text with a decimal
     keypad rather than type="number", so every rule about amounts stays in
     parse_money. required is a convenience only; the server checks everything. -#}
-<form class="product-form" action="{{ action }}" method="post">
+<form class="product-form" action="{{ action }}" method="post"{% if not product %} enctype="multipart/form-data"{% endif %}>
   {{ form_token() }}
   {% if product %}<input type="hidden" name="version" value="{{ values.version }}">{% endif %}
   {{ choice("category", "Category", choices.category, "Choose a category", required=true) }}
@@ -105,6 +108,16 @@
   {% endif %}
   {{ field("details", "Details for the listing", hint="What a listing says beyond the template: accessories, marks, sizes.", wide=true) }}
   {{ field("notes", "Notes", hint="For yourselves; never in a listing.", wide=true) }}
+  {% if not product %}
+  {#- Photos with the item, kept with it or not at all. A browser never
+      refills a file input, so after a refusal they are chosen again. -#}
+  <div class="field wide{% if photo_problem %} has-error{% endif %}">
+    <label for="photos">Photos</label>
+    <input type="file" id="photos" name="photos" accept="image/jpeg,image/png" multiple>
+    <small>Optional. JPEG or PNG, up to {{ photo_limits.count }} at a time, {{ photo_limits.megabytes }} MB each.</small>
+    {% if photo_problem %}<p class="error">{{ photo_problem }} Nothing was added; choose the photos again.</p>{% endif %}
+  </div>
+  {% endif %}
 
   <div class="actions">
     <button type="submit">{% if product %}Save changes{% else %}Add product{% endif %}</button>

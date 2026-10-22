@@ -635,8 +635,8 @@ def test_the_limit_sits_where_every_request_to_the_app_passes():
     assert sorted(map(str, limits)) == sorted(map(str, proxies))
     assert sorted(str([name for _, name in blocks][-1]) for blocks in limits) == sorted(
         map(str, [("location", "/"), ("location", "/"),
-                  ("location", "~", "^/products/[0-9]+/photos$"),
-                  ("location", "~", "^/products/[0-9]+/photos$")]))
+                  ("location", "~", "^/products/(new|[0-9]+/photos)$"),
+                  ("location", "~", "^/products/(new|[0-9]+/photos)$")]))
 
 
 @pytest.mark.parametrize("site, demo", [("localhost", ""), ("aws", "1")])
@@ -669,7 +669,7 @@ def test_only_the_photo_upload_takes_a_larger_body():
     assert [words for blocks, words in sizes if len(blocks) == 1] == [
         ["client_max_body_size", "64k"]]
     larger = [(blocks[-1][1], words) for blocks, words in sizes if len(blocks) > 1]
-    assert larger == [(("location", "~", "^/products/[0-9]+/photos$"),
+    assert larger == [(("location", "~", "^/products/(new|[0-9]+/photos)$"),
                        ["client_max_body_size", "260m"])] * 2
 
 
@@ -1602,3 +1602,15 @@ def test_every_server_that_serves_psells_serves_the_icon():
             text = file.read()
         assert text.count("include /etc/nginx/snippets/headers.conf;") == text.count(
             "include /etc/nginx/snippets/icon.conf;") == 1, path
+
+
+def test_the_larger_body_is_for_the_two_upload_addresses_only():
+    with open(os.path.join(PROJECT_DIR, "nginx", "snippets",
+                           "photos.conf")) as snippet:
+        (pattern,) = re.findall(r"location ~ (\S+) \{", snippet.read())
+
+    for path in ("/products/new", "/products/12/photos"):
+        assert re.search(pattern, path), path
+    for path in ("/products/12/edit", "/products/new/x", "/products/photos",
+                 "/login", "/products/12/photos.zip"):
+        assert not re.search(pattern, path), path

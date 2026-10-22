@@ -146,6 +146,11 @@ and a test fails if `seed.sql` is edited by hand.
   with at least one unit available, with a search by name or category.
   **Out of stock** lists the rest, each with the reason it ran out; every
   product is on exactly one of the two.
+- **Price drops**: listed items that have sat at least `stale_listing_days`,
+  or since before PSells recorded listing dates, whose price has room to
+  come down, each with the lowest price that keeps the minimum profit
+  (the partner's payout plus `minimum_listing_profit_cents`), most room
+  first.
 - **Pipeline**: how many items are at each stage, each count opening its list (In
   progress, Needs photos, Ready to list, Listed, Sold, Returned), and the
   items still being worked on under their stage with what each still needs, the one waiting longest first, with its days at the
@@ -155,8 +160,9 @@ and a test fails if `seed.sql` is edited by hand.
   **Edit** and **Delete** to correct one entered wrongly. A sale keeps its
   frozen figures, and every correction is kept, as the record was, in the
   `corrections` log.
-- **Add product** (only the category, name and quantity at first; the
-  research and the listed price can follow with **Edit**), **Record
+- **Add product** (only the category, name and quantity at first, with
+  photos if they are ready; the research and the listed price can follow
+  with **Edit**, and the new item's own page opens once it is added), **Record
   payment**, and **Sell**, **Return** and **Edit**
   from each product's row. **Edit** shows the partner payout and the profit
   at the Marketplace price, and an item whose profit is under the minimum in

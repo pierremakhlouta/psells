@@ -18,6 +18,7 @@ from datetime import date, timedelta
 import pytest
 from jinja2 import nodes
 
+import photos
 import psells
 import web
 
@@ -516,6 +517,7 @@ def current_links(html):
 
 @pytest.mark.parametrize("path, label", [
     ("/", "Inventory"), ("/pipeline", "Pipeline"),
+    ("/price-drops", "Price drops"),
     ("/out-of-stock", "Out of stock"),
     ("/sales-history", "Sales"), ("/returns-history", "Returns"),
     ("/payments-history", "Payments"), ("/analytics", "Analytics"),
@@ -900,9 +902,10 @@ def test_the_add_form_offers_every_field_the_reader_reads(client, db):
 
     assert form["method"] == "post"
     assert form["action"].endswith("/products/new")
-    # Every field but Listed: a new item is listed from its page, once it
-    # has its photos.
-    assert offered == set(psells.PRODUCT_FORM_FIELDS) - {"listed"}
+    # Every field but Listed (a new item is listed from its page, once it
+    # has its photos), and the photos to add with it.
+    assert offered == set(psells.PRODUCT_FORM_FIELDS) - {"listed"} | {"photos"}
+    assert form["enctype"] == "multipart/form-data"
     # And the version, which only the edit form carries, hidden.
     assert set(web.ProductForm.model_fields) == (
         set(psells.PRODUCT_FORM_FIELDS) | {"version"})
@@ -918,14 +921,15 @@ def test_a_blank_form_starts_empty_on_the_default_share(client):
     assert set(data.values()) == {""}
 
 
-def test_adding_a_product_answers_303_to_the_inventory(client, db):
+def test_adding_a_product_answers_303_to_its_own_page(client, db):
     """303, not 307: a 307 would make the browser post the form again."""
     response = submit_add_form(client, **GOOD)
     # The database's sequence chose the id, so read it rather than assume it.
     new_id = db.execute("SELECT id FROM products").fetchone()["id"]
 
     assert response.status_code == 303
-    assert response.headers["location"].endswith(f"/?added={new_id}")
+    assert response.headers["location"].endswith(
+        f"/products/{new_id}/edit?added=yes")
     assert products_stored(db) == 1
 
 
@@ -942,12 +946,16 @@ def test_the_product_is_stored_as_typed_and_in_cents(client, db):
     assert stored["partner_share_mode"] == "default"
 
 
-def test_after_adding_the_inventory_shows_it_and_says_so(client, db):
+def test_after_adding_the_items_page_shows_it_and_says_so(client, db):
     page = submit_add_form(client, follow_redirects=True, **GOOD).text
     new_id = db.execute("SELECT id FROM products").fetchone()["id"]
 
-    assert [row[NAME] for row in table_rows(page)] == ["Jordan 1 Chicago"]
-    assert f"Added Jordan 1 Chicago, id {new_id}." in page
+    assert f"Edit product {new_id}" in page
+    assert paragraphs(page, "notice")[0][0] == (
+        f"Added Jordan 1 Chicago, id {new_id}.")
+    # A word typed into the address on another item says nothing.
+    assert paragraphs(client.get(f"/products/{new_id}/edit?added=no").text,
+                      "notice") == []
 
 
 @pytest.mark.parametrize("typed, expected", [
@@ -1008,7 +1016,8 @@ def test_a_refused_form_keeps_everything_typed(client, db):
 
     assert response.status_code == 422
     assert form_data(form) == {**typed, "partner_share_percent": "",
-                               "marketplace_price": "", "details": ""}
+                               "marketplace_price": "", "details": "",
+                               "photos": ""}
     assert "checked" in field(form, "retail_discontinued")
     assert field(form, "partner_share_mode")["value"] == "custom_amount"
     assert field(form, "listed_price")["aria-invalid"] == "true"
@@ -2067,6 +2076,7 @@ def test_there_are_templates_to_check():
     assert "analytics.html" in names
     assert "settings.html" in names
     assert "pipeline.html" in names
+    assert "price_drops.html" in names
 
 
 def test_no_template_does_arithmetic():
@@ -2617,3 +2627,72 @@ def test_a_new_item_cannot_be_added_already_listed(client, db):
     assert response.status_code == 422
     assert "A new item is not listed yet." in response.text
     assert db.execute("SELECT count(*) AS n FROM products").fetchone()["n"] == 0
+
+
+# Photos with a new item ----------------------------------------------------------
+
+def a_jpeg():
+    import io
+    from PIL import Image
+    out = io.BytesIO()
+    Image.new("RGB", (40, 30), (10, 120, 200)).save(out, "JPEG")
+    return out.getvalue()
+
+
+def test_an_item_is_added_with_its_photos_in_one_go(client, db, photo_dir):
+    data = {**form_data(add_form(client)), **GOOD}
+    data.pop("photos")
+
+    response = client.post("/products/new", data=data, follow_redirects=False,
+                           files=[("photos", ("a.jpg", a_jpeg(), "image/jpeg")),
+                                  ("photos", ("b.jpg", a_jpeg(), "image/jpeg"))])
+
+    assert response.status_code == 303
+    new_id = db.execute("SELECT id FROM products").fetchone()["id"]
+    assert len(photos.product_photos(db, new_id)) == 2
+    page = client.get(response.headers["location"]).text
+    assert page.count(f'/photos/') >= 2
+
+
+def test_a_refused_photo_adds_no_item_either(client, db, photo_dir):
+    data = {**form_data(add_form(client)), **GOOD}
+    data.pop("photos")
+
+    response = client.post("/products/new", data=data,
+                           files=[("photos", ("a.jpg", b"not a photo", "image/jpeg"))])
+
+    assert response.status_code == 422
+    assert ("a.jpg is not a JPEG or PNG photo. Export it as JPEG and upload it "
+            "again. Nothing was added; choose the photos again.") in (
+        " ".join(response.text.split()))
+    assert products_stored(db) == 0
+    assert db.execute("SELECT count(*) AS n FROM photos").fetchone()["n"] == 0
+    # What was typed comes back.
+    assert field(product_form_in_add(response.text), "name")["value"] == (
+        GOOD["name"])
+
+
+def product_form_in_add(html):
+    (form,) = [form for form in forms(html) if form["action"].endswith("/new")]
+    return form
+
+
+# Price drops ----------------------------------------------------------------------
+
+def test_the_price_drops_page_shows_what_price_drops_finds(client, db):
+    add_product(db, 1, quantity_received=1, name="Old Boots")
+    add_product(db, 2, quantity_received=1, name="Tight", listed_price_cents=5500)
+
+    page = client.get("/price-drops")
+
+    assert page.status_code == 200
+    assert table_rows(page.text) == [
+        ["1", "Old Boots", "Unknown", "$90.00", "$55.00", "$35.00", "Edit"]]
+    assert [psells.format_cents(d["room_cents"])
+            for d in psells.price_drops(db)] == ["$35.00"]
+
+
+def test_the_price_drops_page_says_when_there_is_nothing(client, db):
+    rows = table_rows(client.get("/price-drops").text)
+
+    assert rows == [["Nothing has sat long enough with room to come down."]]

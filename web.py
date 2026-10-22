@@ -80,6 +80,21 @@ def is_demo():
 templates.env.globals["demo"] = is_demo()
 
 
+async def parsed_form(request: Request):
+    """The request's form, parsed, and closed once the route has answered.
+
+    async because reading a body is, so the route itself stays a plain def.
+    Starlette keeps the form it parsed, so the form token check and this read
+    the body once between them. Each uploaded file is spooled to a temporary
+    file, closed here whichever way the route returns.
+    """
+    form = await request.form()
+    try:
+        yield form
+    finally:
+        await form.close()
+
+
 @router.get("/", response_class=HTMLResponse)
 def inventory_page(request: Request, connection: Connection, q: str = "",
                    added: str = "", edited: str = "", sold: str = "",
@@ -265,6 +280,16 @@ def pipeline_page(request: Request, connection: Connection):
     })
 
 
+@router.get("/price-drops", response_class=HTMLResponse)
+def price_drops_page(request: Request, connection: Connection):
+    """The listed items that have sat long enough and have room to come down,
+    each with the lowest price that keeps the minimum profit. Everything is
+    price_drops'; nothing is worked out here."""
+    return templates.TemplateResponse(request, "price_drops.html", {
+        "drops": psells.price_drops(connection),
+    })
+
+
 @router.get("/out-of-stock", response_class=HTMLResponse)
 def out_of_stock_page(request: Request, connection: Connection, q: str = ""):
     """Every product with no unit available, and why.
@@ -422,6 +447,8 @@ def product_form(request, connection, values, problems, status_code=200,
          else photos.product_photos(connection, product["id"]),
          "photo_problem": photo_problem,
          "changed_meanwhile": changed_meanwhile,
+         "added": product is not None
+         and request.query_params.get("added") == "yes",
          "photo_limits": {"count": photos.MAX_PHOTOS_PER_UPLOAD,
                           "megabytes": photos.MAX_PHOTO_MB},
          "photo_notice": PHOTO_NOTICES.get(
@@ -444,28 +471,54 @@ def add_product_page(request: Request, connection: Connection):
 
 @router.post("/products/new", response_class=HTMLResponse)
 def add_product_submit(request: Request, connection: Connection,
-                       form: Annotated[ProductForm, Form()]):
-    """Add the product, or show the form again with every problem.
+                       form: Annotated[ProductForm, Form()],
+                       sent: Annotated[FormData, Depends(parsed_form)]):
+    """Add the product and any photos chosen with it, or show the form again
+    with every problem.
 
-    Success redirects with 303, so the page left on screen came from a GET and
-    refreshing it cannot add the product twice. RedirectResponse defaults to
-    307, which would re-send the post, so the code is always written out.
+    The product and its photos are kept together or not at all: one
+    transaction holds both, so a photo refused leaves no product behind
+    either. Success redirects with 303 to the new item's page, where its
+    photos and, once it has a listed price, its listing are; so the page left
+    on screen came from a GET and refreshing it cannot add the product twice.
+    RedirectResponse defaults to 307, which would re-send the post, so the
+    code is always written out.
 
     A refusal writes nothing and answers 422 with everything as it was typed,
-    so one mistake costs one correction.
+    so one mistake costs one correction. The photos have to be chosen again:
+    a browser never refills a file input.
     """
     fields = form.model_dump()
+    uploads = chosen_photos(sent)
 
     try:
-        product_id = psells.create_product_from_text(connection, fields)
+        with connection.transaction():
+            product_id = psells.create_product_from_text(connection, fields)
+            if uploads:
+                photos.add_photos(connection, product_id, uploads)
     except psells.ProductError as refused:
         return product_form(request, connection, fields, refused.problems,
                             status_code=422)
+    except photos.PhotoError as refused:
+        return product_form(request, connection, fields, {}, status_code=422,
+                            photo_problem=str(refused))
 
     return RedirectResponse(
-        request.url_for("inventory_page").include_query_params(added=product_id),
+        request.url_for("edit_product_page", product_id=product_id)
+        .include_query_params(added="yes"),
         status_code=303,
     )
+
+
+def chosen_photos(sent):
+    """The files a form's photo input sent, as (name, bytes). A file input
+    with nothing chosen still sends one empty part with no file name, which
+    Starlette reads as text rather than a file, so only files with a name are
+    photos. Each is read only to one byte past the limit, so an oversized
+    photo is refused without being read whole."""
+    return [(upload.filename, upload.file.read(photos.MAX_PHOTO_BYTES + 1))
+            for upload in sent.getlist("photos")
+            if isinstance(upload, UploadFile) and upload.filename]
 
 
 # Editing a product -----------------------------------------------------------
@@ -746,42 +799,22 @@ def add_payment_submit(request: Request, connection: Connection,
 
 # Photos ----------------------------------------------------------------------
 
-async def parsed_form(request: Request):
-    """The request's form, parsed, and closed once the route has answered.
-
-    async because reading a body is, so the route itself stays a plain def.
-    Starlette keeps the form it parsed, so the form token check and this read
-    the body once between them. Each uploaded file is spooled to a temporary
-    file, closed here whichever way the route returns.
-    """
-    form = await request.form()
-    try:
-        yield form
-    finally:
-        await form.close()
-
-
 @router.post("/products/{product_id:int}/photos", response_class=HTMLResponse)
 def add_photos_submit(request: Request, connection: Connection,
                       product_id: int,
                       form: Annotated[FormData, Depends(parsed_form)]):
     """Keep the photos chosen, or show the Edit page again with why not.
 
-    A file input with nothing chosen still sends one empty part with no file
-    name, which Starlette reads as text rather than a file, so only files
-    with a name are photos. Each part is read only to one byte
-    past the limit, so an oversized photo is refused without being read
-    whole. nginx allows this one address a larger body than the rest, and
-    still refuses an upload over the limits before the app sees it.
+    The files are read by chosen_photos. nginx allows this address, and the
+    add form's, a larger body than the rest, and still refuses an upload over
+    the limits before the app sees it.
     """
     product = find_product(connection, product_id)
 
     if product is None:
         return not_found(request, product_id)
 
-    uploads = [(upload.filename, upload.file.read(photos.MAX_PHOTO_BYTES + 1))
-               for upload in form.getlist("photos")
-               if isinstance(upload, UploadFile) and upload.filename]
+    uploads = chosen_photos(form)
 
     try:
         photos.add_photos(connection, product_id, uploads)

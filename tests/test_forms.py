@@ -82,7 +82,7 @@ def stock(db, photo_dir):
 
 
 @pytest.fixture
-def browser(db, partner_rate):
+def browser(db, partner_rate, listing_minimum, stale_days):
     """A logged-in client that sends the cookie and nothing else: no
     X-Form-Token header, so a write succeeds only with the hidden field."""
     api.app.dependency_overrides[dependencies.get_connection] = lambda: db

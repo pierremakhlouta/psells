@@ -682,6 +682,43 @@ def waiting(product, on):
             "not_selling": limit is not None and days >= limit}
 
 
+def price_drops(connection):
+    """The listed items a price could come down on, most room first.
+
+    An item counts once it is listed, in stock, and has waited at least
+    stale_listing_days since it was listed, or has no listing date at all
+    (the products from before the workflow, which are the oldest). Its
+    lowest price is the partner's payout plus minimum_listing_profit_cents
+    (nothing more when no minimum is set), the least it can sell for and
+    still be worth listing; its room is the listed price less that. An item
+    with no room, or whose payout is unknown, is left out.
+
+    Each entry is {"product", "days", "lowest_cents", "room_cents"}.
+    """
+    on = today(connection)
+    limit = stale_listing_days()
+    minimum = minimum_listing_profit_cents() or 0
+    drops = []
+
+    for product in in_stock_products(connection):
+        if not product["listed"]:
+            continue
+        days = waiting(product, on)["days"]
+        if days is not None and (limit is None or days < limit):
+            continue
+        payout = partner_share_for(product)
+        if payout is None:
+            continue
+        lowest = payout + minimum
+        room = product["listed_price_cents"] - lowest
+        if room > 0:
+            drops.append({"product": product, "days": days,
+                          "lowest_cents": lowest, "room_cents": room})
+
+    drops.sort(key=lambda drop: (-drop["room_cents"], drop["product"]["id"]))
+    return drops
+
+
 def listing_figures(product):
     """What listing one unit of this item would leave, in cents.
 

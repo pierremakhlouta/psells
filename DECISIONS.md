@@ -969,5 +969,15 @@ readable; they are in its history in git, up to commit 7ecee20.
   migration 0004 counted every existing product as photographed and ticked
   every one with a listed price, so only items added from then on need
   photos. The stages are still worked out, never stored; what is stored are
-  the two facts they rest on, the tick and whether photos are required.
+  the two facts they rest on, the tick and whether photos are required. The
+  add form takes photos with the item, both kept in one transaction so a
+  photo refused leaves no item behind, and opens the new item's page, where
+  its photos and listing are, rather than the inventory; nginx's larger
+  upload limit covers the add form's address too. A Price drops page lists
+  the listed items that have sat long enough to count as not selling, and
+  the older ones with no listing date, which are the oldest, wherever the
+  listed price is above the partner's payout plus the minimum profit; that
+  sum is shown as the lowest price, below which an item is not worth
+  listing, and the difference as its room, most room first. It shows and
+  never changes a price: a drop is made on the item's page, as any edit.
   *This replaces the stages of "An item arrives before it is researched".*

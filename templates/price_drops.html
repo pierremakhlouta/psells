@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+
+{% block title %}Price drops · PSells{% endblock %}
+
+{% from "macros.html" import maybe_money %}
+
+{% block content %}
+<h1>Price drops</h1>
+<p class="lead">Listed items that have sat long enough to count as not
+  selling, or since before PSells recorded listing dates, and whose price has
+  room to come down. The lowest price is the partner's payout plus your
+  minimum profit; below it an item is not worth listing. Most room first.</p>
+
+{#- drops is psells.price_drops: each item with its days waiting, its lowest
+    price and its room, all worked out there. This file only shows them. -#}
+<table>
+  <thead>
+    <tr>
+      <th class="num">ID</th>
+      <th>Name</th>
+      <th class="num">Waiting</th>
+      <th class="num">Listed price</th>
+      <th class="num">Lowest price</th>
+      <th class="num">Room</th>
+      <th><span class="visually-hidden">Actions</span></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for drop in drops %}
+    <tr>
+      <td class="num">{{ drop.product.id }}</td>
+      <td>{{ drop.product.name }}</td>
+      <td class="num">{% if drop.days is none %}Unknown{% elif drop.days == 1 %}1 day{% else %}{{ drop.days }} days{% endif %}</td>
+      <td class="num">{{ drop.product.listed_price_cents|money }}</td>
+      <td class="num">{{ drop.lowest_cents|money }}</td>
+      <td class="num">{{ drop.room_cents|money }}</td>
+      <td class="row-actions"><a href="{{ url_for('edit_product_page', product_id=drop.product.id) }}">Edit</a></td>
+    </tr>
+    {% else %}
+    <tr>
+      <td colspan="7" class="empty">Nothing has sat long enough with room to come down.</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

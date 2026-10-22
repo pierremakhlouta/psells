@@ -1,5 +1,5 @@
 import os
-from datetime import date
+from datetime import date, timedelta
 
 import psycopg
 import pytest
@@ -2319,3 +2319,69 @@ def test_each_research_link_searches_the_items_name():
     for _, address in links:
         assert address.endswith("Boots+%26+Laces+9%2F10+%231")
         assert address.count("&") == 0 and address.count("#") == 0
+
+
+# Price drops ---------------------------------------------------------------------
+
+def drops(db):
+    return [(d["product"]["id"], d["days"], d["lowest_cents"], d["room_cents"])
+            for d in psells.price_drops(db)]
+
+
+def test_a_listed_item_sitting_long_shows_its_room_to_come_down(
+        db, partner_rate, listing_minimum, stale_days):
+    on = psells.today(db)
+    # $100.00 retail: a $40.00 payout, plus the $15.00 minimum, is $55.00.
+    add_product(db, 1, quantity_received=1)                     # from before
+    add_product(db, 2, quantity_received=1, listed_on=on - timedelta(days=30))
+    add_product(db, 3, quantity_received=1, listed_on=on - timedelta(days=29))
+
+    assert drops(db) == [(1, None, 5500, 3500), (2, 30, 5500, 3500)]
+
+
+@pytest.mark.parametrize("overrides", [
+    {"listed_price_cents": 5500},                        # no room
+    # Not listed, and undated, so only the tick keeps it out.
+    {"listed": False, "listed_price_cents": 9000, "arrived_on": None},
+    {"retail_price_cents": None, "listed": True},        # payout unknown
+])
+def test_an_item_without_room_or_not_listed_is_left_out(
+        db, partner_rate, listing_minimum, stale_days, overrides):
+    add_product(db, 1, quantity_received=1, **overrides)
+
+    assert drops(db) == []
+
+
+def test_an_item_out_of_stock_is_left_out(db, partner_rate, listing_minimum,
+                                          stale_days):
+    add_product(db, 1, quantity_received=1)
+    add_sale(db, 1, 1, 1)
+
+    assert drops(db) == []
+
+
+def test_the_most_room_comes_first(db, partner_rate, listing_minimum, stale_days):
+    add_product(db, 1, quantity_received=1, listed_price_cents=5501)
+    add_product(db, 2, quantity_received=1, listed_price_cents=9000)
+    add_product(db, 3, quantity_received=1, listed_price_cents=7000)
+
+    assert [(i, room) for i, _, _, room in drops(db)] == [
+        (2, 3500), (3, 1500), (1, 1)]
+
+
+def test_without_a_minimum_the_lowest_price_is_the_payout(db, partner_rate,
+                                                          monkeypatch, stale_days):
+    monkeypatch.setattr(psells, "minimum_listing_profit_cents", lambda: None)
+    add_product(db, 1, quantity_received=1)
+
+    assert drops(db) == [(1, None, 4000, 5000)]
+
+
+def test_without_a_not_selling_limit_only_the_undated_count(
+        db, partner_rate, listing_minimum, monkeypatch):
+    monkeypatch.setattr(psells, "stale_listing_days", lambda: None)
+    add_product(db, 1, quantity_received=1)
+    add_product(db, 2, quantity_received=1,
+                listed_on=psells.today(db) - timedelta(days=400))
+
+    assert [i for i, *_ in drops(db)] == [1]
