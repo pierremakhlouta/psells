@@ -687,3 +687,19 @@ def test_the_reset_deletes_the_uploaded_photos_after_the_records(project):
     (etl,) = [i for i, call in enumerate(made) if call.endswith(" run --rm --no-deps etl")]
     assert records < photos < sample < etl
     assert "-f compose.aws.yaml" in made[photos]
+
+
+def test_a_deploy_removes_the_images_no_container_uses_once_it_has_succeeded():
+    # 144 old images filled the server's disk by 22 October 2026, and every
+    # deploy after failed while pulling.
+    with open(SCRIPT) as script:
+        text = script.read()
+
+    prune = text.index("docker image prune -a -f")
+    # After the new containers are up and checked, never before.
+    assert text.index("compose up -d --wait") < prune
+    assert text.index("compose run --rm --no-deps etl") < prune
+    assert prune < text.index('echo "== deployed')
+    # Images only: never a volume, where the records are.
+    assert "volume prune" not in text and "system prune" not in text
+    assert "--volumes" not in text

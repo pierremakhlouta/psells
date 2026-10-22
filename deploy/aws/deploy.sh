@@ -300,6 +300,16 @@ systemctl daemon-reload
 systemctl enable --now psells-certbot-renew.timer psells-backup.timer psells-analytics.timer psells-reset.timer
 systemctl list-timers psells-certbot-renew.timer psells-backup.timer psells-analytics.timer psells-reset.timer --no-pager
 
+echo "== images no container uses"
+# Each deploy pulls the new images by digest and nothing else removes the old
+# ones; by 22 October 2026 144 of them had filled the 19 GB disk and every
+# deploy failed while pulling. Only now, with the new containers running, are
+# the unused ones removed: the database's volumes are not images, and every
+# image removed is still on GHCR. The analytics image, used by docker compose
+# run and so by no running container, is pulled again on its next run.
+docker image prune -a -f | tail -1
+docker builder prune -f | tail -1
+
 echo "== deployed $(git log --oneline -1)"
 # What the application's container is really running, which the Deploy
 # workflow compares with the digest it sent.

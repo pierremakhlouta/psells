@@ -106,6 +106,15 @@ gh run list --limit 10
 A red check means nothing is deployed and the demonstration keeps running
 the last good commit.
 
+Each deploy ends by removing the images no container uses. Before that
+existed, 144 old images filled the server's 19 GB disk and every deploy
+from 13 October 2026 failed while pulling, with "document process failed
+unexpectedly" from Session Manager; `df -h /` on the server shows it. The
+clean-up by hand, if it is ever needed again, is
+`sudo docker image prune -a -f` in a session on the server: images only,
+never volumes, and every one is still on GHCR. Tried: 22 October 2026,
+11.8 GB back, then the deploy went through.
+
 ### Roll the demonstration back
 
 Deploy an earlier commit of `main`, by its full hash:
