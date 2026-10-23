@@ -982,7 +982,12 @@ readable; they are in its history in git, up to commit 7ecee20.
   (price_drop_minimum_room_cents) are listed. It began with the minimum
   profit added to the cut, and Pierre chose break-even with a room of his
   own instead. It shows and never changes a price: a drop is made on the
-  item's page, as any edit. The
+  item's page, as any edit. Each row has a Reviewed button, and a listed
+  item's change of price counts as one: either takes the item off the list
+  until it has gone stale_listing_days again without selling, so a price
+  just dropped gets its chance and a price kept is looked at again later
+  rather than never. The date is stored (price_reviewed_on, migration
+  0005), being a fact nobody could work out later. The
   add and edit forms have a Generate listing button beside the saving one:
   with no script on the page it cannot wait for the fields to fill, so it
   is always there, and pressing it shows the listing the typed text would

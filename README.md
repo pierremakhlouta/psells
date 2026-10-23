@@ -158,6 +158,8 @@ gear is **Settings**.
   price (the partner's cut) and the room between that and its listed price,
   most room first; items with no more room than
   `price_drop_minimum_room_cents` in `data/config.json` are left out.
+  **Reviewed**, or changing an item's price, takes it off the list until it
+  has gone `stale_listing_days` again without selling.
 - **Pipeline**: how many items are at each stage, each count opening its list (In
   progress, Needs photos, Ready to list, Listed, Sold, Returned), and the
   items still being worked on under their stage with what each still needs, the one waiting longest first, with its days at the

@@ -2691,7 +2691,8 @@ def test_the_price_drops_page_shows_what_price_drops_finds(client, db):
     assert page.status_code == 200
     assert "<th class=\"num\">Break-even price</th>" in page.text
     assert table_rows(page.text) == [
-        ["1", "Old Boots", "Unknown", "$90.00", "$40.00", "$50.00", "Edit"]]
+        ["1", "Old Boots", "Unknown", "$90.00", "$40.00", "$50.00",
+         "Edit Reviewed"]]
     assert [psells.format_cents(d["room_cents"])
             for d in psells.price_drops(db)] == ["$50.00"]
 
@@ -2904,3 +2905,29 @@ def test_a_box_with_a_problem_is_never_hidden(client, db):
     assert re.search(r'<div class="field only-percent has-error">', page)
     style = re.search(r"<style>(.*?)</style>", page, re.S).group(1)
     assert ".only-percent:not(.has-error)" in style
+
+
+def test_reviewed_takes_an_item_off_the_price_drops_page(client, db):
+    add_product(db, 1, quantity_received=1, name="Old Boots")
+    (form,) = [f for f in forms(client.get("/price-drops").text)
+               if f["action"].endswith("/price-reviewed")]
+
+    response = client.post(form["action"], follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"].endswith("/price-drops?done=reviewed")
+    page = client.get(response.headers["location"]).text
+    assert paragraphs(page, "notice")[0][0].startswith("Marked reviewed")
+    assert table_rows(page) == [
+        ["Nothing has sat long enough with room to come down."]]
+    assert ("price last reviewed " + str(psells.today(db))) in client.get(
+        "/products/1/edit").text
+
+
+def test_reviewing_an_item_that_does_not_exist_is_a_404(client, db):
+    assert client.post("/products/9/price-reviewed").status_code == 404
+
+
+def test_a_notice_word_not_known_on_price_drops_shows_nothing(client, db):
+    assert paragraphs(client.get("/price-drops?done=<b>x</b>").text,
+                      "notice") == []

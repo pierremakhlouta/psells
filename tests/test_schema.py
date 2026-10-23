@@ -591,6 +591,7 @@ MIGRATIONS = [
     ("0002_corrections.sql", "-- Corrections ---"),
     ("0003_workflow.sql", "-- Workflow ---"),
     ("0004_listing.sql", "-- Listing ---"),
+    ("0005_price_review.sql", "-- Price review ---"),
 ]
 
 

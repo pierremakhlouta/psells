@@ -7,7 +7,7 @@
 {% block content %}
 {% if product %}
 <h1>Edit product {{ product.id }}</h1>
-<p class="lead">Arrived {{ product.arrived_on or "before PSells recorded it" }}{% if product.listed %}, listed {{ product.listed_on or "before PSells recorded it" }}{% endif %}.
+<p class="lead">Arrived {{ product.arrived_on or "before PSells recorded it" }}{% if product.listed %}, listed {{ product.listed_on or "before PSells recorded it" }}{% endif %}{% if product.price_reviewed_on %}, price last reviewed {{ product.price_reviewed_on }}{% endif %}.
   Sold {{ product.quantity_sold }}, returned {{ product.quantity_returned }}.
   Quantity received cannot go below the units that have left.
   Changing the partner share affects later sales only.</p>

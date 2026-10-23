@@ -293,11 +293,28 @@ def home_page(request: Request, connection: Connection):
 @router.get("/price-drops", response_class=HTMLResponse)
 def price_drops_page(request: Request, connection: Connection):
     """The listed items that have sat long enough and have room to come down,
-    each with the lowest price that keeps the minimum profit. Everything is
-    price_drops'; nothing is worked out here."""
+    each with its break-even price. Everything is price_drops'; nothing is
+    worked out here. reviewed is a fixed word in the address after Reviewed
+    was pressed, so the sentence shown is never text from the address."""
     return templates.TemplateResponse(request, "price_drops.html", {
         "drops": psells.price_drops(connection),
+        "reviewed": request.query_params.get("done") == "reviewed",
     })
+
+
+@router.post("/products/{product_id:int}/price-reviewed",
+             response_class=HTMLResponse)
+def price_reviewed_submit(request: Request, connection: Connection,
+                          product_id: int):
+    """Take an item off the Price drops list until it has gone another
+    stale_listing_days without selling, and go back to the list."""
+    if not psells.mark_price_reviewed(connection, product_id):
+        return not_found(request, product_id)
+
+    return RedirectResponse(
+        request.url_for("price_drops_page").include_query_params(done="reviewed"),
+        status_code=303,
+    )
 
 
 @router.get("/out-of-stock", response_class=HTMLResponse)

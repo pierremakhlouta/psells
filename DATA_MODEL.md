@@ -125,6 +125,7 @@ One row per product.
 | `listed_on`                 | date    | when Listed was ticked; emptied when it is unticked |
 | `listed`                    | boolean | ticked when the item is posted; needs a listed price |
 | `photos_required`           | boolean | whether it needs a photo before it is ready to list; false for every product from before 0004 |
+| `price_reviewed_on`         | date    | when its price was last reviewed on Price drops, by the button or a change of a listed item's price; empty until then |
 | `version`                   | integer | raised by every save; a save made from an older version is refused |
 
 **ID allocation.** Every table's id comes from a sequence, which never hands out

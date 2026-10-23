@@ -590,6 +590,7 @@ def test_create_product_stores_every_field_and_returns_the_id(db):
         "listed_on": None,
         "listed": False,
         "photos_required": True,
+        "price_reviewed_on": None,
         "version": 1,
     }
 
@@ -800,7 +801,9 @@ def test_update_product_replaces_every_field(db):
         # the save counts.
         "marketplace_price_cents": None, "details": "", "on_instagram": False,
         "arrived_on": today, "listed_on": None, "listed": True,
-        "photos_required": False, "version": 2,
+        "photos_required": False,
+        # A listed item whose price changed: reviewed today.
+        "price_reviewed_on": today, "version": 2,
     }
 
 
@@ -2432,3 +2435,58 @@ def test_without_a_not_selling_limit_only_the_undated_count(
                 listed_on=psells.today(db) - timedelta(days=400))
 
     assert [i for i, *_ in drops(db)] == [1]
+
+
+def test_reviewed_takes_an_item_off_until_it_waits_as_long_again(
+        db, partner_rate, drop_room, stale_days):
+    on = psells.today(db)
+    add_product(db, 1, quantity_received=1)
+    assert [i for i, *_ in drops(db)] == [1]
+
+    assert psells.mark_price_reviewed(db, 1) is True
+    assert view_row(db)["price_reviewed_on"] == on
+    assert drops(db) == []
+
+    # 29 days on, still off; 30, back.
+    db.execute("UPDATE products SET price_reviewed_on = %s",
+               (on - timedelta(days=29),))
+    assert drops(db) == []
+    db.execute("UPDATE products SET price_reviewed_on = %s",
+               (on - timedelta(days=30),))
+    assert [i for i, *_ in drops(db)] == [1]
+
+
+def test_reviewing_is_a_save_and_needs_a_real_item(db):
+    add_product(db, 1, quantity_received=1)
+
+    psells.mark_price_reviewed(db, 1)
+
+    assert view_row(db)["version"] == 2
+    assert psells.mark_price_reviewed(db, 9) is False
+
+
+def test_a_new_listed_price_counts_as_a_review(db, partner_rate, drop_room,
+                                              stale_days):
+    add_product(db, 1, quantity_received=1)
+
+    psells.update_product(db, 1, **new_product(listed_price_cents=8000))
+
+    assert view_row(db)["price_reviewed_on"] == psells.today(db)
+    assert drops(db) == []
+
+
+def test_saving_without_changing_the_price_is_no_review(db, partner_rate):
+    add_product(db, 1, quantity_received=1)
+
+    psells.update_product(db, 1, **new_product(name="Renamed"))
+
+    assert view_row(db)["price_reviewed_on"] is None
+
+
+def test_pricing_an_item_not_yet_listed_is_no_review(db, partner_rate):
+    add_product(db, 1, quantity_received=1, listed_price_cents=None,
+                listed=False, photos_required=True)
+
+    psells.update_product(db, 1, **new_product(listed_price_cents=9000))
+
+    assert view_row(db)["price_reviewed_on"] is None

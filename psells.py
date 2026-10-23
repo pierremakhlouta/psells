@@ -734,12 +734,26 @@ def price_drop_minimum_room_cents():
     return room
 
 
+def mark_price_reviewed(connection, product_id):
+    """Record that a listed item's price was looked at today, which takes it
+    off the Price drops list until it has gone another stale_listing_days
+    without selling. A save like any other: it raises the version. Returns
+    False for an id that does not exist."""
+    with connection.transaction():
+        return connection.execute(
+            "UPDATE products SET price_reviewed_on = CURRENT_DATE, "
+            "version = version + 1 WHERE id = %s",
+            (product_id,)).rowcount == 1
+
+
 def price_drops(connection):
     """The listed items a price could come down on, most room first.
 
     An item counts once it is listed, in stock, and has waited at least
     stale_listing_days since it was listed, or has no listing date at all
-    (the products from before the workflow, which are the oldest). Its
+    (the products from before the workflow, which are the oldest); and, once
+    its price has been reviewed (mark_price_reviewed, or a change of its
+    listed price), only after another stale_listing_days without selling. Its
     break-even price is the partner's payout: sold at it, the item makes
     nothing and loses nothing. Its room is the listed price less that, and
     only an item with more room than price_drop_minimum_room_cents (any room
@@ -758,6 +772,10 @@ def price_drops(connection):
             continue
         days = waiting(product, on)["days"]
         if days is not None and (limit is None or days < limit):
+            continue
+        reviewed = product["price_reviewed_on"]
+        if reviewed is not None and (limit is None
+                                     or (on - reviewed).days < limit):
             continue
         payout = partner_share_for(product)
         if payout is None:
@@ -1882,6 +1900,11 @@ def update_product(connection, product_id, category, name, quantity_received,
             "listed_on = CASE WHEN %s AND NOT listed THEN CURRENT_DATE "
             "WHEN NOT %s THEN NULL ELSE listed_on END, "
             "listed = %s, "
+            # A listed item's new price counts as reviewing it, so a drop
+            # just made takes it off the Price drops list.
+            "price_reviewed_on = CASE WHEN listed AND "
+            "listed_price_cents IS DISTINCT FROM %s::integer "
+            "THEN CURRENT_DATE ELSE price_reviewed_on END, "
             "version = version + 1 "
             "WHERE id = %s AND (%s::integer IS NULL OR version = %s)",
             (category.strip(), name.strip(), quantity_received,
@@ -1891,7 +1914,7 @@ def update_product(connection, product_id, category, name, quantity_received,
              partner_share_amount_cents, _optional_text(condition),
              (notes or "").strip(), marketplace_price_cents,
              (details or "").strip(), bool(on_instagram), bool(listed),
-             bool(listed), bool(listed),
+             bool(listed), bool(listed), listed_price_cents,
              product_id, expected_version, expected_version)
         )
 

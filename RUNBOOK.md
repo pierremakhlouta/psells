@@ -459,7 +459,7 @@ ls migrations/
 ```
 
 ```
-./backup.sh && docker compose exec -T db sh -c 'psql -v ON_ERROR_STOP=1 --single-transaction -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < migrations/0004_listing.sql
+./backup.sh && docker compose exec -T db sh -c 'psql -v ON_ERROR_STOP=1 --single-transaction -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < migrations/0005_price_review.sql
 ```
 
 A deploy applies none: the demo's too is applied by hand, in a session on
@@ -469,12 +469,13 @@ code expects the new tables. Then put the demo's records back, so it has the
 new seed:
 
 ```
-cd /opt/psells && for m in migrations/0003_workflow.sql migrations/0004_listing.sql; do sudo docker compose -f compose.yaml -f compose.aws.yaml exec -T db sh -c 'psql -v ON_ERROR_STOP=1 --single-transaction -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < "$m" || break; done && sudo systemctl start psells-reset.service
+cd /opt/psells && for m in migrations/0005_price_review.sql; do sudo docker compose -f compose.yaml -f compose.aws.yaml exec -T db sh -c 'psql -v ON_ERROR_STOP=1 --single-transaction -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < "$m" || break; done && sudo systemctl start psells-reset.service
 ```
 
-That applies every migration the demo still lacks, in order, stopping at the
-first that fails; on a database that already has one, it stops at "already
-exists" and changes nothing, so apply only the ones it lacks. 0003 and 0004
+Name every migration the demo still lacks, in order, after `for m in`
+(on 22 October 2026 it had everything to 0004); it stops at the first that
+fails, and on a database that already has one, at "already exists",
+changing nothing. 0003, 0004 and 0005
 drop and rebuild `products_view`, which takes the analytics' read-only
 role's access with it; each gives it back where that role exists.
 Tried: 0001 in Phase 05b, 0002 after Phase 09 and 0003 in Phase 15, on the
