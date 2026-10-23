@@ -145,7 +145,9 @@ doing (items in progress, needing photos, ready to list), what needs a look
 (listings not selling, items with room for a price drop), the balance owed to
 the partner and the month so far. **Products**, **Sales** and **Payments**
 open their pages from drop-down menus, **Add product** is a button, and the
-gear is **Settings**.
+gear is **Settings**. On **In stock**, the **Go to ID** box beside the search
+opens the product whose ID is typed, and only that one: write the ID on an
+item and its record is one number away.
 
 **The web pages**, behind a login:
 

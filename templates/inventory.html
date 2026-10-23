@@ -60,6 +60,17 @@
   {% if q %}<a href="{{ url_for('inventory_page') }}">Clear</a>{% endif %}
 </form>
 
+{#- Its own box: an ID typed here opens that one product, never every name
+    containing the digits, which the search above would find. -#}
+<form class="search" action="{{ url_for('go_to_product') }}" method="get">
+  <input type="text" name="id" inputmode="numeric"
+         placeholder="Go to ID" aria-label="Go to a product by its ID">
+  <button type="submit">Go</button>
+</form>
+{% if no_such_id %}
+<p class="form-error" role="alert">No product has that ID.</p>
+{% endif %}
+
 {#- Every figure arrives worked out. This file formats and never computes: the
     partner cut and the flags come from listing_figures and waiting in web.py, and the money filter is
     psells.format_cents. A price not entered yet, and a cut that cannot be

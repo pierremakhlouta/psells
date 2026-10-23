@@ -136,7 +136,9 @@ def ids_shown(client, **params):
 
 def search_box(page):
     """The one input of the page's GET form."""
-    (form,) = [form for form in forms(page) if form["method"] == "get"]
+    # The name search, not the Go to ID box beside it.
+    (form,) = [form for form in forms(page) if form["method"] == "get"
+               and not form["action"].endswith("/products/go")]
     (box,) = form["inputs"]
 
     return form, box
@@ -2931,3 +2933,51 @@ def test_reviewing_an_item_that_does_not_exist_is_a_404(client, db):
 def test_a_notice_word_not_known_on_price_drops_shows_nothing(client, db):
     assert paragraphs(client.get("/price-drops?done=<b>x</b>").text,
                       "notice") == []
+
+
+# Go to ID ---------------------------------------------------------------------
+
+@pytest.mark.parametrize("typed", ["5", " 5 ", "#5"])
+def test_go_to_id_opens_that_product_and_no_other(client, db, typed):
+    add_product(db, 5, quantity_received=1, name="Watch 5")
+    add_product(db, 15, quantity_received=1, name="Watch 15")
+    add_product(db, 50, quantity_received=1, name="Model 5 Watch")
+
+    response = client.get("/products/go", params={"id": typed},
+                          follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"].endswith("/products/5/edit")
+
+
+def test_go_to_id_opens_an_item_out_of_stock_too(client, db):
+    add_product(db, 7, quantity_received=1)
+    add_sale(db, 1, 7, 1)
+
+    response = client.get("/products/go?id=7", follow_redirects=False)
+
+    assert response.headers["location"].endswith("/products/7/edit")
+
+
+@pytest.mark.parametrize("typed", ["9", "", "abc", "5x", "-5", "<b>5</b>"])
+def test_go_to_an_id_that_is_no_product_says_so(client, db, typed):
+    add_product(db, 5, quantity_received=1)
+
+    response = client.get("/products/go", params={"id": typed},
+                          follow_redirects=True)
+
+    assert paragraphs(response.text, "form-error")[0][0] == (
+        "No product has that ID.")
+    assert "<b>5</b>" not in response.text
+
+
+def test_the_inventory_has_the_go_to_id_box_beside_the_search(client, db):
+    found = [form for form in forms(client.get("/").text)
+             if form["action"].endswith("/products/go")]
+
+    assert len(found) == 1 and found[0]["method"] == "get"
+    assert [f["name"] for f in found[0]["inputs"]] == ["id"]
+
+
+def test_only_the_go_to_word_shows_the_no_such_id_sentence(client, db):
+    assert paragraphs(client.get("/?missing=no").text, "form-error") == []

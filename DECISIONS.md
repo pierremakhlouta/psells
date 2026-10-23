@@ -987,7 +987,11 @@ readable; they are in its history in git, up to commit 7ecee20.
   until it has gone stale_listing_days again without selling, so a price
   just dropped gets its chance and a price kept is looked at again later
   rather than never. The date is stored (price_reviewed_on, migration
-  0005), being a fact nobody could work out later. The
+  0005), being a fact nobody could work out later. To match a shelf item to
+  its record, Pierre writes the PSells ID on it; a Go to ID box beside the
+  inventory's search opens exactly that product, in stock or not, since the
+  name search would list every name containing the digits. QR labels were
+  offered and declined for now. The
   add and edit forms have a Generate listing button beside the saving one:
   with no script on the page it cannot wait for the fields to fill, so it
   is always there, and pressing it shows the listing the typed text would

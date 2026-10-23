@@ -98,7 +98,7 @@ async def parsed_form(request: Request):
 @router.get("/", response_class=HTMLResponse)
 def inventory_page(request: Request, connection: Connection, q: str = "",
                    added: str = "", edited: str = "", sold: str = "",
-                   returned: str = "", paid: str = ""):
+                   returned: str = "", paid: str = "", missing: str = ""):
     """Every product with a unit available, in one table, under the dashboard.
 
     The screen that replaces the spreadsheet. The nine figures above the table
@@ -179,6 +179,9 @@ def inventory_page(request: Request, connection: Connection, q: str = "",
             "returned": confirmed[3],
             "now_out_of_stock": now_out_of_stock,
             "paid": payment_recorded,
+            # Set by go_to_product when the ID typed was no product's: a
+            # fixed sentence, never the text typed.
+            "no_such_id": missing == "yes",
         },
     )
 
@@ -278,6 +281,23 @@ def pipeline_page(request: Request, connection: Connection):
                             for product in groups[stage]])
                    for stage in WORKING_STAGES],
     })
+
+
+@router.get("/products/go", response_class=HTMLResponse)
+def go_to_product(request: Request, connection: Connection, id: str = ""):
+    """The Go to ID box: the product whose ID was typed, by its page, and
+    nothing else; a partial match is not a match, unlike the name search.
+    In stock or not, since every item keeps its ID. Anything that is not an
+    existing product's ID goes back to the inventory to say so."""
+    typed = id.strip().lstrip("#")
+    if typed.isdigit() and find_product(connection, int(typed)) is not None:
+        return RedirectResponse(
+            request.url_for("edit_product_page", product_id=int(typed)),
+            status_code=303)
+
+    return RedirectResponse(
+        request.url_for("inventory_page").include_query_params(missing="yes"),
+        status_code=303)
 
 
 @router.get("/home", response_class=HTMLResponse)
