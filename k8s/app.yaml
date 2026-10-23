@@ -75,7 +75,7 @@ spec:
       # before the app starts. The app's own image, pin and limits.
       initContainers:
         - name: sample-photos
-          image: ghcr.io/pierremakhlouta/psells:4d8b234a5eab7fcc242882f5dbdf709c4c6dce5a@sha256:fb533a8010ab63c8ab97eb6b7415f9b56322bb4b14a0943ddcb61732b177c150
+          image: ghcr.io/pierremakhlouta/psells:547e6f6ce7ae4d169aa678c0dd3f7c26e0d28283@sha256:21ce30e9b3655a974404b49d8b6babe6c78e183bed02abf5472dff685a91435a
           command: ["sh", "-c", "cp /sample-photos/*.jpg /photos/"]
           securityContext:
             runAsUser: 10001
@@ -98,7 +98,7 @@ spec:
               mountPath: /photos
       containers:
         - name: app
-          image: ghcr.io/pierremakhlouta/psells:4d8b234a5eab7fcc242882f5dbdf709c4c6dce5a@sha256:fb533a8010ab63c8ab97eb6b7415f9b56322bb4b14a0943ddcb61732b177c150
+          image: ghcr.io/pierremakhlouta/psells:547e6f6ce7ae4d169aa678c0dd3f7c26e0d28283@sha256:21ce30e9b3655a974404b49d8b6babe6c78e183bed02abf5472dff685a91435a
           # The image's own command, but on the pod's loopback only.
           command: ["uvicorn", "api:app", "--host", "127.0.0.1", "--port", "8000"]
           env:
@@ -155,7 +155,7 @@ spec:
               mountPath: /photos
 
         - name: nginx
-          image: ghcr.io/pierremakhlouta/psells:nginx-4d8b234a5eab7fcc242882f5dbdf709c4c6dce5a@sha256:e6021d878c39f52adc329e4bb58d6d446a49e45f3c7609936bfe81959a88c8e0
+          image: ghcr.io/pierremakhlouta/psells:nginx-547e6f6ce7ae4d169aa678c0dd3f7c26e0d28283@sha256:72761879f50c31e06c1ca0c795fcbd9b53e445bcd157408b3b37dee5b818f8c8
           ports:
             - name: https
               containerPort: 8443
