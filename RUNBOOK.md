@@ -146,6 +146,16 @@ say ok. A backup by hand, before a risky change:
 ./backup.sh && tail -1 ~/PSells-Backups/backup.log
 ```
 
+A backup run exactly as the 09:00 job runs it, with the job's own
+permissions, then its result:
+
+```
+launchctl kickstart gui/$(id -u)/local.psells.backup && sleep 60 && tail -4 ~/PSells-Backups/backup.log
+```
+
+A Mac asleep at 09:00 runs the missed backup when it wakes; only a day
+switched off or closed throughout misses one.
+
 Each backup is also encrypted and copied to iCloud Drive's `PSells-Backups`
 folder, kept 30 days, and proved by decrypting it with the Keychain's key; the
 log's second line for the day says `offsite ok`. Old copies there are removed
@@ -406,9 +416,13 @@ Tailscale port, in the background, kept across restarts.
 /Applications/Tailscale.app/Contents/MacOS/Tailscale serve --bg --https=443 http://127.0.0.1:8444
 ```
 
-A new person: invite them from the admin console's Users page; they install
-Tailscale on each device, sign in with their own account, open the Mac's
-`ts.net` address, and log in to PSells. Removing them there removes their
+A new person: invite them from the admin console's Users page. They accept
+the invite from its email, in the browser, before signing in to the app:
+someone who signs up first gets an empty network of their own, is signed in,
+and sees no Mac. Then they install Tailscale on each device, sign in with the
+same email (switching the app to the inviter's network if it lists two), open
+the Mac's `ts.net` address, and log in to PSells. The Mac's own address is the
+first line of `Tailscale serve status`. Removing them there removes their
 access. To stop sharing altogether:
 
 ```
@@ -416,7 +430,8 @@ access. To stop sharing altogether:
 ```
 
 Tried: 17 October 2026, from the Mac and an iPhone, the forms posting to the
-`ts.net` name.
+`ts.net` name; 23 October 2026, a second person on his MacBook, after
+re-inviting him the way above.
 
 ### Install the background jobs
 
@@ -570,8 +585,12 @@ A notification never carries a figure, only the job's reason.
 
 ### Another device cannot reach PSells
 
-The Mac must be on and awake, and Tailscale connected on both devices. On
-the Mac, the share and nginx's port:
+The Mac must be on and awake, and Tailscale connected on both devices: on
+23 October 2026 the Mac's Tailscale was found Stopped and its share gone
+("No serve config"). Connect it from the menu bar (or `Tailscale up`), share
+again with the command under "Let another device in", and turn on its
+"Launch at login" so a restart does not cut the others off. On the Mac, the
+share and nginx's port:
 
 ```
 /Applications/Tailscale.app/Contents/MacOS/Tailscale serve status && docker compose ps proxy

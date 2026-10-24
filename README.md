@@ -326,8 +326,10 @@ image, and the Kubernetes cluster.
 
 ## Known limitations
 
-- **The real records are reachable only while the Mac is on**: from the Mac,
-  and from the tailnet's devices through Tailscale.
+- **The real records are reachable only while the Mac is on and awake**:
+  from the Mac, and from the tailnet's devices through Tailscale. A closed
+  lid sleeps it, unless it runs on an external display. A small always-on
+  machine at home could run the same stack.
 - **One account, a password and nothing else**, at least fifteen characters,
   with nginx limiting guesses, shared by the two people who use it, so the
   records do not say who changed what. The demo's is public, and a visitor's
