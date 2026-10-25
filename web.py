@@ -319,6 +319,7 @@ def price_drops_page(request: Request, connection: Connection):
     return templates.TemplateResponse(request, "price_drops.html", {
         "drops": psells.price_drops(connection),
         "reviewed": request.query_params.get("done") == "reviewed",
+        "saved": request.query_params.get("done") == "saved",
     })
 
 
@@ -451,6 +452,18 @@ class ProductForm(BaseModel):
 BLANK_PRODUCT = ProductForm(partner_share_mode="default").model_dump()
 
 
+# The pages an edit can return to instead of the inventory, by a fixed word in
+# the address (?back=price-drops), so the address can only choose among
+# these and never name a page of its own.
+RETURN_PAGES = {"price-drops": "price_drops_page"}
+
+
+def came_from(request):
+    """The word for the page an edit was opened from, or None."""
+    back = request.query_params.get("back", "")
+    return back if back in RETURN_PAGES else None
+
+
 # What a photo change reports on the Edit page, by a fixed word in the address.
 PHOTO_NOTICES = {
     "added": "Photos added.",
@@ -475,11 +488,14 @@ def product_form(request, connection, values, problems, status_code=200,
     sentence for an upload refused, and a notice chosen by a fixed word in
     the address after a photo change.
     """
+    back = came_from(request)
     if product is None:
         action = request.url_for("add_product_submit")
     else:
         action = request.url_for("edit_product_submit",
                                  product_id=product["id"])
+        if back:
+            action = action.include_query_params(back=back)
 
     return templates.TemplateResponse(
         request,
@@ -497,6 +513,7 @@ def product_form(request, connection, values, problems, status_code=200,
          else photos.product_photos(connection, product["id"]),
          "photo_problem": photo_problem,
          "changed_meanwhile": changed_meanwhile,
+         "back": back,
          "preview": preview,
          "added": product is not None
          and request.query_params.get("added") == "yes",
@@ -648,6 +665,13 @@ def edit_product_submit(request: Request, connection: Connection,
                             psells.product_form_text(product), {},
                             status_code=409, product=product,
                             changed_meanwhile=True)
+
+    back = came_from(request)
+    if back:
+        return RedirectResponse(
+            request.url_for(RETURN_PAGES[back]).include_query_params(
+                done="saved"),
+            status_code=303)
 
     return RedirectResponse(
         request.url_for("inventory_page").include_query_params(

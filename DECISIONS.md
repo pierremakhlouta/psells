@@ -991,7 +991,12 @@ readable; they are in its history in git, up to commit 7ecee20.
   its record, Pierre writes the PSells ID on it; a Go to ID box beside the
   inventory's search opens exactly that product, in stock or not, since the
   name search would list every name containing the digits. QR labels were
-  offered and declined for now. The
+  offered and declined for now. An edit opened from Price drops returns
+  there when saved or cancelled, by a fixed word in its address
+  (?back=price-drops) that can name no other page. The sales history puts
+  the partner's cut right after the quantity, so a screenshot of its first
+  five columns shows the partner what they are owed and nothing of the
+  prices. The
   add and edit forms have a Generate listing button beside the saving one:
   with no script on the page it cannot wait for the fields to fill, so it
   is always there, and pressing it shows the listing the typed text would

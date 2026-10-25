@@ -544,12 +544,14 @@ def test_the_sales_page_shows_sales_history_newest_first(client, db):
     rows = table_rows(client.get("/sales-history").text)
 
     assert rows == [
+        # Date, product, category, quantity and the partner's cut first, so
+        # a picture of those shows the partner nothing of the prices.
         ["2026-09-10", "Box Logo Hoodie", "Hoodies", "3",
-         "$125.50", "$376.50", "$120.60", "$255.90", "Edit Delete"],
+         "$120.60", "$125.50", "$376.50", "$255.90", "Edit Delete"],
         ["2026-09-03", "Jordan 1 Chicago", "Shoes", "2",
-         "$88.00", "$176.00", "$66.66", "$109.34", "Edit Delete"],
+         "$66.66", "$88.00", "$176.00", "$109.34", "Edit Delete"],
         ["2026-09-03", "Jordan 1 Chicago", "Shoes", "1",
-         "$90.00", "$90.00", "$35.00", "$55.00", "Edit Delete"],
+         "$35.00", "$90.00", "$90.00", "$55.00", "Edit Delete"],
     ]
 
 
@@ -560,9 +562,9 @@ def test_the_sales_page_shows_what_sales_history_returns(client, db):
 
     assert rows == [
         [str(sale["date"]), sale["name"], sale["category"],
-         str(sale["quantity"]), psells.format_cents(sale["sale_price_cents"]),
+         str(sale["quantity"]), psells.format_cents(sale["partner_cut_cents"]),
+         psells.format_cents(sale["sale_price_cents"]),
          psells.format_cents(sale["sale_total_cents"]),
-         psells.format_cents(sale["partner_cut_cents"]),
          psells.format_cents(sale["profit_cents"]), "Edit Delete"]
         for sale in psells.sales_history(db)
     ]
@@ -612,8 +614,8 @@ def test_the_history_pages_show_what_the_api_serves(client, db):
 
     assert table_rows(client.get("/sales-history").text) == [
         [s["date"], s["name"], s["category"], str(s["quantity"]),
-         money(s["sale_price_cents"]), money(s["sale_total_cents"]),
-         money(s["partner_cut_cents"]), money(s["profit_cents"]),
+         money(s["partner_cut_cents"]), money(s["sale_price_cents"]),
+         money(s["sale_total_cents"]), money(s["profit_cents"]),
          "Edit Delete"]
         for s in client.get("/sales").json()
     ]
@@ -2981,3 +2983,49 @@ def test_the_inventory_has_the_go_to_id_box_beside_the_search(client, db):
 
 def test_only_the_go_to_word_shows_the_no_such_id_sentence(client, db):
     assert paragraphs(client.get("/?missing=no").text, "form-error") == []
+
+
+# Back to Price drops after an edit -------------------------------------------------
+
+def test_an_edit_opened_from_price_drops_goes_back_there(client, db):
+    add_product(db, 1, quantity_received=1, name="Old Boots")
+    page = client.get("/price-drops").text
+    assert 'href="http://testserver/products/1/edit?back=price-drops"' in page
+
+    form = edit_form_at(client, "/products/1/edit?back=price-drops")
+    assert form["action"].endswith("/products/1/edit?back=price-drops")
+    data = form_data(form)
+    data["listed_price"] = "80.00"
+    response = client.post(form["action"], data=data, follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"].endswith("/price-drops?done=saved")
+    after = client.get(response.headers["location"]).text
+    assert paragraphs(after, "notice")[0][0].startswith("Saved.")
+    assert stored(db)["listed_price_cents"] == 8000
+
+
+def test_cancel_goes_back_to_price_drops_too(client, db):
+    add_product(db, 1, quantity_received=1)
+
+    page = client.get("/products/1/edit?back=price-drops").text
+
+    assert '<a href="http://testserver/price-drops">Cancel</a>' in page
+
+
+@pytest.mark.parametrize("back", ["", "elsewhere", "https://example.com"])
+def test_any_other_back_word_goes_to_the_inventory_as_before(client, db, back):
+    add_product(db, 1, quantity_received=1)
+
+    form = edit_form_at(client, f"/products/1/edit?back={back}")
+    response = client.post(form["action"], data=form_data(form),
+                           follow_redirects=False)
+
+    assert response.headers["location"].endswith("/?edited=1")
+    assert "example.com" not in form["action"]
+
+
+def edit_form_at(client, path):
+    (form,) = [form for form in forms(client.get(path).text)
+               if form["method"] == "post" and "/edit" in form["action"]]
+    return form

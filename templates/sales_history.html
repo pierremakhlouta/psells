@@ -23,10 +23,13 @@
       <th>Date</th>
       <th>Product</th>
       <th>Category</th>
+      {#- The partner's cut sits beside the quantity, before what the sale
+          went for, so a picture of the first five columns shows the partner
+          what they are owed and nothing of the prices. -#}
       <th class="num">Quantity</th>
+      <th class="num">Partner cut</th>
       <th class="num">Price each</th>
       <th class="num">Sale total</th>
-      <th class="num">Partner cut</th>
       <th class="num">Profit</th>
       <th><span class="visually-hidden">Actions</span></th>
     </tr>
@@ -38,9 +41,9 @@
       <td>{{ sale.name }}</td>
       <td>{{ sale.category }}</td>
       <td class="num">{{ sale.quantity }}</td>
+      <td class="num">{{ sale.partner_cut_cents|money }}</td>
       <td class="num">{{ sale.sale_price_cents|money }}</td>
       <td class="num">{{ sale.sale_total_cents|money }}</td>
-      <td class="num">{{ sale.partner_cut_cents|money }}</td>
       <td class="num">{{ sale.profit_cents|money }}</td>
       <td class="row-actions"><a href="{{ url_for('edit_sale_page', record_id=sale.id) }}">Edit</a>
         <a href="{{ url_for('delete_sale_page', record_id=sale.id) }}">Delete</a></td>

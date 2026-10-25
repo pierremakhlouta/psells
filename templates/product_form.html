@@ -126,7 +126,8 @@
     {#- The saving button first, so Enter in a field saves, as before. -#}
     <button type="submit">{% if product %}Save changes{% else %}Add product{% endif %}</button>
     <button type="submit" name="generate" value="yes">Generate listing</button>
-    <a href="{{ url_for('inventory_page') }}">Cancel</a>
+    {#- back is a fixed word for the page the edit was opened from. -#}
+    <a href="{{ url_for('price_drops_page') if back == 'price-drops' else url_for('inventory_page') }}">Cancel</a>
   </div>
 
   {% if preview %}
