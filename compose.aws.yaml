@@ -66,7 +66,7 @@ services:
     # image; checked with docker buildx imagetools inspect on 22 October 2026
     # against the v1.21.1 release, the first built with the fixed Go and
     # OpenSSL, which passes the scan with no exception.
-    image: grafana/alloy:v1.21.1@sha256:4039c971193053a84e53dd9ed3e7d4561c069256b024631cd3498a353ed7ece8
+    image: grafana/alloy:v1.21.3@sha256:8ab871206bd2d8f89277f53abffee5f452a293980788d52f85fa183a87a505a4
     # Not root: the image's own alloy user, which owns its data folder, with
     # the host's systemd-journal group (999 on Ubuntu) added so it can read
     # the journal and nothing more. No Docker socket.
