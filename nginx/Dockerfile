@@ -13,6 +13,6 @@
 # read-only by compose.yaml, as before. CI builds, scans and publishes this
 # image beside the app's, as ghcr.io/pierremakhlouta/psells:nginx-<commit>.
 # Dependabot watches the FROM line.
-FROM nginx:1.30.6-alpine-slim@sha256:d9322bba63c6cfc63dc9e86522fd4f95fd4d9020a02b5bced282bbf38b8c3960
+FROM nginx:1.30.6-alpine-slim@sha256:dede8895648b461178c3bc604f7eed4423efe5220b2c4d839f5eb3d34ac3f8f7
 
 RUN apk upgrade --no-cache zlib pcre2 libssl3 libcrypto3
