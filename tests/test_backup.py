@@ -25,13 +25,19 @@ def job():
         return plistlib.load(template)
 
 
-def test_the_job_runs_backup_sh_from_the_project_with_bash():
+def test_the_job_runs_backup_sh_from_the_project_with_bash_once_a_day():
     assert job()["ProgramArguments"] == [
-        "/bin/bash", "__PROJECT_DIR__/backup.sh"]
+        "/bin/bash", "__PROJECT_DIR__/backup.sh", "--once-a-day"]
 
 
 def test_the_job_runs_daily_at_nine():
     assert job()["StartCalendarInterval"] == {"Hour": 9, "Minute": 0}
+
+
+def test_the_job_also_runs_at_login():
+    # The Mac is shut down at night and often started after nine, which
+    # launchd does not make up for: five mornings were missed in November 2026.
+    assert job()["RunAtLoad"] is True
 
 
 def test_the_job_is_a_template_with_no_personal_paths():
@@ -446,14 +452,16 @@ def test_making_a_copy_removes_nothing(tmp_path):
         "psells-2026-10-09_090000.tar.age"]
 
 
-def run_remove(tmp_path, *names):
+def run_remove(tmp_path, *names, path=None):
     project = tmp_path / "psells"
     project.mkdir(exist_ok=True)
     shutil.copy(OFFSITE_SCRIPT, project / "offsite-backup.sh")
     return subprocess.run(
         ["bash", str(project / "offsite-backup.sh"), "--remove", *names],
         capture_output=True, text=True,
-        env=dict(os.environ, PSELLS_OFFSITE_DIR=str(tmp_path / "icloud")))
+        env=dict(os.environ, PSELLS_OFFSITE_DIR=str(tmp_path / "icloud"),
+                 PSELLS_OFFSITE_LEFTOVERS=str(tmp_path / "leftovers.txt"),
+                 PATH=path or os.environ["PATH"]))
 
 
 def test_old_copies_are_removed_by_name_without_listing_the_folder(tmp_path,
@@ -509,9 +517,161 @@ def test_the_backup_removes_each_old_dumps_copy_by_name():
     assert ("OLD_DUMP_LIST=\"$(find \"$BACKUP_DIR\" -name 'psells-*.dump' "
             "-mtime +\"$KEEP_DAYS\" -print -delete)\"") in text
     assert 'COPIES+=("$name.tar.age")' in text
-    assert ('REMOVED="$("$SCRIPT_DIR/offsite-backup.sh" --remove "${COPIES[@]}" 2>&1)"'
-            in text)
+    # Every run, not only one with old dumps, so the leftovers are retried.
+    call = ('REMOVED="$("$SCRIPT_DIR/offsite-backup.sh" --remove '
+            '${COPIES[@]+"${COPIES[@]}"} 2>&1)"')
+    assert call in text
+    # Outside the block that only runs when old dumps went.
+    after = text[text.index('done <<< "$OLD_DUMP_LIST"\nfi\n'):text.index(call)]
+    assert not any(l.lstrip().startswith("if ") for l in after.splitlines())
     assert '|| fail "the off-Mac clean-up: $REMOVED"' in text
+
+
+def run_remove_refused(tmp_path, refused, *names):
+    """--remove with an rm that is refused the named copy, as the scheduled
+    job is refused one a run by hand made."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    stand_in(bin_dir / "rm",
+             f'case "$*" in *{refused}*) echo "rm: $*: Operation not permitted" >&2;'
+             f' exit 1 ;; *) exec /bin/rm "$@" ;; esac\n')
+    return run_remove(tmp_path, *names, path=f"{bin_dir}:{os.environ['PATH']}")
+
+
+def test_a_copy_it_is_refused_is_left_on_a_list_not_a_failure(tmp_path):
+    offsite = tmp_path / "icloud"
+    offsite.mkdir()
+    for name in ("psells-2026-08-01_090000.tar.age", "psells-2026-08-02_090000.tar.age"):
+        (offsite / name).write_bytes(b"x")
+
+    result = run_remove_refused(tmp_path, "psells-2026-08-01_090000",
+                                "psells-2026-08-01_090000.tar.age",
+                                "psells-2026-08-02_090000.tar.age")
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == ("removed 1 old copies; 1 made by a run by hand "
+                             "are left for the next run by hand\n")
+    assert [p.name for p in offsite.iterdir()] == ["psells-2026-08-01_090000.tar.age"]
+    assert (tmp_path / "leftovers.txt").read_text() == "psells-2026-08-01_090000.tar.age\n"
+
+
+def test_the_next_run_that_may_removes_the_leftovers_and_the_list(tmp_path):
+    offsite = tmp_path / "icloud"
+    offsite.mkdir()
+    (offsite / "psells-2026-08-01_090000.tar.age").write_bytes(b"x")
+    (tmp_path / "leftovers.txt").write_text("psells-2026-08-01_090000.tar.age\n")
+
+    result = run_remove(tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "removed 1 old copies\n"
+    assert list(offsite.iterdir()) == []
+    assert not (tmp_path / "leftovers.txt").exists()
+
+
+def test_a_refused_copy_stays_on_the_list_until_it_goes(tmp_path):
+    offsite = tmp_path / "icloud"
+    offsite.mkdir()
+    (offsite / "psells-2026-08-01_090000.tar.age").write_bytes(b"x")
+    (tmp_path / "leftovers.txt").write_text("psells-2026-08-01_090000.tar.age\n")
+
+    result = run_remove_refused(tmp_path, "psells-2026-08-01_090000")
+
+    assert result.returncode == 0, result.stderr
+    assert "1 made by a run by hand are left" in result.stdout
+    assert (tmp_path / "leftovers.txt").read_text() == "psells-2026-08-01_090000.tar.age\n"
+
+
+def test_with_nothing_to_remove_it_says_so(tmp_path):
+    result = run_remove(tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "nothing to remove\n"
+
+
+def test_a_name_on_the_list_is_held_to_the_same_rule(tmp_path):
+    offsite = tmp_path / "icloud"
+    offsite.mkdir()
+    (offsite / "notes.txt").write_bytes(b"x")
+    (tmp_path / "leftovers.txt").write_text("../notes.txt\n")
+
+    result = run_remove(tmp_path)
+
+    assert result.returncode == 1
+    assert "not an off-Mac copy's name: ../notes.txt" in result.stderr
+    assert [p.name for p in offsite.iterdir()] == ["notes.txt"]
+
+
+# backup.sh --once-a-day, as the job runs it. docker here is a stand-in that
+# records its calls and is never running, so the run stops at the first step
+# that needs it; what matters is whether it got that far.
+
+def run_backup(tmp_path, *args, finished=None):
+    project = tmp_path / "psells"
+    project.mkdir()
+    for name in ("backup.sh", "notify.sh"):
+        shutil.copy(os.path.join(psells.PROJECT_DIR, name), project / name)
+    backups = tmp_path / "PSells-Backups"
+    backups.mkdir()
+    if finished:
+        (backups / "last-finished-day").write_text(finished + "\n")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    calls = tmp_path / "docker-calls"
+    stand_in(bin_dir / "docker", f'echo "$*" >> "{calls}"\nexit 1\n')
+    stand_in(bin_dir / "sleep", "")
+    stand_in_osascript(bin_dir, tmp_path)
+    result = subprocess.run(
+        ["bash", str(project / "backup.sh"), *args],
+        capture_output=True, text=True,
+        env=dict(os.environ, HOME=str(tmp_path),
+                 PATH=f"{bin_dir}:{os.environ['PATH']}"))
+    return result, calls.read_text().splitlines() if calls.exists() else []
+
+
+def today():
+    return subprocess.run(["date", "+%Y-%m-%d"], capture_output=True,
+                          text=True, check=True).stdout.strip()
+
+
+def test_once_a_day_does_nothing_after_a_run_that_finished_today(tmp_path):
+    result, calls = run_backup(tmp_path, "--once-a-day", finished=today())
+
+    assert result.returncode == 0, result.stderr
+    assert calls == []
+    assert notifications(tmp_path) == []
+
+
+@pytest.mark.parametrize("finished", [None, "2026-11-10"])
+def test_once_a_day_backs_up_when_no_run_finished_today(tmp_path, finished):
+    result, calls = run_backup(tmp_path, "--once-a-day", finished=finished)
+
+    assert result.returncode == 1
+    assert calls and calls[0] == "info"
+    assert "Docker Desktop is not running" in (
+        tmp_path / "PSells-Backups" / "backup.log").read_text()
+
+
+def test_by_hand_it_always_backs_up(tmp_path):
+    result, calls = run_backup(tmp_path, finished=today())
+
+    assert result.returncode == 1
+    assert calls and calls[0] == "info"
+
+
+def test_it_waits_twenty_minutes_for_docker_as_start_stack_does(tmp_path):
+    _, calls = run_backup(tmp_path)
+
+    assert calls.count("info") == 241
+
+
+def test_only_the_last_step_marks_the_day_finished():
+    with open(BACKUP_SCRIPT) as file:
+        lines = [l for l in file.read().splitlines()
+                 if l.strip() and not l.lstrip().startswith("#")]
+
+    assert lines[-1] == 'date \'+%Y-%m-%d\' > "$DONE_FILE"'
+    assert sum('> "$DONE_FILE"' in l for l in lines) == 1
 
 
 def test_the_backup_sends_the_copy_only_after_the_dump_is_proved():

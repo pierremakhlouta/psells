@@ -5,6 +5,12 @@
 # Run by launchd; launchd/local.psells.backup.plist is the job, and the README
 # shows how to install it. Also safe to run by hand.
 #
+# launchd runs it as backup.sh --once-a-day, at 09:00 and at every login: a
+# Mac shut down at night and started after nine never sees 09:00, and missed
+# five mornings that way in November 2026. With --once-a-day it does nothing
+# when a whole run, every copy included, already finished today. Run by hand,
+# without it, it always makes one.
+#
 # Takes a pg_dump of the database in the Compose stack into
 # ~/PSells-Backups/daily/, proves the dump restores, appends a line to
 # ~/PSells-Backups/backup.log, puts an encrypted copy into iCloud Drive with
@@ -28,6 +34,8 @@ CONFIG_FILE="$SCRIPT_DIR/data/config.json"
 
 BACKUP_DIR="$HOME/PSells-Backups/daily"
 LOG_FILE="$HOME/PSells-Backups/backup.log"
+# The date of the last run that finished, written as its last step.
+DONE_FILE="$HOME/PSells-Backups/last-finished-day"
 KEEP_DAYS=30
 
 # The throwaway database each dump is restored into to prove it restores.
@@ -35,8 +43,9 @@ CHECK_DB=backup_check
 
 # launchd, like cron, starts a job with a minimal PATH that does not include
 # the docker command. Docker Desktop links it into /usr/local/bin, and older
-# installs keep it in ~/.docker/bin.
-PATH="/usr/local/bin:$HOME/.docker/bin:/opt/homebrew/bin:/usr/bin:/bin"
+# installs keep it in ~/.docker/bin. Appended, so a test's stand-in, found
+# first, is the one used.
+PATH="$PATH:/usr/local/bin:$HOME/.docker/bin:/opt/homebrew/bin:/usr/bin:/bin"
 export PATH
 
 log() {
@@ -65,6 +74,13 @@ in_db() {
 
 mkdir -p "$BACKUP_DIR"
 
+# Not a dump with today's date: a run that proved its dump and then failed
+# on the off-Mac copy or the photos must be run again.
+if [ "${1:-}" = "--once-a-day" ] && [ -f "$DONE_FILE" ] \
+    && [ "$(cat "$DONE_FILE")" = "$(date '+%Y-%m-%d')" ]; then
+    exit 0
+fi
+
 STAMP="$(date '+%Y-%m-%d_%H%M%S')"
 TARGET="$BACKUP_DIR/psells-$STAMP.dump"
 PARTIAL="$TARGET.partial"
@@ -75,9 +91,11 @@ trap 'rm -f "$PARTIAL"' EXIT
 
 command -v docker > /dev/null || fail "docker not found on PATH ($PATH)"
 
-# launchd runs a missed job as soon as the Mac wakes, which can be before
-# Docker Desktop has finished starting. Give it two minutes.
-for _ in $(seq 1 24); do
+# launchd runs a missed job as soon as the Mac wakes, and the login run comes
+# straight after a boot, both before Docker Desktop has finished starting,
+# which took three and a half minutes on 6 November 2026. Give it twenty, as
+# start-stack.sh does.
+for _ in $(seq 1 240); do
     docker info > /dev/null 2>&1 && break
     sleep 5
 done
@@ -176,17 +194,23 @@ OLD_DBS="$(find "$BACKUP_DIR" -name 'psells-*.db' -mtime +"$KEEP_DAYS" -print -d
 OLD_CONFIGS="$(find "$BACKUP_DIR" -name 'config-*.json' -mtime +"$KEEP_DAYS" -print -delete | wc -l | tr -d ' ')"
 
 # Each dump's iCloud copy goes with it, by name: the scheduled job may not
-# list that folder (see offsite-backup.sh).
+# list that folder (see offsite-backup.sh). Called every run, with no names
+# too, so a copy an earlier run could not remove is tried again; a run by
+# hand is the one that can remove those.
+COPIES=()
 if [ "$OLD_DUMPS" -gt 0 ]; then
-    COPIES=()
     while IFS= read -r dump; do
         name="$(basename "$dump" .dump)"
         COPIES+=("$name.tar.age")
     done <<< "$OLD_DUMP_LIST"
-    REMOVED="$("$SCRIPT_DIR/offsite-backup.sh" --remove "${COPIES[@]}" 2>&1)" \
-        || fail "the off-Mac clean-up: $REMOVED"
 fi
+# ${COPIES[@]+...}: macOS's bash 3.2 calls an empty array unset under set -u.
+REMOVED="$("$SCRIPT_DIR/offsite-backup.sh" --remove ${COPIES[@]+"${COPIES[@]}"} 2>&1)" \
+    || fail "the off-Mac clean-up: $REMOVED"
+[ "$REMOVED" = "nothing to remove" ] || log "offsite cleanup  $REMOVED"
 
 if [ "$OLD_DUMPS" -gt 0 ] || [ "$OLD_DBS" -gt 0 ] || [ "$OLD_CONFIGS" -gt 0 ]; then
     log "cleanup: removed files older than $KEEP_DAYS days, $OLD_DUMPS dump, $OLD_DBS old SQLite, $OLD_CONFIGS config"
 fi
+
+date '+%Y-%m-%d' > "$DONE_FILE"

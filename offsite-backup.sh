@@ -24,7 +24,13 @@
 # folder ("Operation not permitted"), so a clean-up that searched it failed
 # every scheduled run from 13 October 2026 while every run by hand, from a
 # Terminal that has the access, passed. Copies are removed by name, when the
-# copy on the Mac they match is, which needs no further permission.
+# copy on the Mac they match is.
+#
+# Nor may that job remove a copy a run by hand made, from Terminal: tried on
+# 11 November 2026, it removes its own and is refused the other ("Operation
+# not permitted"). Such a copy is not a failure, only an old encrypted file
+# kept longer: its name goes on a list, LEFTOVERS, every --remove tries the
+# list again, and the next run by hand removes it.
 #
 # The real records otherwise never leave the Mac, and they leave here only
 # encrypted. The two files are packed into one archive and encrypted with age
@@ -44,6 +50,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKUP_DIR="${PSELLS_BACKUP_DIR:-$HOME/PSells-Backups/daily}"
 PHOTO_BACKUP_DIR="${PSELLS_PHOTO_BACKUP_DIR:-$HOME/PSells-Backups/photos}"
 OFFSITE_DIR="${PSELLS_OFFSITE_DIR:-$HOME/Library/Mobile Documents/com~apple~CloudDocs/PSells-Backups}"
+LEFTOVERS="${PSELLS_OFFSITE_LEFTOVERS:-$HOME/PSells-Backups/offsite-leftovers.txt}"
 RECIPIENT="$SCRIPT_DIR/data/backup-recipient.txt"
 KEYCHAIN_ITEM=psells-backup-key
 
@@ -57,20 +64,36 @@ die() {
     exit 1
 }
 
-usage="usage: offsite-backup.sh psells-STAMP.dump config-STAMP.json, --photos photos-STAMP.tar, or --remove NAME..."
+usage="usage: offsite-backup.sh psells-STAMP.dump config-STAMP.json, --photos photos-STAMP.tar, or --remove [NAME...]"
 photos=
 if [ "${1:-}" = "--remove" ]; then
     shift
-    [ $# -gt 0 ] || die "$usage"
+    # The names given and those an earlier run was refused, once each.
+    names="$({ printf '%s\n' "$@"; [ ! -f "$LEFTOVERS" ] || cat "$LEFTOVERS"; } | sed '/^$/d' | sort -u)"
+    [ -n "$names" ] || { echo "nothing to remove"; exit 0; }
     # Only this script's own copies, by a name that cannot leave the folder.
-    for name in "$@"; do
+    while IFS= read -r name; do
         [[ "$name" =~ ^(psells|photos)-[0-9_-]+\.tar\.age$ ]] ||
             die "not an off-Mac copy's name: $name"
-    done
-    for name in "$@"; do
-        rm -f "$OFFSITE_DIR/$name" || die "could not remove $name"
-    done
-    echo "removed $# old copies"
+    done <<< "$names"
+    removed=0
+    left=
+    while IFS= read -r name; do
+        if rm -f "$OFFSITE_DIR/$name" 2> /dev/null; then
+            removed=$((removed + 1))
+        else
+            left="$left$name"$'\n'
+        fi
+    done <<< "$names"
+    if [ -z "$left" ]; then
+        rm -f "$LEFTOVERS"
+        echo "removed $removed old copies"
+    else
+        mkdir -p "$(dirname "$LEFTOVERS")"
+        { printf '%s' "$left" > "$LEFTOVERS.partial" && mv "$LEFTOVERS.partial" "$LEFTOVERS"; } ||
+            die "could not write $LEFTOVERS"
+        echo "removed $removed old copies; $(printf '%s' "$left" | grep -c .) made by a run by hand are left for the next run by hand"
+    fi
     exit 0
 elif [ "${1:-}" = "--photos" ]; then
     [ $# -eq 2 ] || die "$usage"
