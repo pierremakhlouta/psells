@@ -189,7 +189,9 @@ sequenceDiagram
 - **The checks** are five workflows in `.github/workflows/`. Image builds the
   app's, nginx's and the analytics images on amd64 and arm64, scans each, and
   publishes only an image whose ID matches the one scanned. Kubernetes builds
-  the local cluster from nothing and asks it what a browser would.
+  the local cluster from nothing and asks it what a browser would. A sixth,
+  Agent, scans the monitoring agent the demo server runs, which PSells does
+  not build; it fails and emails like the others but holds back no deploy.
 - **Deploy** (`deploy.yml`) waits until all five have passed for the exact
   commit, then signs in to AWS with GitHub's OIDC token, which AWS trades for
   a short-lived role allowed to run one Systems Manager document on one

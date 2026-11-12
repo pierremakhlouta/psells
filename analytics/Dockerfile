@@ -11,7 +11,7 @@
 # the build altogether.
 
 # The app's base image, pinned the same way; a test holds the two equal.
-FROM python:3.14.8-slim@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170
+FROM python:3.14.10-slim@sha256:9aaa474097d094040649f2162a627c0049b408f52138d980916788d80f04802f
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
@@ -20,7 +20,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # test holds the two lines equal.
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends --only-upgrade \
-        libpcre2-8-0 libssl3t64 openssl openssl-provider-legacy \
+        zlib1g \
     && rm -rf /var/lib/apt/lists/*
 
 # Its own user, never root, and not the app's.

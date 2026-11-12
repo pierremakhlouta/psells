@@ -1242,11 +1242,18 @@ def image_jobs():
                                  "image.yml"))["jobs"]
 
 
+AGENT_WORKFLOW = os.path.join(PROJECT_DIR, ".github", "workflows", "agent.yml")
+
+
+def agent_jobs():
+    return workflow(AGENT_WORKFLOW)["jobs"]
+
+
 def test_no_scan_skips_anything():
     # The agent's OpenSSL exception went with Alloy v1.21.1 (22 October
     # 2026). Every image is held to the same rule now: a high or critical
     # flaw with a fix fails the build.
-    for name, job in image_jobs().items():
+    for name, job in {**image_jobs(), **agent_jobs()}.items():
         for step in scan_steps(job):
             assert "config" not in step["with"], name
     # The scan action reads a .grype.yaml it finds unless given a file.
@@ -1256,7 +1263,7 @@ def test_no_scan_skips_anything():
 
 
 def test_the_agent_is_scanned_as_the_server_runs_it():
-    job = image_jobs()["alloy"]
+    job = agent_jobs()["alloy"]
     listing, failing = scan_steps(job)
 
     assert job["env"]["ALLOY_IMAGE"] == alloy()["image"]
@@ -1349,7 +1356,7 @@ def test_a_deploy_waits_for_every_check_on_main():
     triggers = document[True]
     gate = document["jobs"]["gate"]["steps"][0]["run"]
     checks = {os.path.basename(path): workflow(path)["name"] for path in WORKFLOWS
-              if not path.endswith("deploy.yml")}
+              if not path.endswith(("deploy.yml", "agent.yml"))}
 
     # Started by every other workflow, on main only, and by hand.
     assert sorted(triggers["workflow_run"]["workflows"]) == sorted(checks.values())
@@ -1365,6 +1372,21 @@ def test_a_deploy_waits_for_every_check_on_main():
     # One deploy at a time, and a running one is never cancelled halfway.
     assert document["concurrency"] == {"group": "deploy",
                                        "cancel-in-progress": False}
+
+
+def test_the_agents_scan_runs_weekly_and_never_holds_back_a_deploy():
+    # Pierre's choice, 11 November 2026: a flaw in Grafana's agent, which
+    # PSells cannot fix, still fails and emails every week, but a PSells
+    # fix reaches the demo meanwhile.
+    document = workflow(AGENT_WORKFLOW)
+    gate = deploy_workflow()["jobs"]["gate"]["steps"][0]["run"]
+
+    assert document["name"] == "Agent"
+    assert document[True]["schedule"] == [{"cron": "0 9 * * 1"}]
+    assert "push" in document[True]
+    assert "Agent" not in deploy_workflow()[True]["workflow_run"]["workflows"]
+    assert "agent.yml" not in gate
+    assert "alloy" not in image_jobs()
 
 
 def test_the_deploy_holds_no_key_and_runs_no_third_party_code():

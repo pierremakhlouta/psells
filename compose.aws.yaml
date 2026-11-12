@@ -63,10 +63,12 @@ services:
     # The monitoring agent; see monitoring/config.alloy for what it sends to
     # Grafana Cloud and why. On the server only: the Mac's records never leave
     # the Mac, so compose.yaml has no such service. Pinned like every other
-    # image; checked with docker buildx imagetools inspect on 22 October 2026
-    # against the v1.21.1 release, the first built with the fixed Go and
-    # OpenSSL, which passes the scan with no exception.
-    image: grafana/alloy:v1.21.1@sha256:4039c971193053a84e53dd9ed3e7d4561c069256b024631cd3498a353ed7ece8
+    # image; checked with docker buildx imagetools inspect on 11 November 2026
+    # against the v1.21.3 release, which removes v1.21.1's critical brotli
+    # flaw. It still has high flaws with fixes, so the Agent workflow, which
+    # scans it, fails every week until a clean release is pinned here and in
+    # agent.yml together; it does not hold back a deploy.
+    image: grafana/alloy:v1.21.3@sha256:8ab871206bd2d8f89277f53abffee5f452a293980788d52f85fa183a87a505a4
     # Not root: the image's own alloy user, which owns its data folder, with
     # the host's systemd-journal group (999 on Ubuntu) added so it can read
     # the journal and nothing more. No Docker socket.

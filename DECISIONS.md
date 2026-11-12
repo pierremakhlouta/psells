@@ -101,6 +101,7 @@ readable; they are in its history in git, up to commit 7ecee20.
 - [What runs is what was scanned](#what-runs-is-what-was-scanned)
 - [A deploy waits for every check](#a-deploy-waits-for-every-check)
 - [A deploy is checked from outside, and rolled back by hand](#a-deploy-is-checked-from-outside-and-rolled-back)
+- [The agent's scan does not hold back a deploy](#the-agents-scan-does-not-hold-back-a-deploy)
 
 ### Monitoring
 
@@ -525,6 +526,7 @@ readable; they are in its history in git, up to commit 7ecee20.
   Image and Kubernetes have all passed for that exact commit on main. Keeping
   the five workflows separate, each with its badge, meant a gate that asks
   GitHub for their results rather than one workflow that does everything.
+  *Later replaced, in whole or in part: [The agent's scan does not hold back a deploy](#the-agents-scan-does-not-hold-back-a-deploy).*
 
 - <a id="a-deploy-is-checked-from-outside-and-rolled-back"></a>**A deploy is checked from outside, and rolled back by hand.** It fails
   unless the server reports the digest it was sent and the site answers over
@@ -954,6 +956,7 @@ readable; they are in its history in git, up to commit 7ecee20.
   runbook. What remains to call him back is listed in the runbook, "When
   something calls you back". The choices Claude made while building Phase 15
   without stopping to ask were listed for him and accepted.
+  *Later replaced, in whole or in part: [The agent's scan does not hold back a deploy](#the-agents-scan-does-not-hold-back-a-deploy).*
 
 - <a id="an-item-is-listed-when-pierre-says-so"></a>**An item is listed when Pierre says so.**
   Using PSells, Pierre wanted the pipeline to say what he has to do next:
@@ -1019,3 +1022,18 @@ readable; they are in its history in git, up to commit 7ecee20.
   no script: a browser without :has() shows them all, and a box with a
   problem is never hidden.
   *This replaces the stages of "An item arrives before it is researched".*
+
+- <a id="the-agents-scan-does-not-hold-back-a-deploy"></a>**The agent's scan does not hold back a deploy.**
+  On 11 November 2026 the weekly scan of Alloy v1.21.1 found a critical flaw,
+  and v1.21.3, Grafana's newest release, still had high ones with fixes.
+  The scan was a job in `image.yml`, and the deploy waits for every check, so
+  no PSells change could have reached the demo until Grafana shipped a clean
+  release. Pierre chose to move the scan into its own workflow, `agent.yml`,
+  which the deploy does not wait for, rather than list exceptions again: it
+  still fails, and GitHub still emails, every week until a clean Alloy is
+  pinned. The server runs v1.21.3 meanwhile, the least flawed release there
+  is. The same day the backup began running at login as well as at 09:00,
+  once a day, after five mornings were missed by a Mac shut down at night and
+  started after nine; and an iCloud copy the scheduled job may not remove,
+  one a run by hand made, is kept on a list for the next run by hand instead
+  of failing the backup.

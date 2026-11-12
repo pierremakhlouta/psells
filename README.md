@@ -35,7 +35,8 @@ and change anything you like; it puts itself back every night.
   audit and a secret scan of the whole history, the images built for two
   architectures and scanned, and the Kubernetes manifests deployed to a
   throwaway cluster. A push to `main` that passes them ships to AWS, with no
-  stored keys.
+  stored keys. A sixth scans the demo's monitoring agent weekly, apart from
+  the deploy.
 - **The cloud.** The AWS server is described in Terraform and rebuilt from
   it, with a managed database and a load balancer behind a switch.
 - **Reliability.** The demonstration is monitored from outside and inside

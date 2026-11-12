@@ -137,7 +137,8 @@ Not rehearsed for this runbook; it is the same path every deploy takes.
 
 ### Backups
 
-`backup.sh` runs at 09:00 every day (launchd), keeps 30 days in
+`backup.sh` runs once a day (launchd), at 09:00 or at the first login after
+it, keeps 30 days in
 `~/PSells-Backups/daily/`, and proves each dump restores before keeping it.
 Its log is `~/PSells-Backups/backup.log`; the last line should be today's and
 say ok. A backup by hand, before a risky change:
@@ -153,14 +154,21 @@ permissions, then its result:
 launchctl kickstart gui/$(id -u)/local.psells.backup && sleep 60 && tail -4 ~/PSells-Backups/backup.log
 ```
 
-A Mac asleep at 09:00 runs the missed backup when it wakes; only a day
-switched off or closed throughout misses one.
+A Mac asleep at 09:00 runs the missed backup when it wakes, and one switched
+off runs it at the next login; only a day the Mac is never started misses
+one. The job runs `backup.sh --once-a-day`, which does nothing once a whole
+run has finished that day (`~/PSells-Backups/last-finished-day`), so a
+run that failed is tried again at the next login. `./backup.sh` by hand
+always makes one.
 
 Each backup is also encrypted and copied to iCloud Drive's `PSells-Backups`
 folder, kept 30 days, and proved by decrypting it with the Keychain's key; the
 log's second line for the day says `offsite ok`. Old copies there are removed
 by name with the copy on the Mac they match; the scheduled job may not list
-that folder, so nothing searches it. The private key is also in
+that folder, so nothing searches it. Nor may it remove a copy that a run by
+hand made from the Terminal: that name goes on
+`~/PSells-Backups/offsite-leftovers.txt`, the log says `left for the next run
+by hand`, and the next `./backup.sh` removes it. It is never a failure. The private key is also in
 your password manager, as "PSells backup key (age)". The demonstration's
 backups go to S3 and hold invented records only.
 
@@ -330,11 +338,15 @@ itself:
 - **A notification on the Mac**: see "A PSells notification appears" below.
   It covers the backup, the login start, the hourly analytics, a certificate
   a month before it ends, and the demo's end in March 2027.
-- **An email from a failed GitHub check.** The weekly scans in security.yml
-  and image.yml fail when a published flaw with a fix reaches a pinned
-  package or image, Alloy included. Move that pin to the fixed version (by
-  digest for an image, checked with `docker buildx imagetools inspect`) and
-  push; the deploy follows when every check passes.
+- **An email from a failed GitHub check.** The weekly scans in security.yml,
+  image.yml and agent.yml fail when a published flaw with a fix reaches a
+  pinned package or image. Move that pin to the fixed version (by digest for
+  an image, checked with `docker buildx imagetools inspect`) and push; the
+  deploy follows when every check passes. Agent, Alloy's scan, is the
+  exception: it holds back no deploy, and only a newer Alloy than v1.21.3
+  turns it green; pin it in compose.aws.yaml and agent.yml together. A
+  Python base image's fixable Debian flaw goes on the `--only-upgrade` line
+  in both Dockerfiles until the image is rebuilt with it.
 - **Dependabot's monthly pull requests**: patch releases only. Merge one
   whose checks pass. A minor or major version (a new Python, nginx's next
   stable line) is a change made on purpose, on a branch, not a pull request.

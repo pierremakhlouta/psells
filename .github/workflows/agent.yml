@@ -1,0 +1,63 @@
+name: Agent
+
+# The scan of Grafana Alloy, the monitoring agent on the AWS demo server, kept
+# out of image.yml so that it does not hold back a deploy of PSells.
+#
+# Until November 2026 this job was in image.yml, and the deploy waits for
+# every job there. Alloy v1.21.3, Grafana's newest release on 11 November
+# 2026, still had high flaws with fixes, so every push would have stopped at
+# the gate with nothing to do on PSells' side but wait for Grafana. Pierre
+# chose to move it here rather than list exceptions: it still fails, and
+# GitHub still emails, every week until a clean Alloy is pinned, but a PSells
+# fix reaches the demo meanwhile. deploy.yml does not wait for it, and
+# test_container.py holds it that way.
+
+on:
+  push:
+  schedule:
+    - cron: "0 9 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  alloy:
+    runs-on: ubuntu-latest
+
+    # The monitoring agent compose.aws.yaml runs on the AWS server, scanned
+    # the same two ways as nginx's image. Not built here, only pulled.
+    # test_container.py fails if this line and compose.aws.yaml ever differ.
+    env:
+      ALLOY_IMAGE: grafana/alloy:v1.21.3@sha256:8ab871206bd2d8f89277f53abffee5f452a293980788d52f85fa183a87a505a4
+
+    steps:
+      - name: Pull the image
+        run: docker pull "$ALLOY_IMAGE"
+
+      - name: List every known vulnerability
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439  # v7.4.2
+        with:
+          image: ${{ env.ALLOY_IMAGE }}
+          fail-build: false
+          output-format: table
+          output-file: grype-all.txt
+
+      - name: Show the list
+        run: cat grype-all.txt
+
+      # No exceptions: the agent is held to the same rule as PSells' own
+      # images. A flaw with a fix fails this until Alloy ships the fix and
+      # the pin moves, here and in compose.aws.yaml together.
+      - name: Fail on a high or critical vulnerability that has a fix
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439  # v7.4.2
+        with:
+          image: ${{ env.ALLOY_IMAGE }}
+          only-fixed: true
+          severity-cutoff: high
+          fail-build: true
+          output-format: table
+          output-file: grype-fixable.txt
+
+      - name: Show what failed the build
+        if: failure()
+        run: cat grype-fixable.txt

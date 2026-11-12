@@ -12,7 +12,7 @@
 # exact version and to the digest of its contents, so every build starts from
 # the same bytes and a republished tag cannot change them. Dependabot proposes
 # the next one, and image.yml scans it before it is merged.
-FROM python:3.14.8-slim@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170
+FROM python:3.14.10-slim@sha256:9aaa474097d094040649f2162a627c0049b408f52138d980916788d80f04802f
 
 # No .pyc files written inside the image, and log lines reach `docker logs` as
 # they are printed rather than when a buffer fills.
@@ -20,15 +20,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
 # Debian's security fixes for packages the pinned base image carries in an
-# older, vulnerable version. In October 2026 the base image had libpcre2
-# 10.46-1~deb13u2, with a high-severity flaw fixed in deb13u3, and openssl
-# packages with fixes, before the Python image was rebuilt with them; the scan
+# older, vulnerable version. In October 2026 it was libpcre2 and openssl,
+# until the Python image was rebuilt with them; in November 2026, on
+# 3.14.10, zlib1g, with two high-severity flaws fixed in deb13u1. The scan
 # in image.yml fails on a fixable high one. --only-upgrade changes nothing that
 # is not already installed. The package lists are removed again so they are
 # not carried in the image. Remove a name here once the base image has its fix.
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends --only-upgrade \
-        libpcre2-8-0 libssl3t64 openssl openssl-provider-legacy \
+        zlib1g \
     && rm -rf /var/lib/apt/lists/*
 
 # The server runs as an ordinary user, not root, so a compromised process gets
