@@ -1031,8 +1031,8 @@ readable; they are in its history in git, up to commit 7ecee20.
   release. Pierre chose to move the scan into its own workflow, `agent.yml`,
   which the deploy does not wait for, rather than list exceptions again: it
   still fails, and GitHub still emails, every week until a clean Alloy is
-  pinned. The server runs v1.21.3 meanwhile, the least flawed release there
-  is. The same day the backup began running at login as well as at 09:00,
+  pinned. The server ran v1.21.3 meanwhile, the least flawed release there
+  was, until v1.22.0, clean, was pinned on 17 November 2026. The same day the backup began running at login as well as at 09:00,
   once a day, after five mornings were missed by a Mac shut down at night and
   started after nine; and an iCloud copy the scheduled job may not remove,
   one a run by hand made, is kept on a list for the next run by hand instead

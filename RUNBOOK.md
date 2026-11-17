@@ -343,8 +343,11 @@ itself:
   pinned package or image. Move that pin to the fixed version (by digest for
   an image, checked with `docker buildx imagetools inspect`) and push; the
   deploy follows when every check passes. Agent, Alloy's scan, is the
-  exception: it holds back no deploy, and only a newer Alloy than v1.21.3
-  turns it green; pin it in compose.aws.yaml and agent.yml together. A
+  exception: it holds back no deploy. A newer Alloy turns it green; check its
+  release notes' breaking changes against monitoring/config.alloy, run
+  `docker run --rm -v "$PWD/monitoring/config.alloy:/c.alloy:ro" IMAGE validate /c.alloy`,
+  and pin it in compose.aws.yaml and agent.yml together. Dependabot proposes
+  patch releases only, so a minor one (as v1.22.0 was) is moved by hand. A
   Python base image's fixable Debian flaw goes on the `--only-upgrade` line
   in both Dockerfiles until the image is rebuilt with it.
 - **Dependabot's monthly pull requests**: patch releases only. Merge one
